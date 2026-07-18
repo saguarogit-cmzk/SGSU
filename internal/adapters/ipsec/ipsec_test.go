@@ -42,12 +42,12 @@ func TestGenerateConf(t *testing.T) {
 	}
 	for _, want := range []string{
 		"connections {", "conn-sophos-hq {", "version = 2", "remote_addrs = 203.0.113.5",
-		"proposals = aes256-sha256-modp2048",              // default IKE applied
+		"proposals = aes256-sha256-modp2048", // default IKE applied
 		"local_ts = 192.168.10.0/24", "remote_ts = 192.168.20.0/24",
-		"esp_proposals = aes256-sha256-modp2048",          // default ESP applied
-		"start_action = start",                            // initiate=true
-		"start_action = trap",                             // initiate=false (responder)
-		"id = gw.example.com",                             // remote id explicit
+		"esp_proposals = aes256-sha256-modp2048", // default ESP applied
+		"start_action = start",                   // initiate=true
+		"start_action = trap",                    // initiate=false (responder)
+		"id = gw.example.com",                    // remote id explicit
 		"secrets {", "ike-sophos-hq {", `secret = "s3cret-psk!"`,
 	} {
 		if !strings.Contains(conf, want) {
