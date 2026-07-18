@@ -475,9 +475,13 @@ fi
 log "Configuring Kea DHCP with PostgreSQL backend"
 if ! $DRY_RUN; then
   umask 0077
-  printf '%s\n' "$KEA_API_PASSWORD" >/etc/kea/api-password
-  chown root:_kea /etc/kea/api-password
-  chmod 0640 /etc/kea/api-password
+  # Ubuntu's kea-ctrl-agent unit only starts when /etc/kea/kea-api-password
+  # is non-empty (ConditionFileNotEmpty). Write NO trailing newline: Kea's
+  # password-file auth includes it in the password, which would then not
+  # match the newline-free value the control plane sends.
+  printf '%s' "$KEA_API_PASSWORD" >/etc/kea/kea-api-password
+  chown root:_kea /etc/kea/kea-api-password
+  chmod 0640 /etc/kea/kea-api-password
   cat >/etc/kea/kea-ctrl-agent.conf <<EOF
 {
   "Control-agent": {
@@ -485,7 +489,7 @@ if ! $DRY_RUN; then
     "http-port": 8000,
     "authentication": {
       "type": "basic",
-      "clients": [ { "user": "saguaro", "password-file": "/etc/kea/api-password" } ]
+      "clients": [ { "user": "saguaro", "password-file": "/etc/kea/kea-api-password" } ]
     },
     "control-sockets": {
       "dhcp4": { "socket-type": "unix", "socket-name": "/run/kea/kea4-ctrl-socket" },
