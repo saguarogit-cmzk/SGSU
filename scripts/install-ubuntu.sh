@@ -416,6 +416,10 @@ EOF
     install -o unbound -g unbound -m 0644 /usr/share/dns/root.key /var/lib/unbound/root.key
   fi
   unbound-checkconf
+  # apt started unbound with its default config; enable --now later will not
+  # reload it, so restart to pick up our interfaces/access-control/stub-zones.
+  systemctl reset-failed unbound 2>/dev/null || true
+  systemctl restart unbound
 fi
 
 log "Configuring PowerDNS authoritative server"
