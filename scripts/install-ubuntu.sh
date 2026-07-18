@@ -464,6 +464,9 @@ if ! $DRY_RUN; then
   fi
   pdnsutil set-meta "$DNS_DOMAIN" TSIG-ALLOW-DNSUPDATE kea-ddns
   [[ -n $REVERSE_ZONE ]] && pdnsutil set-meta "$REVERSE_ZONE" TSIG-ALLOW-DNSUPDATE kea-ddns
+  # pdnsutil wrote the new zones straight to the database; the running server
+  # was started earlier with an empty zone cache, so make it pick them up now.
+  pdns_control rediscover >/dev/null 2>&1 || systemctl reload pdns || true
 fi
 
 log "Configuring Kea DHCP with PostgreSQL backend"
