@@ -68,6 +68,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		runRoute:      func(context.Context, string) ([]byte, error) { return nil, nil },
 		runS2S:        func(context.Context, string) ([]byte, error) { return nil, nil },
 		runIPsec:      func(context.Context, string) ([]byte, error) { return nil, nil },
+		runSvc:        func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		runNet:        func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		readInterfaces: func(context.Context) ([]nicInfo, error) {
 			return []nicInfo{{Name: "enp1s0", MAC: "aa:bb:cc:dd:ee:01", State: "up", Carrier: true, SpeedMb: 1000, Driver: "igb", Addresses: []string{"192.168.50.61/24"}}}, nil

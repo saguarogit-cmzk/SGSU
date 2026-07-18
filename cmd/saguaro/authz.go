@@ -11,7 +11,8 @@ import (
 const (
 	permDNSWrite     = "dns:write"
 	permDHCPWrite    = "dhcp:write"
-	permServiceCheck = "service:check"
+	permServiceCheck   = "service:check"
+	permServiceControl = "service:control"
 	permMailWrite    = "mail:write"
 	permUsersWrite   = "users:write"
 	permSessions     = "sessions:revoke"
@@ -22,9 +23,9 @@ const (
 )
 
 var rolePermissions = map[string]map[string]bool{
-	roleAdmin: {permDNSWrite: true, permDHCPWrite: true, permServiceCheck: true,
+	roleAdmin: {permDNSWrite: true, permDHCPWrite: true, permServiceCheck: true, permServiceControl: true,
 		permMailWrite: true, permUsersWrite: true, permSessions: true, permFirewall: true, permProxy: true, permCerts: true, permBackup: true},
-	roleNetworkOperator: {permDHCPWrite: true, permServiceCheck: true, permFirewall: true, permProxy: true},
+	roleNetworkOperator: {permDHCPWrite: true, permServiceCheck: true, permServiceControl: true, permFirewall: true, permProxy: true},
 	roleDNSOperator:     {permDNSWrite: true, permServiceCheck: true},
 	roleAuditor:         {},
 	roleReadOnly:        {},

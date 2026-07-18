@@ -10,6 +10,7 @@ saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-cert issue, /usr/sbin/saguaro-cer
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-vpn apply, /usr/sbin/saguaro-vpn disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-s2s apply, /usr/sbin/saguaro-s2s disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ipsec apply, /usr/sbin/saguaro-ipsec disable
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-svc statusall, /usr/sbin/saguaro-svc status *, /usr/sbin/saguaro-svc start *, /usr/sbin/saguaro-svc stop *, /usr/sbin/saguaro-svc restart *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-backup-config apply, /usr/sbin/saguaro-backup-config run, /usr/sbin/saguaro-backup-config disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-wan apply, /usr/sbin/saguaro-wan disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-net identify *

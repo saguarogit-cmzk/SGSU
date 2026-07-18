@@ -1,0 +1,58 @@
+#!/bin/sh
+# saguaro-svc — root adapter for controlling appliance services from the GUI
+# (start/stop/restart) for troubleshooting. Only an allow-listed set of units
+# can be touched, mapped from a fixed key so the caller can never name an
+# arbitrary systemd unit. The control plane (saguaro) itself is intentionally
+# NOT in the list — you cannot stop the process serving the button.
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+# unit_for maps a stable key to its systemd unit; unknown keys are refused.
+unit_for() {
+  case "$1" in
+    postgresql)      echo postgresql ;;
+    unbound)         echo unbound ;;
+    pdns)            echo pdns ;;
+    kea-dhcp4)       echo kea-dhcp4-server ;;
+    kea-ddns)        echo kea-dhcp-ddns-server ;;
+    kea-ctrl-agent)  echo kea-ctrl-agent ;;
+    nginx)           echo nginx ;;
+    nftables)        echo nftables ;;
+    suricata)        echo suricata ;;
+    strongswan)      echo strongswan-starter ;;
+    wg-vpn)          echo wg-quick@wg0 ;;
+    wg-s2s)          echo wg-quick@wgs2s ;;
+    step-ca)         echo step-ca ;;
+    saguaro-eventd)  echo saguaro-eventd ;;
+    *) return 1 ;;
+  esac
+}
+
+KEYS="postgresql unbound pdns kea-dhcp4 kea-ddns kea-ctrl-agent nginx nftables suricata strongswan wg-vpn wg-s2s step-ca saguaro-eventd"
+
+ACTION="${1:-}"
+SVC="${2:-}"
+
+case "$ACTION" in
+  statusall)
+    for k in $KEYS; do
+      u=$(unit_for "$k")
+      printf '%s %s\n' "$k" "$(systemctl is-active "$u" 2>/dev/null || true)"
+    done
+    ;;
+  status)
+    u=$(unit_for "$SVC") || { echo "unknown service" >&2; exit 1; }
+    systemctl is-active "$u" 2>/dev/null || true
+    ;;
+  start|stop|restart)
+    u=$(unit_for "$SVC") || { echo "unknown service" >&2; exit 1; }
+    systemctl "$ACTION" "$u"
+    logger -t saguaro-svc "$ACTION $u"
+    systemctl is-active "$u" 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: saguaro-svc statusall|status|start|stop|restart SERVICE" >&2
+    exit 2
+    ;;
+esac
