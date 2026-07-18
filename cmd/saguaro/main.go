@@ -77,6 +77,8 @@ type state struct {
 	// SystemProfile is the deployment mode: "gateway" (firewall/gateway/VPN) or
 	// "router" (local DHCP/DNS/router behind another gateway).
 	SystemProfile string `json:"systemProfile,omitempty"`
+	// BlockedMACs are DHCP clients refused a lease via Kea's DROP class.
+	BlockedMACs []string `json:"blockedMacs,omitempty"`
 }
 
 type store struct {
@@ -126,7 +128,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.24.0"
+const appVersion = "0.25.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -295,6 +297,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/dashboard", a.auth(a.dashboard))
 	mux.HandleFunc("GET /api/services", a.auth(a.services))
 	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.authz(permServiceCheck, a.serviceAction))
+	mux.HandleFunc("GET /api/dhcp/blocklist", a.auth(a.apiDHCPBlockList))
+	mux.HandleFunc("POST /api/dhcp/blocklist", a.authz(permDHCPWrite, a.apiDHCPBlockAdd))
+	mux.HandleFunc("DELETE /api/dhcp/blocklist/{mac}", a.authz(permDHCPWrite, a.apiDHCPBlockDelete))
+	mux.HandleFunc("GET /api/conflicts", a.auth(a.apiConflicts))
 	mux.HandleFunc("GET /api/svcctl", a.authz(permServiceCheck, a.apiSvcCtlList))
 	mux.HandleFunc("POST /api/svcctl/{key}/{action}", a.authz(permServiceControl, a.apiSvcCtlAction))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
