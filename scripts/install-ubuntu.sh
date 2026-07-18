@@ -543,7 +543,7 @@ if ((dhcp_fields == 5)) && ! $DRY_RUN; then
       ],
       "reservations": []
     } ],
-    "loggers": [ { "name": "kea-dhcp4", "severity": "INFO", "output-options": [ { "output": "syslog" } ] } ]
+    "loggers": [ { "name": "kea-dhcp4", "severity": "INFO", "output_options": [ { "output": "syslog" } ] } ]
   }
 }
 EOF
@@ -551,7 +551,9 @@ EOF
   # running config via the core config-write API command.
   chown _kea:_kea /etc/kea/kea-dhcp4.conf
   chmod 0640 /etc/kea/kea-dhcp4.conf
-  kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
+  # Validate as _kea: the file is _kea-owned 0640 and Kea's AppArmor profile
+  # denies root's dac_override, so a root `kea-dhcp4 -t` cannot open it.
+  runuser -u _kea -- kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
 fi
 
 if $ENABLE_STEP_CA; then
@@ -697,7 +699,7 @@ if ! $DRY_RUN; then
   unbound-checkconf
   pdnsutil check-all-zones || true
   nginx -t
-  ((dhcp_fields == 5)) && kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
+  ((dhcp_fields == 5)) && runuser -u _kea -- kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
   dig +short +time=3 @127.0.0.1 "ns1.${DNS_DOMAIN}" SOA >/dev/null || true
 fi
 
