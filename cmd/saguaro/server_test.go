@@ -58,6 +58,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		mailKey:     mailKey,
 		runFirewall: func(context.Context, string) ([]byte, error) { return nil, nil },
 		runIDS:      func(context.Context, ...string) ([]byte, error) { return nil, nil },
+		runRPZ:      func(context.Context, string) ([]byte, error) { return nil, nil },
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:       st,
 		adminUser:   "admin",

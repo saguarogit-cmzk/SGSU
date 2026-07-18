@@ -601,6 +601,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup.sh" /usr/sbin/saguaro-backup
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-firewall" /usr/sbin/saguaro-firewall
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ids" /usr/sbin/saguaro-ids
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-rpz" /usr/sbin/saguaro-rpz
   run install -m 0440 "$SOURCE_DIR/packaging/sudoers/saguaro-adapter" /etc/sudoers.d/saguaro-adapter
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.service" /etc/systemd/system/saguaro-backup.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.timer" /etc/systemd/system/saguaro-backup.timer

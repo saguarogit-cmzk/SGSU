@@ -1,0 +1,40 @@
+#!/bin/sh
+# saguaro-rpz — root adapter for the Unbound RPZ filtering tier (SNA).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply    validate the staged zone + Unbound drop-in, install them and
+#            reload Unbound; on a failed check nothing is touched
+#   disable  remove the drop-in and reload Unbound (zone files remain)
+set -eu
+
+STAGED_ZONE=/var/lib/saguaro/staged-rpz.zone
+STAGED_CONF=/var/lib/saguaro/staged-rpz.conf
+ZONE=/var/lib/unbound/saguaro-rpz.zone
+CONF=/etc/unbound/unbound.conf.d/saguaro-rpz.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED_ZONE" ] && [ -s "$STAGED_CONF" ] || { echo "staged RPZ files missing" >&2; exit 1; }
+    install -d -m 0755 /var/lib/unbound
+    install -m 0644 -o unbound -g unbound "$STAGED_ZONE" "$ZONE"
+    install -m 0644 -o root -g root "$STAGED_CONF" "$CONF"
+    if ! unbound-checkconf >/dev/null 2>&1; then
+      rm -f "$CONF"
+      echo "unbound-checkconf rejected the RPZ configuration; change reverted" >&2
+      exit 1
+    fi
+    systemctl restart unbound
+    logger -t saguaro-rpz "RPZ filtering applied"
+    ;;
+  disable)
+    rm -f "$CONF"
+    systemctl restart unbound
+    logger -t saguaro-rpz "RPZ filtering disabled"
+    ;;
+  *)
+    echo "usage: saguaro-rpz apply|disable" >&2
+    exit 2
+    ;;
+esac

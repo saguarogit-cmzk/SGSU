@@ -24,6 +24,7 @@ import (
 
 	"saguaro.local/network-manager/internal/adapters/kea"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
+	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
 	evstore "saguaro.local/network-manager/internal/events"
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
@@ -58,6 +59,7 @@ type state struct {
 	Mail     *mailmod.Config `json:"mail,omitempty"`
 	Gateway  *nftgen.Config  `json:"gateway,omitempty"`
 	IDS      *idsState       `json:"ids,omitempty"`
+	RPZ      *rpzmod.Config  `json:"rpz,omitempty"`
 }
 
 type store struct {
@@ -82,6 +84,7 @@ type app struct {
 	keaHosts    *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
 	runFirewall func(ctx context.Context, action string) ([]byte, error)
 	runIDS      func(ctx context.Context, args ...string) ([]byte, error)
+	runRPZ      func(ctx context.Context, action string) ([]byte, error)
 	hwMemMB     int
 	hwCores     int
 
@@ -94,7 +97,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.12.0"
+const appVersion = "0.13.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -192,6 +195,7 @@ func main() {
 		keaHosts:    keaHosts,
 		runFirewall: defaultRunFirewall,
 		runIDS:      defaultRunIDS,
+		runRPZ:      defaultRunRPZ,
 		hwMemMB:     readMemTotalMB(),
 		hwCores:     runtime.NumCPU(),
 
@@ -273,6 +277,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
 	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
 	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("GET /api/rpz", a.auth(a.apiRPZGet))
+	mux.HandleFunc("POST /api/rpz/apply", a.authz(permDNSWrite, a.apiRPZApply))
 	mux.HandleFunc("GET /api/ids", a.auth(a.apiIDSGet))
 	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.apiIDSEnable))
 	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.apiIDSDisable))

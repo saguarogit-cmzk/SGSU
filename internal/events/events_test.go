@@ -81,6 +81,23 @@ func TestParseJournalLine(t *testing.T) {
 	}
 }
 
+func TestParseJournalLinePromotesRPZHits(t *testing.T) {
+	line := []byte(`{"__CURSOR":"c9","__REALTIME_TIMESTAMP":"1784800000000000","MESSAGE":"info: saguaro-rpz applied to ads.example.com. A IN","PRIORITY":"6","_SYSTEMD_UNIT":"unbound.service"}`)
+	e, _, ok := ParseJournalLine(line)
+	if !ok {
+		t.Fatal("rpz line must parse")
+	}
+	if e.Module != "dns-filter" || e.Action != "rpz-block" || e.Severity != "notice" {
+		t.Fatalf("rpz promotion wrong: %+v", e)
+	}
+	// Ordinary unbound info lines keep module dns and info severity.
+	plain := []byte(`{"__CURSOR":"c10","MESSAGE":"info: start of service","PRIORITY":"6","_SYSTEMD_UNIT":"unbound.service"}`)
+	e2, _, _ := ParseJournalLine(plain)
+	if e2.Module != "dns" || e2.Severity != "info" {
+		t.Fatalf("plain unbound line changed: %+v", e2)
+	}
+}
+
 func TestParseJournalLineSkipsBinaryAndUnitless(t *testing.T) {
 	if _, _, ok := ParseJournalLine([]byte(`not json`)); ok {
 		t.Fatal("invalid JSON must not parse")

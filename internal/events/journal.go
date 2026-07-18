@@ -93,5 +93,14 @@ func ParseJournalLine(line []byte) (Event, string, bool) {
 		Message:  msg,
 		Raw:      rawUnit,
 	}
+	// Unbound logs RPZ hits at info priority; promote them so the DNS
+	// filtering tier is visible in the event store (and can alert).
+	if e.Module == "dns" && strings.Contains(msg, "saguaro-rpz") {
+		e.Module = "dns-filter"
+		e.Action = "rpz-block"
+		if Rank(e.Severity) < Rank("notice") {
+			e.Severity = "notice"
+		}
+	}
 	return e, je.Cursor, true
 }

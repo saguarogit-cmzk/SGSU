@@ -7,5 +7,6 @@ Makefile text eol=lf
 packaging/deb/* text eol=lf
 scripts/saguaro-firewall text eol=lf
 scripts/saguaro-ids text eol=lf
+scripts/saguaro-rpz text eol=lf
 *.yml text eol=lf
 *.go text eol=lf
