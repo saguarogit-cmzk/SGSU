@@ -14,14 +14,27 @@ BACKUP=/run/saguaro/swanctl-backup.conf
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
-# strongSwan's swanctl daemon unit is "strongswan" on current Ubuntu; fall back
-# to the legacy starter unit name if that is what is installed.
+# The daemon swanctl talks to over vici is charon. On Ubuntu's strongswan
+# metapackage that charon runs under strongswan-starter; the charon-systemd
+# alternative runs under strongswan. Prefer whichever unit is installed,
+# starter first (the Ubuntu default), so we drive the unit that owns vici.
 svc_name() {
-  if systemctl list-unit-files 2>/dev/null | grep -q '^strongswan\.service'; then
-    echo strongswan
-  else
-    echo strongswan-starter
-  fi
+  for u in strongswan-starter strongswan; do
+    if systemctl cat "$u" >/dev/null 2>&1; then echo "$u"; return; fi
+  done
+  echo strongswan
+}
+
+# wait_vici blocks until charon actually answers on vici (up to ~15s). It
+# probes with `swanctl --stats` rather than the socket file, which can linger
+# stale after a stop and would otherwise race a just-started charon.
+wait_vici() {
+  i=0
+  while [ "$i" -lt 30 ]; do
+    swanctl --stats >/dev/null 2>&1 && return 0
+    i=$((i + 1)); sleep 0.5
+  done
+  return 1
 }
 
 case "${1:-}" in
@@ -38,7 +51,10 @@ case "${1:-}" in
     sysctl -q -w net.ipv4.ip_forward=1
     SVC=$(svc_name)
     systemctl enable "$SVC" >/dev/null 2>&1 || true
-    systemctl restart "$SVC"
+    # Start (not restart) so an already-running charon keeps live tunnels;
+    # swanctl --load-all reconciles the configuration into it.
+    systemctl start "$SVC"
+    wait_vici || { echo "charon vici socket did not appear" >&2; exit 1; }
     if ! swanctl --load-all; then
       if [ -s "$BACKUP" ]; then
         install -m 0600 -o root -g root "$BACKUP" "$ACTIVE"
