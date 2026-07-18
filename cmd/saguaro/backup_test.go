@@ -71,6 +71,43 @@ func TestBackupS3SecretRedactedInView(t *testing.T) {
 	_ = a
 }
 
+func TestBackupRejectsShellInjection(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var calls []string
+	a.runBackupCfg = func(_ context.Context, action string) ([]byte, error) {
+		calls = append(calls, action)
+		return nil, nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// A command-substitution payload in a target field must be rejected before
+	// anything is staged or the adapter is called (backup.env is sourced by
+	// the root backup service).
+	for _, payload := range []string{
+		`{"target":"sftp","schedule":"daily","sftpHost":"x$(touch /tmp/pwned)","sftpUser":"u","sftpPath":"/b"}`,
+		`{"target":"sftp","schedule":"daily","sftpHost":"h","sftpUser":"u","sftpPath":"/b; reboot"}`,
+		"{\"target\":\"s3\",\"schedule\":\"daily\",\"s3Bucket\":\"b\",\"s3AccessId\":\"k\",\"s3Secret\":\"a`id`b\"}",
+	} {
+		if r := reqJSON(t, srv, c, http.MethodPost, "/api/backup/apply", payload); r.StatusCode != http.StatusBadRequest {
+			t.Fatalf("injection %q: got %d, want 400", payload, r.StatusCode)
+		}
+	}
+	if len(calls) != 0 {
+		t.Fatalf("adapter must not run for rejected input: %v", calls)
+	}
+	// The env the control plane would write for a legitimate config carries no
+	// shell-active characters.
+	env, err := a.buildBackupEnv(backupConfig{Target: "s3", RetentionDays: 30,
+		S3Bucket: "sna-backups", S3Region: "eu-central-1", S3AccessID: "AKIA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(env, "`;&|") || strings.Contains(env, "$(") {
+		t.Fatalf("generated env contains shell-active characters:\n%s", env)
+	}
+}
+
 func TestBackupRunAndRestoreDrill(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string

@@ -61,6 +61,25 @@ adapter-ugovor), ali postoje **tri međusobno nekonzistentna izvora istine** o k
 | S9 | UFW `--force enable` bez provjere postojeće SSH sesije izvan admin mreže | installer | lockout | prijeći na nftables + confirm-or-rollback mehanizam (vidi §4.2) |
 | S10 | Health check `curl` ide na HTTP (`http://127.0.0.1:9080`) — OK jer loopback, ali `SAGUARO_SECURE_COOKIE=true` znači da login preko curl-a ne prolazi test sesije | installer | slaba dubina health checka | health endpoint bez auth + dubinski check kroz adapter |
 
+### 1.2.1 Sigurnosni pregled root-adapter/sudoers sloja (2026-07-18, v0.17.1)
+
+Pregledan cijeli sloj (8 root skripti iza `NOPASSWD` sudoersa + staging kod).
+Prijetnja: kompromitirani `saguaro` proces smije samo allow-listane, validirane
+operacije — nikad proizvoljni root.
+
+| # | Ozbiljnost | Nalaz | Status |
+|---|---|---|---|
+| SR1 | **KRITIČNO** | `saguaro-backup.sh` kao root radi `source /etc/saguaro/backup.env`, čiji sadržaj potječe iz korisničkog unosa (SFTP/S3 polja) **bez escapinga**; vrijednost tipa `x$(cmd)` daje **arbitrary root code execution** i probija cijeli adapter-sandbox. | **RIJEŠENO**: root adapter `saguaro-backup-config apply` odbija staged env osim strogih `KEY=<safe>` linija; control plane validira polja (`backupValueRe`) i odbija shell-metaznakove. Dvoslojno + test `TestBackupRejectsShellInjection`. |
+| SR2 | Nizak | `saguaro-firewall`/`saguaro-ids` validiraju **staged** datoteku pa je instaliraju (TOCTOU: učitana ≠ validirana). Utjecaj ograničen — nevaljana konfiguracija ne učita se, a valjana je unutar ovlasti modula. | Preporuka: validirati odredište (kao `saguaro-proxy`: install → `nginx -t` → revert). Otvoreno (nizak rizik). |
+| SR3 | Nizak (DiD) | `saguaro-wan` gura polja specifikacije u `ip`/`ping` argumente; POSIX sh ne re-evaluira `$(...)` iz varijable, ali root nije re-validirao spec. | **RIJEŠENO**: `saguaro-wan apply` odbija spec izvan sigurnog charseta. |
+| SR4 | Info | sudoers `remove *` / `deploy-gui *` wildcard — skripta re-validira `NAME` (`valid_name`), pa je sigurno. | Prihvatljivo. |
+
+Ostali adapteri (`proxy`, `rpz`, `vpn`, `cert`) ispravno validiraju odredište
+native alatom (`nginx -t`, `unbound-checkconf`, `wg-quick` restart s restore-om,
+`step`/`valid_name`/`valid_san`) i ne rade `eval`/`source` nad korisničkim
+sadržajem. `/etc/saguaro/backup.env` je nakon instalacije root:saguaro 0640 pa ga
+saguaro ne može naknadno mijenjati (dir 0750 bez group-write).
+
 ### 1.3 Što je u projektu već ispravno postavljeno (zadržati)
 
 - Transakcijski tok promjene: Inspect → Validate → Backup → Apply → Verify → Rollback

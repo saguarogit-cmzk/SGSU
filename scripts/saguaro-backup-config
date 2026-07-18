@@ -18,10 +18,23 @@ DROPDIR=/etc/systemd/system/saguaro-backup.timer.d
 case "${1:-}" in
   apply)
     [ -s "$STAGED_ENV" ] || { echo "no staged backup env at $STAGED_ENV" >&2; exit 1; }
+    # backup.env is sourced by the root backup service, so the staged file is
+    # a trust boundary: reject anything that is not a plain KEY=<safe value>
+    # line. This blocks shell injection ($(...), backticks, ;, spaces, quotes)
+    # even if the control-plane process is compromised.
+    if grep -qvE '^(#.*|SAGUARO_[A-Z0-9_]+=[A-Za-z0-9._:/@=+-]*)$' "$STAGED_ENV"; then
+      echo "staged backup env contains unsafe content; refusing to install" >&2
+      exit 1
+    fi
     install -m 0640 -o root -g saguaro "$STAGED_ENV" "$ENV"
     rm -f "$STAGED_ENV"
     if [ -s "$STAGED_SCHED" ]; then
       SCHED=$(cat "$STAGED_SCHED")
+      # The schedule goes into a systemd drop-in; restrict it to calendar-safe
+      # characters so it cannot inject extra unit directives.
+      case "$SCHED" in
+        *[!A-Za-z0-9\ :*/,-]*) echo "unsafe backup schedule; refusing" >&2; exit 1 ;;
+      esac
       install -d -m 0755 "$DROPDIR"
       cat >"$DROPDIR/schedule.conf" <<EOF
 [Timer]

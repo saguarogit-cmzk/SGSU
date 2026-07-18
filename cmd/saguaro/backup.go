@@ -7,11 +7,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
+
+// backupValueRe is the safe charset for values written into backup.env, which
+// the root backup service sources. It excludes every shell-active character
+// ($ ` ; & | ( ) space quotes newline) so a value can never inject a command.
+var backupValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/@=+-]*$`)
+
+func safeBackupValue(fields map[string]string) (string, bool) {
+	for name, v := range fields {
+		if !backupValueRe.MatchString(v) {
+			return name, false
+		}
+	}
+	return "", true
+}
 
 const (
 	stagedBackupEnvName   = "staged-backup.env"
@@ -161,6 +176,17 @@ func (a *app) apiBackupApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validBackupSchedule(in.Schedule) {
 		writeError(w, http.StatusBadRequest, "invalid schedule")
+		return
+	}
+	// backup.env is sourced by the root backup service; every value must be
+	// free of shell-active characters (defense in depth — the root adapter
+	// re-validates too).
+	if bad, ok := safeBackupValue(map[string]string{
+		"sftpHost": in.SFTPHost, "sftpUser": in.SFTPUser, "sftpPath": in.SFTPPath, "sftpKeyPath": in.SFTPKeyPath,
+		"s3Bucket": in.S3Bucket, "s3Endpoint": in.S3Endpoint, "s3Region": in.S3Region, "s3AccessId": in.S3AccessID,
+		"s3Secret": in.S3Secret,
+	}); !ok {
+		writeError(w, http.StatusBadRequest, "field "+bad+" contains characters not allowed in a backup target")
 		return
 	}
 	cfg := a.getBackup()
