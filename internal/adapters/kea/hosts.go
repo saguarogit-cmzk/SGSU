@@ -131,6 +131,17 @@ func (h *HostStore) Add(ctx context.Context, r Reservation) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Wizard W3 validation: one reservation per MAC per subnet, one per IP.
+	var dupes int
+	if err := h.db.QueryRowContext(ctx, `SELECT count(*) FROM hosts
+		WHERE dhcp_identifier_type = 0
+		AND ((dhcp_identifier = $1 AND dhcp4_subnet_id = $2) OR ipv4_address = $3)`,
+		macBytes, r.SubnetID, ipInt).Scan(&dupes); err != nil {
+		return 0, err
+	}
+	if dupes > 0 {
+		return 0, fmt.Errorf("a reservation for this MAC or IP already exists")
+	}
 	var id int64
 	err = h.db.QueryRowContext(ctx, `INSERT INTO hosts
 		(dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname)

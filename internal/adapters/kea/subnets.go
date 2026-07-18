@@ -123,7 +123,18 @@ func (s SubnetSpec) pools() []any {
 	return []any{map[string]any{"pool": s.PoolStart + " - " + s.PoolEnd}}
 }
 
+// CIDRsOverlap reports whether two IPv4 CIDRs share any addresses.
+func CIDRsOverlap(a, b string) bool {
+	_, an, errA := net.ParseCIDR(a)
+	_, bn, errB := net.ParseCIDR(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return an.Contains(bn.IP) || bn.Contains(an.IP)
+}
+
 // AddSubnet appends a new subnet with the next free id and returns that id.
+// Overlapping CIDRs are refused (wizard W2 validation).
 func AddSubnet(dhcp4 map[string]any, s SubnetSpec) (int64, error) {
 	if err := s.Validate(); err != nil {
 		return 0, err
@@ -132,8 +143,12 @@ func AddSubnet(dhcp4 map[string]any, s SubnetSpec) (int64, error) {
 	var maxID int64
 	for _, entry := range list {
 		if m, ok := entry.(map[string]any); ok {
-			if existing, _ := m["subnet"].(string); existing == s.Subnet {
+			existing, _ := m["subnet"].(string)
+			if existing == s.Subnet {
 				return 0, fmt.Errorf("subnet %s already exists", s.Subnet)
+			}
+			if CIDRsOverlap(existing, s.Subnet) {
+				return 0, fmt.Errorf("subnet %s overlaps existing subnet %s", s.Subnet, existing)
 			}
 		}
 		if id := subnetID(entry); id > maxID {

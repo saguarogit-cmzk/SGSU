@@ -86,7 +86,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.9.0"
+const appVersion = "0.10.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -388,7 +388,19 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	// X-CSRF-Token header, which the auth middleware checks against the session.
 	http.SetCookie(w, &http.Cookie{Name: "saguaro_csrf", Value: csrf, Path: "/", HttpOnly: false, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(a.sessionTTL.Seconds())})
 	a.record(r, rec0.Username, "login", "control-plane", "success", map[string]any{"sessionId": rec.ID, "role": rec0.Role})
-	writeJSON(w, http.StatusOK, map[string]any{"user": rec0.Username, "role": rec0.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"user": rec0.Username, "role": rec0.Role, "mustChangePassword": rec0.MustChangePassword})
+}
+
+func mustChangeAllowed(r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/profile":
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/api/profile/password":
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/api/logout":
+		return true
+	}
+	return false
 }
 
 func randomToken() string {
@@ -461,6 +473,12 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 				a.log.Error("session delete failed", "error", err)
 			}
 			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		// Wizard W1: a pending forced password change blocks everything except
+		// the change itself, the profile view and logout.
+		if user.MustChangePassword && !mustChangeAllowed(r) {
+			writeError(w, http.StatusForbidden, "password change required before continuing")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxKeySession{}, tokenHash)

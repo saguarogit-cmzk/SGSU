@@ -44,6 +44,15 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 	if _, err := seedAdmin(users, "admin", phc); err != nil {
 		t.Fatal(err)
 	}
+	// Most tests exercise features past the W1 forced password change.
+	adminRec, _, err := users.Get("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminRec.MustChangePassword = false
+	if err := users.Upsert(adminRec); err != nil {
+		t.Fatal(err)
+	}
 	a := &app{
 		mailKey:     mailKey,
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),

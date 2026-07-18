@@ -35,6 +35,10 @@ type userRecord struct {
 	Role      string    `json:"role"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
+	// MustChangePassword forces a password change before anything else works
+	// (wizard W1); set for the seeded bootstrap admin, admin-created users
+	// and after an admin password reset.
+	MustChangePassword bool `json:"mustChangePassword"`
 }
 
 type userStore interface {
@@ -129,12 +133,16 @@ func openPGUsers(db *sql.DB) (*pgUsers, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS users (
-		username   TEXT PRIMARY KEY,
-		phc        TEXT NOT NULL,
-		role       TEXT NOT NULL,
-		enabled    BOOLEAN NOT NULL DEFAULT true,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		username    TEXT PRIMARY KEY,
+		phc         TEXT NOT NULL,
+		role        TEXT NOT NULL,
+		enabled     BOOLEAN NOT NULL DEFAULT true,
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		must_change BOOLEAN NOT NULL DEFAULT false
 	)`); err != nil {
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change BOOLEAN NOT NULL DEFAULT false`); err != nil {
 		return nil, err
 	}
 	return &pgUsers{db: db}, nil
@@ -142,8 +150,8 @@ func openPGUsers(db *sql.DB) (*pgUsers, error) {
 
 func (s *pgUsers) Get(username string) (userRecord, bool, error) {
 	var rec userRecord
-	err := s.db.QueryRow(`SELECT username, phc, role, enabled, created_at FROM users WHERE username = $1`, username).
-		Scan(&rec.Username, &rec.PHC, &rec.Role, &rec.Enabled, &rec.CreatedAt)
+	err := s.db.QueryRow(`SELECT username, phc, role, enabled, created_at, must_change FROM users WHERE username = $1`, username).
+		Scan(&rec.Username, &rec.PHC, &rec.Role, &rec.Enabled, &rec.CreatedAt, &rec.MustChangePassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		return userRecord{}, false, nil
 	}
@@ -154,7 +162,7 @@ func (s *pgUsers) Get(username string) (userRecord, bool, error) {
 }
 
 func (s *pgUsers) List() ([]userRecord, error) {
-	rows, err := s.db.Query(`SELECT username, phc, role, enabled, created_at FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT username, phc, role, enabled, created_at, must_change FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +170,7 @@ func (s *pgUsers) List() ([]userRecord, error) {
 	var out []userRecord
 	for rows.Next() {
 		var rec userRecord
-		if err := rows.Scan(&rec.Username, &rec.PHC, &rec.Role, &rec.Enabled, &rec.CreatedAt); err != nil {
+		if err := rows.Scan(&rec.Username, &rec.PHC, &rec.Role, &rec.Enabled, &rec.CreatedAt, &rec.MustChangePassword); err != nil {
 			return nil, err
 		}
 		out = append(out, rec)
@@ -171,10 +179,10 @@ func (s *pgUsers) List() ([]userRecord, error) {
 }
 
 func (s *pgUsers) Upsert(rec userRecord) error {
-	_, err := s.db.Exec(`INSERT INTO users (username, phc, role, enabled, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (username) DO UPDATE SET phc = $2, role = $3, enabled = $4`,
-		rec.Username, rec.PHC, rec.Role, rec.Enabled, rec.CreatedAt)
+	_, err := s.db.Exec(`INSERT INTO users (username, phc, role, enabled, created_at, must_change)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (username) DO UPDATE SET phc = $2, role = $3, enabled = $4, must_change = $6`,
+		rec.Username, rec.PHC, rec.Role, rec.Enabled, rec.CreatedAt, rec.MustChangePassword)
 	return err
 }
 
@@ -205,5 +213,5 @@ func seedAdmin(store userStore, username, phc string) (bool, error) {
 		return false, nil
 	}
 	return true, store.Upsert(userRecord{Username: username, PHC: phc, Role: roleAdmin,
-		Enabled: true, CreatedAt: time.Now().UTC()})
+		Enabled: true, CreatedAt: time.Now().UTC(), MustChangePassword: true})
 }

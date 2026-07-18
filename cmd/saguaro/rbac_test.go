@@ -45,22 +45,32 @@ func loginAs(t *testing.T, srv *httptest.Server, username, password string) *htt
 
 const operatorPassword = "operator-pass-14chars"
 
-func createUser(t *testing.T, srv *httptest.Server, adminClient *http.Client, username, role string) {
+// createUser makes a user through the API and clears the W1 forced-change
+// flag so role tests exercise permissions, not the password wall.
+func createUser(t *testing.T, srv *httptest.Server, adminClient *http.Client, a *app, username, role string) {
 	t.Helper()
 	body := `{"username":"` + username + `","password":"` + operatorPassword + `","role":"` + role + `"}`
 	if resp := reqJSON(t, srv, adminClient, http.MethodPost, "/api/users", body); resp.StatusCode != http.StatusOK {
 		t.Fatalf("create %s: got %d", username, resp.StatusCode)
 	}
+	rec, _, err := a.users.Get(username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.MustChangePassword = false
+	if err := a.users.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRBACPermissionEnforcement(t *testing.T) {
-	srv, admin, _ := newTestServer(t)
+	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("admin login: %d", r.StatusCode)
 	}
-	createUser(t, srv, admin, "dnsop", roleDNSOperator)
-	createUser(t, srv, admin, "netop", roleNetworkOperator)
-	createUser(t, srv, admin, "audit", roleAuditor)
+	createUser(t, srv, admin, a, "dnsop", roleDNSOperator)
+	createUser(t, srv, admin, a, "netop", roleNetworkOperator)
+	createUser(t, srv, admin, a, "audit", roleAuditor)
 
 	dnsop := loginAs(t, srv, "dnsop", operatorPassword)
 	netop := loginAs(t, srv, "netop", operatorPassword)
@@ -102,7 +112,7 @@ func TestRBACPermissionEnforcement(t *testing.T) {
 }
 
 func TestLastAdminProtection(t *testing.T) {
-	srv, admin, _ := newTestServer(t)
+	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("admin login: %d", r.StatusCode)
 	}
@@ -113,7 +123,7 @@ func TestLastAdminProtection(t *testing.T) {
 		t.Fatalf("delete last admin: got %d, want 409", r.StatusCode)
 	}
 	// With a second admin the first one may be disabled.
-	createUser(t, srv, admin, "admin2", roleAdmin)
+	createUser(t, srv, admin, a, "admin2", roleAdmin)
 	if r := reqJSON(t, srv, admin, http.MethodPatch, "/api/users/admin", `{"enabled":false}`); r.StatusCode != http.StatusOK {
 		t.Fatalf("disable admin with backup admin: got %d, want 200", r.StatusCode)
 	}
@@ -124,11 +134,11 @@ func TestLastAdminProtection(t *testing.T) {
 }
 
 func TestProfilePasswordChange(t *testing.T) {
-	srv, admin, _ := newTestServer(t)
+	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("admin login: %d", r.StatusCode)
 	}
-	createUser(t, srv, admin, "worker", roleReadOnly)
+	createUser(t, srv, admin, a, "worker", roleReadOnly)
 	worker := loginAs(t, srv, "worker", operatorPassword)
 
 	if r := reqJSON(t, srv, worker, http.MethodPost, "/api/profile/password",

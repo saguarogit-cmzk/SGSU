@@ -55,6 +55,35 @@ func TestAddSubnetAssignsNextID(t *testing.T) {
 	}
 }
 
+func TestAddSubnetRefusesOverlap(t *testing.T) {
+	d := dhcp4Fixture()
+	overlap := SubnetSpec{Subnet: "192.168.10.128/25", PoolStart: "192.168.10.130", PoolEnd: "192.168.10.140"}
+	if _, err := AddSubnet(d, overlap); err == nil {
+		t.Fatal("overlapping subnet must be refused")
+	}
+	wider := SubnetSpec{Subnet: "192.168.0.0/16", PoolStart: "192.168.30.10", PoolEnd: "192.168.30.20"}
+	if _, err := AddSubnet(d, wider); err == nil {
+		t.Fatal("supernet overlap must be refused")
+	}
+}
+
+func TestCIDRsOverlap(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"192.168.10.0/24", "192.168.10.128/25", true},
+		{"192.168.10.0/24", "192.168.11.0/24", false},
+		{"192.168.0.0/16", "192.168.44.0/24", true},
+		{"10.0.0.0/8", "172.16.0.0/12", false},
+	}
+	for _, c := range cases {
+		if got := CIDRsOverlap(c.a, c.b); got != c.want {
+			t.Fatalf("CIDRsOverlap(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestUpdateSubnetPreservesOtherFields(t *testing.T) {
 	d := dhcp4Fixture()
 	s := SubnetSpec{Subnet: "192.168.10.0/24", PoolStart: "192.168.10.50", PoolEnd: "192.168.10.99", Router: "192.168.10.1"}

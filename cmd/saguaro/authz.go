@@ -118,7 +118,7 @@ func (a *app) apiUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot hash password")
 		return
 	}
-	rec := userRecord{Username: in.Username, PHC: phc, Role: in.Role, Enabled: true, CreatedAt: time.Now().UTC()}
+	rec := userRecord{Username: in.Username, PHC: phc, Role: in.Role, Enabled: true, CreatedAt: time.Now().UTC(), MustChangePassword: true}
 	if err := a.users.Upsert(rec); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist user")
 		return
@@ -171,6 +171,7 @@ func (a *app) apiUserUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rec.PHC = phc
+		rec.MustChangePassword = true
 		meta["passwordReset"] = true
 	}
 	// The appliance must never lose its last enabled administrator.
@@ -263,6 +264,7 @@ func (a *app) apiProfilePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.PHC = phc
+	u.MustChangePassword = false
 	if err := a.users.Upsert(u); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist user")
 		return
@@ -278,7 +280,7 @@ func (a *app) apiProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"username": u.Username, "role": u.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"username": u.Username, "role": u.Role, "mustChangePassword": u.MustChangePassword})
 }
 
 // requireUser injects the live user record after session validation; used by
