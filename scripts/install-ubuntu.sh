@@ -398,6 +398,12 @@ stub-zone:
   stub-addr: 127.0.0.1@5300
 EOF
   fi
+  # Bootstrap the DNSSEC root trust anchor. Ubuntu's unbound references
+  # /var/lib/unbound/root.key, and unbound-checkconf (and unbound itself)
+  # fail if it does not exist yet; unbound-anchor exits 1 when it writes a
+  # fresh anchor, which is expected.
+  install -d -o unbound -g unbound /var/lib/unbound
+  runuser -u unbound -- unbound-anchor -a /var/lib/unbound/root.key || true
   unbound-checkconf
 fi
 
@@ -428,6 +434,9 @@ EOF
   chown root:pdns /etc/powerdns/pdns.conf
   chmod 0640 /etc/powerdns/pdns.conf
   rm -f /etc/powerdns/pdns.d/*.conf 2>/dev/null || true
+  # apt auto-starts pdns with the default (backend-less) config, so it may be
+  # in a crash-loop and rate-limited; clear that before starting with our config.
+  systemctl reset-failed pdns 2>/dev/null || true
   systemctl restart pdns
 fi
 
