@@ -44,12 +44,12 @@ func TestGenerateObjects(t *testing.T) {
 
 func TestValidateObjectsErrors(t *testing.T) {
 	bad := []Config{
-		{Aliases: []Alias{{Name: "1bad", Type: "host", Values: []string{"1.2.3.4"}}}},          // name starts with digit
-		{Aliases: []Alias{{Name: "a", Type: "host", Values: []string{"not-ip"}}}},              // bad host value
-		{Aliases: []Alias{{Name: "a", Type: "network", Values: []string{"10.0.0.1"}}}},         // network needs CIDR
-		{Rules: []Rule{{Name: "r", Action: "accept", Proto: "any", SrcAlias: "missing"}}},      // unknown alias ref
-		{Rules: []Rule{{Name: "r", Action: "nope", Proto: "any"}}},                             // bad action
-		{Rules: []Rule{{Name: "r", Action: "accept", Proto: "any", DstPort: 80}}},              // port needs tcp/udp
+		{Aliases: []Alias{{Name: "1bad", Type: "host", Values: []string{"1.2.3.4"}}}},     // name starts with digit
+		{Aliases: []Alias{{Name: "a", Type: "host", Values: []string{"not-ip"}}}},         // bad host value
+		{Aliases: []Alias{{Name: "a", Type: "network", Values: []string{"10.0.0.1"}}}},    // network needs CIDR
+		{Rules: []Rule{{Name: "r", Action: "accept", Proto: "any", SrcAlias: "missing"}}}, // unknown alias ref
+		{Rules: []Rule{{Name: "r", Action: "nope", Proto: "any"}}},                        // bad action
+		{Rules: []Rule{{Name: "r", Action: "accept", Proto: "any", DstPort: 80}}},         // port needs tcp/udp
 	}
 	for i, c := range bad {
 		if err := c.ValidateObjects(); err == nil {
