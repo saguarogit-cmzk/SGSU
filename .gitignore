@@ -1,0 +1,8 @@
+# Build artifacts
+/saguaro.exe
+/saguaro
+dist/
+*.deb
+
+# Local tooling state
+.claude/settings.local.json

@@ -1,0 +1,3 @@
+# Saguaro does not receive unrestricted sudo. A later package installs a root-owned
+# adapter that exposes only validated, allow-listed operations.
+# Do not add "saguaro ALL=(ALL) NOPASSWD: ALL" here.

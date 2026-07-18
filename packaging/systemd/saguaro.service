@@ -1,0 +1,28 @@
+[Unit]
+Description=Saguaro Network Manager control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saguaro
+Group=saguaro
+EnvironmentFile=/etc/saguaro/saguaro.env
+LoadCredential=admin-password:/etc/saguaro/bootstrap-admin-password
+ExecStart=/usr/lib/saguaro/saguaro
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/saguaro /var/log/saguaro -/run/postgresql
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
