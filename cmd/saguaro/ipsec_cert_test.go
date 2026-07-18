@@ -38,8 +38,9 @@ func genCertKeyPEM(t *testing.T, cn string) (certPEM, keyPEM string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDer}))
+	// Trim so the values match what the handler stores (it trims PEM input).
+	certPEM = strings.TrimSpace(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))
+	keyPEM = strings.TrimSpace(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDer})))
 	return certPEM, keyPEM
 }
 
