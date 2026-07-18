@@ -16,9 +16,9 @@ func TestRouteValidate(t *testing.T) {
 		}
 	}
 	bad := []Route{
-		{Destination: "10.20.0.0", Gateway: "192.168.50.254"},   // not CIDR
-		{Destination: "10.20.0.0/16", Gateway: "not-an-ip"},      // bad gw
-		{Destination: "10.20.0.0/16", Gateway: "2001:db8::1"},    // IPv6 gw
+		{Destination: "10.20.0.0", Gateway: "192.168.50.254"}, // not CIDR
+		{Destination: "10.20.0.0/16", Gateway: "not-an-ip"},   // bad gw
+		{Destination: "10.20.0.0/16", Gateway: "2001:db8::1"}, // IPv6 gw
 		{Destination: "10.20.0.0/16", Gateway: "1.1.1.1", Interface: "bad iface"},
 	}
 	for _, r := range bad {
