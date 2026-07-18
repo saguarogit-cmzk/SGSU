@@ -605,6 +605,10 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-proxy" /usr/sbin/saguaro-proxy
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-cert" /usr/sbin/saguaro-cert
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-vpn" /usr/sbin/saguaro-vpn
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup-config" /usr/sbin/saguaro-backup-config
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-wan" /usr/sbin/saguaro-wan
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.timer" /etc/systemd/system/saguaro-wan-check.timer
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.service" /etc/systemd/system/saguaro-cert-renew.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.timer" /etc/systemd/system/saguaro-cert-renew.timer
   run install -m 0440 "$SOURCE_DIR/packaging/sudoers/saguaro-adapter" /etc/sudoers.d/saguaro-adapter

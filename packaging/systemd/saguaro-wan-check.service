@@ -1,0 +1,6 @@
+[Unit]
+Description=Saguaro multi-WAN failover health check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/saguaro-wan check

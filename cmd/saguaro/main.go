@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"saguaro.local/network-manager/internal/adapters/kea"
+	"saguaro.local/network-manager/internal/adapters/multiwan"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/nginxgen"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
@@ -65,6 +66,8 @@ type state struct {
 	ProxyApps []nginxgen.App    `json:"proxyApps,omitempty"`
 	Certs     []certRecord      `json:"certs,omitempty"`
 	VPN       *wireguard.Config `json:"vpn,omitempty"`
+	Backup    *backupConfig     `json:"backup,omitempty"`
+	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
 }
 
 type store struct {
@@ -94,6 +97,8 @@ type app struct {
 	probeUpstream func(ctx context.Context, addr string) error
 	runCert       func(ctx context.Context, args ...string) ([]byte, error)
 	runVPN        func(ctx context.Context, action string) ([]byte, error)
+	runBackupCfg  func(ctx context.Context, action string) ([]byte, error)
+	runWAN        func(ctx context.Context, action string) ([]byte, error)
 	hwMemMB       int
 	hwCores       int
 
@@ -106,7 +111,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.16.0"
+const appVersion = "0.17.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -209,6 +214,8 @@ func main() {
 		probeUpstream: defaultProbeUpstream,
 		runCert:       defaultRunCert,
 		runVPN:        defaultRunVPN,
+		runBackupCfg:  defaultRunBackupCfg,
+		runWAN:        defaultRunWAN,
 		hwMemMB:       readMemTotalMB(),
 		hwCores:       runtime.NumCPU(),
 
@@ -242,6 +249,13 @@ func main() {
 		}
 	}()
 	go a.alertLoop()
+	go func() {
+		// Daily restore-drill reminder (W11): a Warning event when overdue.
+		for {
+			a.checkRestoreDrill()
+			time.Sleep(24 * time.Hour)
+		}
+	}()
 	srv := &http.Server{Addr: listen, Handler: a.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	a.log.Info("saguaro starting", "listen", listen, "dataDir", dataDir)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
@@ -290,6 +304,12 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
 	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
 	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("GET /api/backup", a.auth(a.apiBackupGet))
+	mux.HandleFunc("POST /api/backup/apply", a.authz(permBackup, a.apiBackupApply))
+	mux.HandleFunc("POST /api/backup/run", a.authz(permBackup, a.apiBackupRunNow))
+	mux.HandleFunc("POST /api/backup/drill", a.authz(permBackup, a.apiBackupMarkDrill))
+	mux.HandleFunc("GET /api/multiwan", a.auth(a.apiWANGet))
+	mux.HandleFunc("POST /api/multiwan/apply", a.authz(permFirewall, a.apiWANApply))
 	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
 	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
 	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))

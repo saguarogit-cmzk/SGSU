@@ -63,6 +63,8 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		probeUpstream: func(context.Context, string) error { return nil },
 		runCert:       func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		runVPN:        func(context.Context, string) ([]byte, error) { return nil, nil },
+		runBackupCfg:  func(context.Context, string) ([]byte, error) { return nil, nil },
+		runWAN:        func(context.Context, string) ([]byte, error) { return nil, nil },
 		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:         st,
 		adminUser:     "admin",

@@ -1,0 +1,49 @@
+#!/bin/sh
+# saguaro-backup-config — root adapter for the backup module (SNA wizard W11).
+# Installs the backup env file and schedule, and runs on-demand backups.
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply     install the staged backup.env and the timer schedule
+#   run       run a backup now (also used to satisfy a restore-drill test)
+#   disable   stop the scheduled backup timer
+set -eu
+
+STAGED_ENV=/var/lib/saguaro/staged-backup.env
+STAGED_SCHED=/var/lib/saguaro/staged-backup.schedule
+ENV=/etc/saguaro/backup.env
+DROPDIR=/etc/systemd/system/saguaro-backup.timer.d
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED_ENV" ] || { echo "no staged backup env at $STAGED_ENV" >&2; exit 1; }
+    install -m 0640 -o root -g saguaro "$STAGED_ENV" "$ENV"
+    rm -f "$STAGED_ENV"
+    if [ -s "$STAGED_SCHED" ]; then
+      SCHED=$(cat "$STAGED_SCHED")
+      install -d -m 0755 "$DROPDIR"
+      cat >"$DROPDIR/schedule.conf" <<EOF
+[Timer]
+OnCalendar=
+OnCalendar=$SCHED
+EOF
+      rm -f "$STAGED_SCHED"
+      systemctl daemon-reload
+      systemctl enable --now saguaro-backup.timer >/dev/null 2>&1 || true
+    fi
+    logger -t saguaro-backup-config "backup configuration applied"
+    ;;
+  run)
+    systemctl start saguaro-backup.service
+    logger -t saguaro-backup-config "on-demand backup started"
+    ;;
+  disable)
+    systemctl disable --now saguaro-backup.timer 2>/dev/null || true
+    logger -t saguaro-backup-config "scheduled backup disabled"
+    ;;
+  *)
+    echo "usage: saguaro-backup-config apply|run|disable" >&2
+    exit 2
+    ;;
+esac

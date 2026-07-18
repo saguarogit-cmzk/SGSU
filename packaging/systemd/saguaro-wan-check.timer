@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic Saguaro multi-WAN failover check
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
