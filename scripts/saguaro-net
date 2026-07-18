@@ -1,0 +1,30 @@
+#!/bin/sh
+# saguaro-net — root adapter for network-interface actions (SNA).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   identify NIC SECS   blink the port LED (ethtool -p) so the physical port
+#                       can be located; runs detached, best effort
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+valid_nic() {
+  echo "$1" | grep -Eq '^[a-zA-Z0-9._-]{1,15}$' && [ -e "/sys/class/net/$1" ]
+}
+
+case "${1:-}" in
+  identify)
+    NIC="${2:-}"; SECS="${3:-10}"
+    valid_nic "$NIC" || { echo "invalid interface: ${NIC:-}" >&2; exit 1; }
+    echo "$SECS" | grep -Eq '^[0-9]{1,2}$' || SECS=10
+    [ "$SECS" -ge 1 ] && [ "$SECS" -le 30 ] || SECS=10
+    command -v ethtool >/dev/null || { echo "ethtool is not installed" >&2; exit 1; }
+    # blink for SECS seconds; detach so the API call returns immediately
+    setsid sh -c "ethtool -p '$NIC' '$SECS'" >/dev/null 2>&1 &
+    logger -t saguaro-net "identify $NIC ${SECS}s"
+    ;;
+  *)
+    echo "usage: saguaro-net identify NIC SECS" >&2
+    exit 2
+    ;;
+esac
