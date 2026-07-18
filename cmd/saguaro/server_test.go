@@ -55,20 +55,22 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		t.Fatal(err)
 	}
 	a := &app{
-		mailKey:     mailKey,
-		runFirewall: func(context.Context, string) ([]byte, error) { return nil, nil },
-		runIDS:      func(context.Context, ...string) ([]byte, error) { return nil, nil },
-		runRPZ:      func(context.Context, string) ([]byte, error) { return nil, nil },
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		store:       st,
-		adminUser:   "admin",
-		users:       users,
-		dummyPHC:    phc,
-		sessions:    sess,
-		sessionTTL:  time.Hour,
-		secure:      false,
-		ipLimiter:   newLoginLimiter(),
-		userLimiter: newLoginLimiter(),
+		mailKey:       mailKey,
+		runFirewall:   func(context.Context, string) ([]byte, error) { return nil, nil },
+		runIDS:        func(context.Context, ...string) ([]byte, error) { return nil, nil },
+		runRPZ:        func(context.Context, string) ([]byte, error) { return nil, nil },
+		runProxy:      func(context.Context, string) ([]byte, error) { return nil, nil },
+		probeUpstream: func(context.Context, string) error { return nil },
+		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:         st,
+		adminUser:     "admin",
+		users:         users,
+		dummyPHC:      phc,
+		sessions:      sess,
+		sessionTTL:    time.Hour,
+		secure:        false,
+		ipLimiter:     newLoginLimiter(),
+		userLimiter:   newLoginLimiter(),
 	}
 	srv := httptest.NewServer(a.handler())
 	t.Cleanup(srv.Close)

@@ -66,6 +66,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-backup.sh"                "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-firewall"                 "$STAGE/usr/sbin/saguaro-firewall"
 install -D -m 0755 "$ROOT/scripts/saguaro-ids"                      "$STAGE/usr/sbin/saguaro-ids"
 install -D -m 0755 "$ROOT/scripts/saguaro-rpz"                      "$STAGE/usr/sbin/saguaro-rpz"
+install -D -m 0755 "$ROOT/scripts/saguaro-proxy"                    "$STAGE/usr/sbin/saguaro-proxy"
 install -D -m 0440 "$ROOT/packaging/sudoers/saguaro-adapter"        "$STAGE/etc/sudoers.d/saguaro-adapter"
 install -D -m 0644 "$ROOT/config/saguaro.env.example"               "$STAGE/usr/share/doc/saguaro/saguaro.env.example"
 install -D -m 0644 "$ROOT/README.md"                                "$STAGE/usr/share/doc/saguaro/README.md"

@@ -1,0 +1,46 @@
+#!/bin/sh
+# saguaro-proxy — root adapter for published services (SNA wizard W5).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply    install the staged vhost file, validate with nginx -t and
+#            reload; a failing test reverts to the previous file
+#   disable  remove the published-services vhost and reload
+set -eu
+
+STAGED=/var/lib/saguaro/staged-nginx-apps.conf
+AVAIL=/etc/nginx/sites-available/saguaro-apps
+ENABLED=/etc/nginx/sites-enabled/saguaro-apps
+BACKUP=/run/saguaro/nginx-apps-backup.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED" ] || { echo "no staged vhost file at $STAGED" >&2; exit 1; }
+    install -d -m 0755 /run/saguaro
+    if [ -e "$AVAIL" ]; then cp -p "$AVAIL" "$BACKUP"; else : >"$BACKUP"; fi
+    install -m 0644 -o root -g root "$STAGED" "$AVAIL"
+    ln -sfn "$AVAIL" "$ENABLED"
+    if ! nginx -t >/dev/null 2>&1; then
+      if [ -s "$BACKUP" ]; then
+        install -m 0644 -o root -g root "$BACKUP" "$AVAIL"
+      else
+        rm -f "$AVAIL" "$ENABLED"
+      fi
+      nginx -t >/dev/null 2>&1 || true
+      echo "nginx -t rejected the configuration; previous state restored" >&2
+      exit 1
+    fi
+    systemctl reload nginx
+    logger -t saguaro-proxy "published services applied"
+    ;;
+  disable)
+    rm -f "$ENABLED" "$AVAIL"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+    logger -t saguaro-proxy "published services disabled"
+    ;;
+  *)
+    echo "usage: saguaro-proxy apply|disable" >&2
+    exit 2
+    ;;
+esac
