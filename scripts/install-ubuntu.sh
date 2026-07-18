@@ -561,6 +561,12 @@ EOF
   # Validate as _kea: the file is _kea-owned 0640 and Kea's AppArmor profile
   # denies root's dac_override, so a root `kea-dhcp4 -t` cannot open it.
   runuser -u _kea -- kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
+  # apt auto-started the Kea daemons with their default config; enable --now
+  # later will not reload it, so restart them here to pick up our config.
+  systemctl reset-failed kea-dhcp4-server kea-ctrl-agent kea-dhcp-ddns-server 2>/dev/null || true
+  systemctl restart kea-dhcp4-server
+  systemctl restart kea-dhcp-ddns-server 2>/dev/null || true
+  systemctl restart kea-ctrl-agent 2>/dev/null || true
 fi
 
 if $ENABLE_STEP_CA; then
