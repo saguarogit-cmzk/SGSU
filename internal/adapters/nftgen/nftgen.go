@@ -8,6 +8,7 @@ package nftgen
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -17,6 +18,31 @@ type PortForward struct {
 	DestIP   string `json:"destIp"`
 	DestPort int    `json:"destPort"`
 }
+
+// Alias is a named host/network/range object (like a Sophos/pfSense alias) so
+// firewall rules can reference addresses by name. It renders to an nft set
+// "alias_<name>"; the name is constrained to a valid nft identifier.
+type Alias struct {
+	Name   string   `json:"name"`
+	Type   string   `json:"type"` // host | network | range
+	Values []string `json:"values"`
+}
+
+// Rule is a custom forward-chain rule that references aliases by name. An empty
+// SrcAlias/DstAlias means "any". Rules are evaluated in order, before the
+// gateway's blanket LAN→WAN accept, so a drop/reject takes precedence.
+type Rule struct {
+	Name     string `json:"name"`
+	Action   string `json:"action"` // accept | drop | reject
+	Proto    string `json:"proto"`  // any | tcp | udp
+	SrcAlias string `json:"srcAlias"`
+	DstAlias string `json:"dstAlias"`
+	DstPort  int    `json:"dstPort"` // 0 = any (requires tcp/udp when set)
+	Enabled  bool   `json:"enabled"`
+}
+
+var aliasNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
+var ruleNameRe = regexp.MustCompile(`^[A-Za-z0-9 ._-]{1,40}$`)
 
 type Config struct {
 	AdminNetwork  string `json:"adminNetwork"`  // CIDR allowed to SSH/HTTPS
@@ -32,6 +58,128 @@ type Config struct {
 	// inline inspection; `bypass` keeps traffic flowing if Suricata dies
 	// (fail-open by design — W9).
 	IPSEnabled bool `json:"ipsEnabled"`
+
+	// Aliases are named address objects; Rules are custom forward-chain rules
+	// that reference them. Both are edited in the Firewall objects/rules pages.
+	Aliases []Alias `json:"aliases,omitempty"`
+	Rules   []Rule  `json:"rules,omitempty"`
+}
+
+func validAliasValue(typ, v string) bool {
+	v = strings.TrimSpace(v)
+	switch typ {
+	case "host":
+		ip := net.ParseIP(v)
+		return ip != nil && ip.To4() != nil
+	case "network":
+		return validCIDR4(v)
+	case "range":
+		parts := strings.SplitN(v, "-", 2)
+		if len(parts) != 2 {
+			return false
+		}
+		a, b := net.ParseIP(strings.TrimSpace(parts[0])), net.ParseIP(strings.TrimSpace(parts[1]))
+		return a != nil && a.To4() != nil && b != nil && b.To4() != nil
+	}
+	return false
+}
+
+// ValidateObjects checks only the aliases and rules (not the base firewall
+// config), so they can be edited before the gateway is fully configured.
+func (c Config) ValidateObjects() error { return c.validateObjects() }
+
+// validateObjects checks aliases and the rules that reference them.
+func (c Config) validateObjects() error {
+	names := map[string]bool{}
+	for _, a := range c.Aliases {
+		if !aliasNameRe.MatchString(a.Name) {
+			return fmt.Errorf("invalid alias name %q (start with a letter; a-z 0-9 _)", a.Name)
+		}
+		if names[a.Name] {
+			return fmt.Errorf("duplicate alias %q", a.Name)
+		}
+		names[a.Name] = true
+		if a.Type != "host" && a.Type != "network" && a.Type != "range" {
+			return fmt.Errorf("alias %q type must be host, network or range", a.Name)
+		}
+		if len(a.Values) == 0 {
+			return fmt.Errorf("alias %q needs at least one value", a.Name)
+		}
+		for _, v := range a.Values {
+			if !validAliasValue(a.Type, v) {
+				return fmt.Errorf("alias %q has an invalid %s value %q", a.Name, a.Type, v)
+			}
+		}
+	}
+	ruleNames := map[string]bool{}
+	for _, r := range c.Rules {
+		if !ruleNameRe.MatchString(r.Name) {
+			return fmt.Errorf("rule name must be 1-40 characters (letters, digits, space . _ -)")
+		}
+		if ruleNames[r.Name] {
+			return fmt.Errorf("duplicate rule %q", r.Name)
+		}
+		ruleNames[r.Name] = true
+		if r.Action != "accept" && r.Action != "drop" && r.Action != "reject" {
+			return fmt.Errorf("rule %q action must be accept, drop or reject", r.Name)
+		}
+		if r.Proto != "any" && r.Proto != "tcp" && r.Proto != "udp" {
+			return fmt.Errorf("rule %q protocol must be any, tcp or udp", r.Name)
+		}
+		if r.DstPort != 0 {
+			if r.Proto != "tcp" && r.Proto != "udp" {
+				return fmt.Errorf("rule %q: a destination port requires tcp or udp", r.Name)
+			}
+			if r.DstPort < 1 || r.DstPort > 65535 {
+				return fmt.Errorf("rule %q port out of range", r.Name)
+			}
+		}
+		if r.SrcAlias != "" && !names[r.SrcAlias] {
+			return fmt.Errorf("rule %q references unknown source alias %q", r.Name, r.SrcAlias)
+		}
+		if r.DstAlias != "" && !names[r.DstAlias] {
+			return fmt.Errorf("rule %q references unknown destination alias %q", r.Name, r.DstAlias)
+		}
+	}
+	return nil
+}
+
+// aliasSetType returns the nft set declaration body for an alias.
+func aliasSetType(a Alias) string {
+	interval := a.Type == "network" || a.Type == "range"
+	body := "type ipv4_addr;"
+	if interval {
+		body += " flags interval;"
+	}
+	elems := make([]string, 0, len(a.Values))
+	for _, v := range a.Values {
+		v = strings.TrimSpace(v)
+		if a.Type == "range" {
+			parts := strings.SplitN(v, "-", 2)
+			v = strings.TrimSpace(parts[0]) + "-" + strings.TrimSpace(parts[1])
+		}
+		elems = append(elems, v)
+	}
+	return fmt.Sprintf("%s elements = { %s }", body, strings.Join(elems, ", "))
+}
+
+// ruleMatch renders the match+verdict for a custom rule (without indentation).
+func ruleMatch(r Rule) string {
+	var parts []string
+	if r.SrcAlias != "" {
+		parts = append(parts, "ip saddr @alias_"+r.SrcAlias)
+	}
+	if r.DstAlias != "" {
+		parts = append(parts, "ip daddr @alias_"+r.DstAlias)
+	}
+	switch {
+	case r.DstPort != 0:
+		parts = append(parts, fmt.Sprintf("%s dport %d", r.Proto, r.DstPort))
+	case r.Proto == "tcp" || r.Proto == "udp":
+		parts = append(parts, "meta l4proto "+r.Proto)
+	}
+	parts = append(parts, "counter", r.Action)
+	return strings.Join(parts, " ")
 }
 
 func validIface(name string) bool {
@@ -60,6 +208,9 @@ func (c Config) Validate() error {
 	}
 	if c.DHCPInterface != "" && !validIface(c.DHCPInterface) {
 		return fmt.Errorf("invalid DHCP interface name")
+	}
+	if err := c.validateObjects(); err != nil {
+		return err
 	}
 	if !c.GatewayEnabled {
 		return nil
@@ -100,7 +251,11 @@ func (c Config) Generate() (string, error) {
 	b.WriteString("flush ruleset\n")
 	b.WriteString("table inet saguaro {\n")
 	fmt.Fprintf(&b, "  set mgmt4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.AdminNetwork)
-	fmt.Fprintf(&b, "  set clients4 { type ipv4_addr; flags interval; elements = { %s } }\n\n", c.ClientNetwork)
+	fmt.Fprintf(&b, "  set clients4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.ClientNetwork)
+	for _, a := range c.Aliases {
+		fmt.Fprintf(&b, "  set alias_%s { %s }\n", a.Name, aliasSetType(a))
+	}
+	b.WriteString("\n")
 	b.WriteString("  chain input {\n")
 	b.WriteString("    type filter hook input priority filter; policy drop;\n")
 	b.WriteString("    ct state established,related accept\n")
@@ -118,17 +273,36 @@ func (c Config) Generate() (string, error) {
 	b.WriteString("  }\n\n")
 	b.WriteString("  chain forward {\n")
 	b.WriteString("    type filter hook forward priority filter; policy drop;\n")
-	if c.GatewayEnabled {
+	hasRules := false
+	for _, r := range c.Rules {
+		if r.Enabled {
+			hasRules = true
+			break
+		}
+	}
+	if c.GatewayEnabled || hasRules {
 		b.WriteString("    ct state established,related accept\n")
 		b.WriteString("    ct state invalid drop\n")
-		if c.IPSEnabled {
-			b.WriteString("    ct state new queue num 0 bypass\n")
+	}
+	if c.GatewayEnabled && c.IPSEnabled {
+		b.WriteString("    ct state new queue num 0 bypass\n")
+	}
+	// Custom rules first, so an explicit drop/reject wins over the blanket
+	// LAN→WAN accept that follows in gateway mode.
+	for _, r := range c.Rules {
+		if !r.Enabled {
+			continue
 		}
+		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r), r.Name)
+	}
+	if c.GatewayEnabled {
 		fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", c.LANInterface, c.WANInterface)
 		for _, pf := range c.PortForwards {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s %s dport %d ct state new accept\n",
 				c.WANInterface, pf.DestIP, pf.Proto, pf.DestPort)
 		}
+	}
+	if c.GatewayEnabled || hasRules {
 		b.WriteString("    counter log prefix \"SNA-FWD-DROP \" drop\n")
 	}
 	b.WriteString("  }\n")

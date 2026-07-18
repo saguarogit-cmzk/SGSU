@@ -31,6 +31,8 @@ func (a *app) getGateway() (nftgen.Config, bool) {
 	}
 	cfg := *a.store.data.Gateway
 	cfg.PortForwards = append([]nftgen.PortForward(nil), cfg.PortForwards...)
+	cfg.Aliases = append([]nftgen.Alias(nil), cfg.Aliases...)
+	cfg.Rules = append([]nftgen.Rule(nil), cfg.Rules...)
 	return cfg, true
 }
 
@@ -114,6 +116,11 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict,
 			"deployment mode is 'router'; switch System profile to Gateway to enable WAN/NAT")
 		return
+	}
+	// The gateway form does not carry firewall aliases/rules; keep the ones the
+	// Firewall pages own so saving the gateway never wipes them.
+	if cur, ok := a.getGateway(); ok {
+		in.Aliases, in.Rules = cur.Aliases, cur.Rules
 	}
 	if err := a.setGateway(in); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist gateway configuration")
