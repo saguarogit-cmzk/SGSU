@@ -362,9 +362,12 @@ if ! $DRY_RUN; then
   # entirely — the appliance runs its own resolver — and point resolv.conf
   # at Unbound with a static file.
   systemctl disable --now systemd-resolved 2>/dev/null || true
+  # resolved is disabled so nothing rewrites resolv.conf; keep it a plain,
+  # mutable file so reruns can update it (an earlier immutable flag, if any,
+  # is cleared first).
+  chattr -i /etc/resolv.conf 2>/dev/null || true
   rm -f /etc/resolv.conf
   printf 'nameserver 127.0.0.1\noptions edns0 trust-ad\n' >/etc/resolv.conf
-  chattr +i /etc/resolv.conf 2>/dev/null || true
 fi
 
 log "Configuring Unbound resolver"
