@@ -1,0 +1,66 @@
+#!/bin/sh
+# saguaro-ipsec — root adapter for the IPsec IKEv2 site-to-site module.
+# Installs the generated swanctl.conf and loads it into strongSwan (charon).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply    install the staged swanctl.conf, enable forwarding, (re)start
+#            strongSwan and load the connections; failure restores the backup
+#   disable  unload connections and stop strongSwan
+set -eu
+
+STAGED=/var/lib/saguaro/staged-swanctl.conf
+ACTIVE=/etc/swanctl/swanctl.conf
+BACKUP=/run/saguaro/swanctl-backup.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+# strongSwan's swanctl daemon unit is "strongswan" on current Ubuntu; fall back
+# to the legacy starter unit name if that is what is installed.
+svc_name() {
+  if systemctl list-unit-files 2>/dev/null | grep -q '^strongswan\.service'; then
+    echo strongswan
+  else
+    echo strongswan-starter
+  fi
+}
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
+    command -v swanctl >/dev/null || { echo "strongswan-swanctl is not installed" >&2; exit 1; }
+    install -d -m 0700 /etc/swanctl
+    install -d -m 0755 /run/saguaro
+    if [ -e "$ACTIVE" ]; then cp -p "$ACTIVE" "$BACKUP"; else : >"$BACKUP"; fi
+    install -m 0600 -o root -g root "$STAGED" "$ACTIVE"
+    # The staged copy holds the preshared keys; remove it once installed.
+    rm -f "$STAGED"
+    printf 'net.ipv4.ip_forward=1\n' >/etc/sysctl.d/99-saguaro-forward.conf
+    sysctl -q -w net.ipv4.ip_forward=1
+    SVC=$(svc_name)
+    systemctl enable "$SVC" >/dev/null 2>&1 || true
+    systemctl restart "$SVC"
+    if ! swanctl --load-all; then
+      if [ -s "$BACKUP" ]; then
+        install -m 0600 -o root -g root "$BACKUP" "$ACTIVE"
+      else
+        rm -f "$ACTIVE"
+      fi
+      swanctl --load-all >/dev/null 2>&1 || true
+      echo "swanctl failed to load the new configuration; previous state restored" >&2
+      exit 1
+    fi
+    logger -t saguaro-ipsec "ipsec configuration applied"
+    ;;
+  disable)
+    rm -f "$ACTIVE"
+    # Loading an absent/empty config unloads the connections from charon.
+    swanctl --load-all >/dev/null 2>&1 || true
+    SVC=$(svc_name)
+    systemctl disable --now "$SVC" 2>/dev/null || true
+    logger -t saguaro-ipsec "ipsec disabled"
+    ;;
+  *)
+    echo "usage: saguaro-ipsec apply|disable" >&2
+    exit 2
+    ;;
+esac

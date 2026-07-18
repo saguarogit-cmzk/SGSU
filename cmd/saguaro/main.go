@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"saguaro.local/network-manager/internal/adapters/ipsec"
 	"saguaro.local/network-manager/internal/adapters/kea"
 	"saguaro.local/network-manager/internal/adapters/multiwan"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
@@ -72,6 +73,7 @@ type state struct {
 	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
 	Routes    *routesmod.Config `json:"routes,omitempty"`
 	S2S       *s2s.Config       `json:"s2s,omitempty"`
+	IPsec     *ipsec.Config     `json:"ipsec,omitempty"`
 	// SystemProfile is the deployment mode: "gateway" (firewall/gateway/VPN) or
 	// "router" (local DHCP/DNS/router behind another gateway).
 	SystemProfile string `json:"systemProfile,omitempty"`
@@ -108,6 +110,7 @@ type app struct {
 	runWAN         func(ctx context.Context, action string) ([]byte, error)
 	runRoute       func(ctx context.Context, action string) ([]byte, error)
 	runS2S         func(ctx context.Context, action string) ([]byte, error)
+	runIPsec       func(ctx context.Context, action string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -122,7 +125,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.21.0"
+const appVersion = "0.22.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -230,6 +233,7 @@ func main() {
 		runWAN:         defaultRunWAN,
 		runRoute:       defaultRunRoute,
 		runS2S:         defaultRunS2S,
+		runIPsec:       defaultRunIPsec,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -334,6 +338,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/s2s/apply", a.authz(permFirewall, a.apiS2SApply))
 	mux.HandleFunc("POST /api/s2s/sites", a.authz(permFirewall, a.apiS2SSiteAdd))
 	mux.HandleFunc("DELETE /api/s2s/sites/{name}", a.authz(permFirewall, a.apiS2SSiteDelete))
+	mux.HandleFunc("GET /api/ipsec", a.auth(a.apiIPsecGet))
+	mux.HandleFunc("POST /api/ipsec/apply", a.authz(permFirewall, a.apiIPsecApply))
+	mux.HandleFunc("POST /api/ipsec/connections", a.authz(permFirewall, a.apiIPsecConnAdd))
+	mux.HandleFunc("DELETE /api/ipsec/connections/{name}", a.authz(permFirewall, a.apiIPsecConnDelete))
 	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
 	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
 	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))

@@ -165,7 +165,8 @@ base_packages=(ca-certificates curl gpg openssl jq age dnsutils
   postgresql postgresql-client
   kea-dhcp4-server kea-dhcp-ddns-server kea-admin kea-ctrl-agent
   unbound dns-root-data pdns-server pdns-backend-pgsql
-  nginx nftables certbot wireguard-tools ethtool)
+  nginx nftables certbot wireguard-tools ethtool
+  strongswan strongswan-swanctl)
 # Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
 # go.mod dependencies are pinned to stay compatible with it).
 [[ -z $DEB_SOURCE ]] && base_packages+=(golang-go)
@@ -666,6 +667,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-net" /usr/sbin/saguaro-net
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-route" /usr/sbin/saguaro-route
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-s2s" /usr/sbin/saguaro-s2s
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ipsec" /usr/sbin/saguaro-ipsec
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-routes.service" /etc/systemd/system/saguaro-routes.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.timer" /etc/systemd/system/saguaro-wan-check.timer
