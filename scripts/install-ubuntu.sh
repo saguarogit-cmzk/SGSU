@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_ROOT=/var/backups/saguaro-installer
 LOG_FILE=/var/log/saguaro-install.log
@@ -16,6 +16,7 @@ DNS_DOMAIN="home.arpa"
 SERVER_NAME="$(hostname -f 2>/dev/null || hostname)"
 CA_NAME="Saguaro Internal CA"
 CA_DNS=""
+DEB_SOURCE=""
 NON_INTERACTIVE=false
 ENABLE_FIREWALL=true
 ENABLE_DOCKER=false
@@ -43,6 +44,9 @@ Usage: sudo ./scripts/install-ubuntu.sh [options]
   --dhcp-router IP           Default gateway offered to clients
   --ca-name NAME             Internal CA display name
   --ca-dns FQDN              Step CA name (default: ca.<dns-domain>)
+  --deb PATH|URL             Install the prebuilt saguaro .deb (from CI) instead of
+                             building from source on this host (recommended; avoids
+                             installing a Go toolchain on the appliance)
   --with-docker              Install Docker (off by default: it manipulates netfilter)
   --without-step-ca          Do not initialize Step CA
   --without-monitoring       Do not install node exporter
@@ -71,6 +75,7 @@ while (($#)); do
     --dhcp-router) DHCP_ROUTER=${2:?}; shift 2 ;;
     --ca-name) CA_NAME=${2:?}; shift 2 ;;
     --ca-dns) CA_DNS=${2:?}; shift 2 ;;
+    --deb) DEB_SOURCE=${2:?}; shift 2 ;;
     --with-docker) ENABLE_DOCKER=true; shift ;;
     --without-step-ca) ENABLE_STEP_CA=false; shift ;;
     --without-monitoring) ENABLE_MONITORING=false; shift ;;
@@ -156,7 +161,10 @@ base_packages=(ca-certificates curl gpg openssl jq age dnsutils
   postgresql postgresql-client
   kea-dhcp4-server kea-dhcp-ddns-server kea-admin kea-ctrl-agent
   unbound pdns-server pdns-backend-pgsql
-  nginx nftables certbot golang-go)
+  nginx nftables certbot)
+# Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
+# go.mod dependencies are pinned to stay compatible with it).
+[[ -z $DEB_SOURCE ]] && base_packages+=(golang-go)
 $ENABLE_DOCKER && base_packages+=(docker.io docker-compose-v2)
 $ENABLE_MONITORING && base_packages+=(prometheus-node-exporter)
 log "Installing Ubuntu packages"
@@ -233,16 +241,30 @@ if ! $DRY_RUN; then
   fi
 fi
 
-log "Building Saguaro control plane"
-run install -d -m 0755 /usr/lib/saguaro
-if ! $DRY_RUN; then
-  (cd "$SOURCE_DIR" && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/lib/saguaro/saguaro ./cmd/saguaro)
+if [[ -n $DEB_SOURCE ]]; then
+  log "Installing Saguaro control plane package: $DEB_SOURCE"
+  DEB_PATH=$DEB_SOURCE
+  if [[ $DEB_SOURCE =~ ^https?:// ]]; then
+    DEB_PATH=$(mktemp --suffix=.deb /tmp/saguaro-XXXXXX)
+    run curl -fsSL -o "$DEB_PATH" "$DEB_SOURCE"
+  fi
+  [[ $DEB_PATH == /* ]] || DEB_PATH="$(pwd)/$DEB_PATH"
+  [[ -s $DEB_PATH ]] || $DRY_RUN || die "Package not found: $DEB_PATH"
+  # apt (not dpkg -i) so declared dependencies resolve; postinst creates the
+  # saguaro user and directories, units land in /usr/lib/systemd/system.
+  run apt-get install -y "$DEB_PATH"
+else
+  log "Building Saguaro control plane from source (no --deb given; prefer the CI-built package)"
+  run install -d -m 0755 /usr/lib/saguaro
+  if ! $DRY_RUN; then
+    (cd "$SOURCE_DIR" && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/lib/saguaro/saguaro ./cmd/saguaro)
+  fi
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro.service" /etc/systemd/system/saguaro.service
 fi
 run useradd --system --home-dir /var/lib/saguaro --shell /usr/sbin/nologin saguaro 2>/dev/null || true
 run install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
 run install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro
 run install -d -o root -g saguaro -m 0750 /etc/saguaro
-run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro.service" /etc/systemd/system/saguaro.service
 
 ADMIN_PASSWORD_FILE=/etc/saguaro/bootstrap-admin-password
 if [[ ! -s $ADMIN_PASSWORD_FILE ]] && ! $DRY_RUN; then
@@ -516,10 +538,12 @@ EOF
   nginx -t
 fi
 
-log "Installing backup job"
-run install -m 0750 "$SOURCE_DIR/scripts/saguaro-backup.sh" /usr/local/sbin/saguaro-backup
-run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.service" /etc/systemd/system/saguaro-backup.service
-run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.timer" /etc/systemd/system/saguaro-backup.timer
+if [[ -z $DEB_SOURCE ]]; then
+  log "Installing backup job"
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup.sh" /usr/sbin/saguaro-backup
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.service" /etc/systemd/system/saguaro-backup.service
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.timer" /etc/systemd/system/saguaro-backup.timer
+fi
 
 if $ENABLE_FIREWALL; then
   log "Configuring nftables host firewall"

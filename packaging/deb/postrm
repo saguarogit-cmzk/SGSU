@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
+
+# Per the SNA specification, removing a module never deletes its configuration:
+# /etc/saguaro, /var/lib/saguaro and the PostgreSQL databases are intentionally
+# left in place even on purge. Remove them manually if you really want a wipe.
+exit 0

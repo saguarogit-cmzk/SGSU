@@ -3,7 +3,7 @@ Description=Saguaro configuration backup
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/saguaro-backup
+ExecStart=/usr/sbin/saguaro-backup
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

@@ -1,0 +1,15 @@
+Package: saguaro
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Saguaro DevOps <saguaro.devops@gmail.com>
+Section: net
+Priority: optional
+Depends: adduser
+Recommends: postgresql, unbound, pdns-server, pdns-backend-pgsql, kea-dhcp4-server, kea-dhcp-ddns-server, nftables, nginx
+Homepage: https://github.com/saguarogit-cmzk/SGSU
+Description: Saguaro Network Appliance control plane
+ Web GUI and API for managing the Saguaro DHCP/DNS appliance
+ (Kea DHCP, Unbound, PowerDNS, nftables, PostgreSQL).
+ The package ships the control-plane binary, systemd units and the
+ backup job; system configuration is performed by the Saguaro
+ installer (scripts/install-ubuntu.sh) or the GUI wizards.

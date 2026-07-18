@@ -34,6 +34,13 @@ sudo ./scripts/install-ubuntu.sh \
   --dhcp-router 192.168.10.1
 ```
 
+Preporučeno je dodati `--deb <putanja-ili-URL>` s gotovim `saguaro_*.deb` paketom
+koji builda CI (GitHub Actions, `.github/workflows/build-deb.yml`; artefakti za
+amd64 i arm64, uz release na `v*` tagove). Tada se na uređaj ne instalira Go
+toolchain niti se builda iz izvornog koda — bitno na slabijem hardveru. Bez
+`--deb` installer i dalje builda lokalno (fallback za offline instalacije).
+Paket se može ručno složiti i na bilo kojem Linuxu sa `scripts/build-deb.sh`.
+
 Najprije je preporučeno pregledati plan s `--dry-run`. Ako se DHCP parametri izostave,
 Kea se instalira, ali se ne pokreće. To sprječava slučajno pokretanje drugog DHCP
 servera na produkcijskoj mreži.

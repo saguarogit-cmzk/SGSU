@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    if ! getent passwd saguaro >/dev/null; then
+      adduser --system --group --home /var/lib/saguaro --no-create-home \
+        --shell /usr/sbin/nologin saguaro
+    fi
+    install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
+    install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro
+    install -d -o root -g saguaro -m 0750 /etc/saguaro
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+      # Restart a previously configured instance on upgrade; a fresh install
+      # stays stopped until the Saguaro installer provides /etc/saguaro.
+      if [ -n "$2" ] && systemctl is-enabled --quiet saguaro.service 2>/dev/null; then
+        systemctl restart saguaro.service || true
+      fi
+    fi
+    ;;
+esac
+
+exit 0
