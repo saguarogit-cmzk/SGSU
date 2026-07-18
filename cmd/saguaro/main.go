@@ -26,6 +26,7 @@ import (
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/nginxgen"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
+	"saguaro.local/network-manager/internal/adapters/wireguard"
 	evstore "saguaro.local/network-manager/internal/events"
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
@@ -54,15 +55,16 @@ type auditEvent struct {
 }
 
 type state struct {
-	Version   int             `json:"version"`
-	Services  []service       `json:"services"`
-	Audit     []auditEvent    `json:"audit"`
-	Mail      *mailmod.Config `json:"mail,omitempty"`
-	Gateway   *nftgen.Config  `json:"gateway,omitempty"`
-	IDS       *idsState       `json:"ids,omitempty"`
-	RPZ       *rpzmod.Config  `json:"rpz,omitempty"`
-	ProxyApps []nginxgen.App  `json:"proxyApps,omitempty"`
-	Certs     []certRecord    `json:"certs,omitempty"`
+	Version   int               `json:"version"`
+	Services  []service         `json:"services"`
+	Audit     []auditEvent      `json:"audit"`
+	Mail      *mailmod.Config   `json:"mail,omitempty"`
+	Gateway   *nftgen.Config    `json:"gateway,omitempty"`
+	IDS       *idsState         `json:"ids,omitempty"`
+	RPZ       *rpzmod.Config    `json:"rpz,omitempty"`
+	ProxyApps []nginxgen.App    `json:"proxyApps,omitempty"`
+	Certs     []certRecord      `json:"certs,omitempty"`
+	VPN       *wireguard.Config `json:"vpn,omitempty"`
 }
 
 type store struct {
@@ -91,6 +93,7 @@ type app struct {
 	runProxy      func(ctx context.Context, action string) ([]byte, error)
 	probeUpstream func(ctx context.Context, addr string) error
 	runCert       func(ctx context.Context, args ...string) ([]byte, error)
+	runVPN        func(ctx context.Context, action string) ([]byte, error)
 	hwMemMB       int
 	hwCores       int
 
@@ -103,7 +106,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.15.0"
+const appVersion = "0.16.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -205,6 +208,7 @@ func main() {
 		runProxy:      defaultRunProxy,
 		probeUpstream: defaultProbeUpstream,
 		runCert:       defaultRunCert,
+		runVPN:        defaultRunVPN,
 		hwMemMB:       readMemTotalMB(),
 		hwCores:       runtime.NumCPU(),
 
@@ -286,6 +290,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
 	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
 	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
+	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
+	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))
+	mux.HandleFunc("DELETE /api/vpn/peers/{name}", a.authz(permFirewall, a.apiVPNPeerDelete))
 	mux.HandleFunc("GET /api/certs", a.auth(a.apiCertsList))
 	mux.HandleFunc("POST /api/certs/issue", a.authz(permCerts, a.apiCertIssue))
 	mux.HandleFunc("POST /api/certs/{name}/deploy-gui", a.authz(permCerts, a.apiCertDeployGUI))

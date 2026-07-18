@@ -165,7 +165,7 @@ base_packages=(ca-certificates curl gpg openssl jq age dnsutils
   postgresql postgresql-client
   kea-dhcp4-server kea-dhcp-ddns-server kea-admin kea-ctrl-agent
   unbound pdns-server pdns-backend-pgsql
-  nginx nftables certbot)
+  nginx nftables certbot wireguard-tools)
 # Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
 # go.mod dependencies are pinned to stay compatible with it).
 [[ -z $DEB_SOURCE ]] && base_packages+=(golang-go)
@@ -604,6 +604,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-rpz" /usr/sbin/saguaro-rpz
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-proxy" /usr/sbin/saguaro-proxy
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-cert" /usr/sbin/saguaro-cert
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-vpn" /usr/sbin/saguaro-vpn
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.service" /etc/systemd/system/saguaro-cert-renew.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.timer" /etc/systemd/system/saguaro-cert-renew.timer
   run install -m 0440 "$SOURCE_DIR/packaging/sudoers/saguaro-adapter" /etc/sudoers.d/saguaro-adapter

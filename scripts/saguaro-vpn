@@ -1,0 +1,48 @@
+#!/bin/sh
+# saguaro-vpn — root adapter for the WireGuard VPN module (SNA wizard W7).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply    install the staged wg0.conf and (re)start wg-quick@wg0;
+#            a failed start restores the previous configuration
+#   disable  stop and disable the VPN interface
+set -eu
+
+STAGED=/var/lib/saguaro/staged-wg0.conf
+ACTIVE=/etc/wireguard/wg0.conf
+BACKUP=/run/saguaro/wg0-backup.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
+    command -v wg >/dev/null || { echo "wireguard-tools is not installed" >&2; exit 1; }
+    install -d -m 0700 /etc/wireguard
+    install -d -m 0755 /run/saguaro
+    if [ -e "$ACTIVE" ]; then cp -p "$ACTIVE" "$BACKUP"; else : >"$BACKUP"; fi
+    install -m 0600 -o root -g root "$STAGED" "$ACTIVE"
+    # The staged copy holds the private key; remove it once installed.
+    rm -f "$STAGED"
+    if ! systemctl restart wg-quick@wg0; then
+      if [ -s "$BACKUP" ]; then
+        install -m 0600 -o root -g root "$BACKUP" "$ACTIVE"
+        systemctl restart wg-quick@wg0 || true
+      else
+        rm -f "$ACTIVE"
+        systemctl stop wg-quick@wg0 || true
+      fi
+      echo "wg-quick failed to start with the new configuration; previous state restored" >&2
+      exit 1
+    fi
+    systemctl enable wg-quick@wg0 >/dev/null 2>&1 || true
+    logger -t saguaro-vpn "wireguard configuration applied"
+    ;;
+  disable)
+    systemctl disable --now wg-quick@wg0 2>/dev/null || true
+    logger -t saguaro-vpn "wireguard disabled"
+    ;;
+  *)
+    echo "usage: saguaro-vpn apply|disable" >&2
+    exit 2
+    ;;
+esac

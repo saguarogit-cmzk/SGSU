@@ -68,6 +68,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-ids"                      "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-rpz"                      "$STAGE/usr/sbin/saguaro-rpz"
 install -D -m 0755 "$ROOT/scripts/saguaro-proxy"                    "$STAGE/usr/sbin/saguaro-proxy"
 install -D -m 0755 "$ROOT/scripts/saguaro-cert"                     "$STAGE/usr/sbin/saguaro-cert"
+install -D -m 0755 "$ROOT/scripts/saguaro-vpn"                      "$STAGE/usr/sbin/saguaro-vpn"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-cert-renew.service" "$STAGE/usr/lib/systemd/system/saguaro-cert-renew.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-cert-renew.timer"   "$STAGE/usr/lib/systemd/system/saguaro-cert-renew.timer"
 install -D -m 0440 "$ROOT/packaging/sudoers/saguaro-adapter"        "$STAGE/etc/sudoers.d/saguaro-adapter"
