@@ -4,7 +4,11 @@
 #
 #   identify NIC SECS   blink the port LED (ethtool -p) so the physical port
 #                       can be located; runs detached, best effort
+#   wan-apply           install the staged WAN netplan and apply it
 set -eu
+
+STAGED_WAN=/var/lib/saguaro/staged-wan-netplan.yaml
+WAN_DEST=/etc/netplan/60-saguaro-wan.yaml
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -23,8 +27,24 @@ case "${1:-}" in
     setsid sh -c "ethtool -p '$NIC' '$SECS'" >/dev/null 2>&1 &
     logger -t saguaro-net "identify $NIC ${SECS}s"
     ;;
+  wan-apply)
+    [ -s "$STAGED_WAN" ] || { echo "no staged WAN netplan at $STAGED_WAN" >&2; exit 1; }
+    # The control plane validates every value; keep the file to a safe charset.
+    if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$STAGED_WAN"; then
+      echo "staged WAN netplan contains unexpected characters; refusing" >&2
+      exit 1
+    fi
+    install -m 0600 -o root -g root "$STAGED_WAN" "$WAN_DEST"
+    rm -f "$STAGED_WAN"
+    if ! netplan generate; then
+      echo "netplan generate failed; WAN configuration not applied" >&2
+      exit 1
+    fi
+    netplan apply
+    logger -t saguaro-net "wan netplan applied"
+    ;;
   *)
-    echo "usage: saguaro-net identify NIC SECS" >&2
+    echo "usage: saguaro-net identify NIC SECS | wan-apply" >&2
     exit 2
     ;;
 esac

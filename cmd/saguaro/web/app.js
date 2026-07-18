@@ -44,11 +44,24 @@ async function monitoring(){const rows=await api('/api/events?limit=100');$('#co
 const ROLES=['admin','network-operator','dns-operator','auditor','read-only'];
 const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split(':');return{proto:p[0],extPort:parseInt(p[1],10),destIp:p[2],destPort:parseInt(p[3],10)}});
 const pfFormat=l=>(l||[]).map(p=>`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
-async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};
+async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};const wanCfg=(await api('/api/wan').catch(()=>({config:{mode:'dhcp'}}))).config||{mode:'dhcp'};
+const wanPanel=`<div class="panel"><h2>WAN adresa</h2>
+${help('Odaberi kako WAN (prema internetu) dobiva adresu. <b>Dinamička (DHCP)</b> — adresu daje provajder/ruter. <b>Statička</b> — upiši <b>IP/CIDR</b> (npr. <code>203.0.113.5/24</code>), <b>gateway</b> provajdera i <b>DNS</b>. Primjena piše netplan i radi <code>netplan apply</code> na WAN sučelju — pazi da mijenjaš pravi NIC (provjeri u Interfaces). Upravljački pristup ide preko mgmt sučelja pa promjena WAN-a ne prekida GUI.')}
+<form id="wanForm" class="stack">
+<label>WAN sučelje <input id="wanIf" value="${escapeHtml(wanCfg.interface||c.wanInterface||'')}" placeholder="enp1s0"></label>
+<label>Način adrese <select id="wanMode"><option value="dhcp" ${wanCfg.mode!=='static'?'selected':''}>Dinamička (DHCP)</option><option value="static" ${wanCfg.mode==='static'?'selected':''}>Statička</option></select></label>
+<div id="wanStatic" style="${wanCfg.mode==='static'?'':'display:none'}">
+<label>IP adresa (CIDR) <input id="wanAddr" value="${escapeHtml(wanCfg.address||'')}" placeholder="203.0.113.5/24"></label>
+<label>Gateway <input id="wanGw" value="${escapeHtml(wanCfg.gateway||'')}" placeholder="203.0.113.1"></label>
+<label>DNS serveri (zarezom) <input id="wanDns" value="${escapeHtml((wanCfg.dns||[]).join(', '))}" placeholder="1.1.1.1, 8.8.8.8"></label>
+</div>
+<div><button type="submit">Primijeni WAN</button></div>
+<div id="wanMsg" class="muted"></div></form></div>`;
 const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const nics=`<table><thead><tr><th>Interface</th><th>Stanje</th><th>IPv4</th></tr></thead><tbody>${(g.nics||[]).map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${escapeHtml(n.state)}</td><td>${escapeHtml((n.addresses||[]).join(', '))}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nedostupno (razvojno okruženje)</td></tr>'}</tbody></table>`;
 const nicOpt=v=>(g.nics||[]).map(n=>`<option ${n.name===v?'selected':''}>${escapeHtml(n.name)}</option>`).join('')||(v?`<option selected>${escapeHtml(v)}</option>`:'<option value="">—</option>');
 $('#content').innerHTML=`${pend}<div class="panel"><h2>Mrežna sučelja</h2>${nics}</div>
+${wanPanel}
 <div class="panel"><h2>Gateway konfiguracija</h2>
 ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-ju). <b>Klijentska mreža</b> je LAN koji poslužuje DHCP. <b>Gateway mod</b> uključuje routing WAN↔LAN — odaberi <b>WAN</b> (prema internetu) i <b>LAN</b> (prema klijentima) sučelje; ako ne znaš koji je koji fizički port, otvori <b>Interfaces</b> pa klikni Identificiraj (LED zatreperi). <b>NAT</b> ostavi uključen da klijenti izlaze na internet preko WAN adrese. <b>Port forward</b> otvara vanjski port prema unutarnjem poslužitelju (redak: <code>proto:vanjski:IP:unutarnji</code>, npr. <code>tcp:8443:192.168.10.5:443</code>). Promjena firewalla traži potvrdu unutar 120 s — ako izgubiš pristup, sustav sam vraća staru konfiguraciju.')}
 <form id="gwForm" class="stack">
@@ -64,6 +77,12 @@ ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
 const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,portForwards:pfParse($('#gwPf').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
+$('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
+$('#wanForm').onsubmit=async e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;
+const body={interface:$('#wanIf').value.trim(),mode,address:$('#wanAddr').value.trim(),gateway:$('#wanGw').value.trim(),dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean)};
+if(mode==='static'){if(!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(body.address)){m.textContent='IP adresa mora biti CIDR (npr. 203.0.113.5/24).';return}if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(body.gateway)){m.textContent='Gateway mora biti IPv4 adresa.';return}}
+if(!confirm('Primijeniti WAN adresu? Mijenja se netplan i mrežni uplink.'))return;
+m.textContent='Primjena…';try{await api('/api/wan/apply',{method:'POST',body:JSON.stringify(body)});m.textContent='WAN primijenjen.'}catch(err){m.textContent=err.message}};
 $('#gwForm').onsubmit=async e=>{e.preventDefault();$('#gwMsg').textContent='';try{await save();$('#gwMsg').textContent='Spremljeno (još nije primijenjeno).'}catch(err){$('#gwMsg').textContent=err.message}};
 $('#gwPreview').onclick=async()=>{try{await save();const p=await api('/api/gateway/preview');$('#gwRules').textContent=p.ruleset}catch(err){$('#gwMsg').textContent=err.message}};
 $('#gwApply').onclick=async()=>{if(!confirm('Primijeniti novi firewall? Ako izgubite pristup, za 120 sekundi vraća se stara konfiguracija.'))return;$('#gwMsg').textContent='Primjena…';try{await save();await api('/api/gateway/apply',{method:'POST',body:'{}'});gatewayPage()}catch(err){$('#gwMsg').textContent=err.message}};
@@ -355,7 +374,7 @@ const putRules=list=>api('/api/firewall/rules',{method:'PUT',body:JSON.stringify
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><button class="alDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
 const aliasOpt=sel=>['<option value="">(bilo koji)</option>'].concat(aliases.map(a=>`<option ${a.name===sel?'selected':''}>${e(a.name)}</option>`)).join('');
-const ruleRows=rules.length?rules.map((r,i)=>`<tr><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td><span class="badge">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td><button class="ruUp ghost" data-i="${i}">↑</button> <button class="ruDown ghost" data-i="${i}">↓</button> <button class="ruDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema pravila.</td></tr>';
+const ruleRows=rules.length?rules.map((r,i)=>`<tr><td class="muted">${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td><span class="badge">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td><button class="ruUp ghost" data-i="${i}" ${i===0?'disabled':''}>↑</button> <button class="ruDown ghost" data-i="${i}" ${i===rules.length-1?'disabled':''}>↓</button> <button class="ruDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="6" class="muted">Nema pravila.</td></tr>';
 $('#content').innerHTML=`${pend}
 <div class="panel"><h2>Firewall aliasi i pravila</h2>
 <p class="muted">Imenovani objekti (host / mreža / raspon) i custom pravila koja ih koriste po imenu. Pravila se primjenjuju u forward lancu, po redoslijedu odozgo, prije općeg LAN→WAN propuštanja — drop/reject ima prednost.</p>
@@ -370,7 +389,8 @@ ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgm
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="192.168.10.5, 192.168.10.6" required></label>
 <div><button type="submit">Dodaj alias</button></div><div id="alMsg" class="muted"></div></form></div>
 <div class="panel"><h3>Pravila (${rules.length})</h3>
-<table><thead><tr><th>Naziv</th><th>Akcija</th><th>Proto</th><th>Izvor → Odredište</th><th></th></tr></thead><tbody>${ruleRows}</tbody></table>
+<table><thead><tr><th>#</th><th>Naziv</th><th>Akcija</th><th>Proto</th><th>Izvor → Odredište</th><th></th></tr></thead><tbody>${ruleRows}</tbody></table>
+<p class="muted">Redoslijed određuje prioritet — pravila se primjenjuju odozgo. Pomiči strelicama ↑↓.</p>
 <form id="ruAdd" class="stack">
 <label>Naziv <input id="ruName" placeholder="blokiraj-goste" required></label>
 <label>Akcija <select id="ruAction"><option value="accept">accept</option><option value="drop">drop</option><option value="reject">reject</option></select></label>
@@ -435,7 +455,8 @@ const subForm=`<form id="subForm" class="stack"><h3 id="subFormTitle">Novi subne
 <p class="muted">Promjena ide kroz transakciju: config-test → config-set → provjera → config-write (uz automatski rollback na grešku).</p>
 <div id="subMsg" class="muted"></div></form>`;
 const lea=leases.err?`<p class="muted">${escapeHtml(leases.err)}</p>`:`<table><thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Subnet</th><th>Istječe</th><th></th></tr></thead><tbody>${leases.map(l=>`<tr><td>${escapeHtml(l.ip)}</td><td>${escapeHtml(l.mac)}</td><td>${escapeHtml(l.hostname||'')}</td><td>${l.subnetId}</td><td>${l.expires?new Date(l.expires*1000).toLocaleString():''}</td><td>${isBlocked(l.mac)?'<span class="badge">blokiran</span>':`<button class="leaseBlock danger" data-mac="${escapeHtml(l.mac)}">Blokiraj</button>`}</td></tr>`).join('')}</tbody></table>`;
-const blk=`<table><thead><tr><th>MAC</th><th></th></tr></thead><tbody>${blocked.length?blocked.map(m=>`<tr><td>${escapeHtml(m)}</td><td><button class="blkDel" data-mac="${escapeHtml(m)}">Odblokiraj</button></td></tr>`).join(''):'<tr><td colspan="2" class="muted">Nema blokiranih klijenata.</td></tr>'}</tbody></table>`;
+const macInfo={};(leases.err?[]:leases).forEach(l=>{if(l.mac)macInfo[l.mac.toLowerCase()]={ip:l.ip,host:l.hostname}});(resv.err?[]:resv).forEach(x=>{if(x.mac&&!macInfo[x.mac.toLowerCase()])macInfo[x.mac.toLowerCase()]={ip:x.ip,host:x.hostname}});
+const blk=`<table><thead><tr><th>MAC</th><th>IP</th><th>Naziv uređaja</th><th></th></tr></thead><tbody>${blocked.length?blocked.map(m=>{const info=macInfo[m.toLowerCase()]||{};return `<tr><td>${escapeHtml(m)}</td><td class="muted">${escapeHtml(info.ip||'—')}</td><td class="muted">${escapeHtml(info.host||'—')}</td><td><button class="blkDel" data-mac="${escapeHtml(m)}">Odblokiraj</button></td></tr>`}).join(''):'<tr><td colspan="4" class="muted">Nema blokiranih klijenata.</td></tr>'}</tbody></table>`;
 const res=resv.err?`<p class="muted">${escapeHtml(resv.err)}</p>`:`<table><thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Subnet</th><th></th></tr></thead><tbody>${resv.map(x=>`<tr><td>${escapeHtml(x.ip)}</td><td>${escapeHtml(x.mac)}</td><td>${escapeHtml(x.hostname||'')}</td><td>${x.subnetId}</td><td><button class="resDel" data-id="${x.id}">Obriši</button></td></tr>`).join('')}</tbody></table>`;
 const subOpts=subnets.err?'<option value="1">1</option>':subnets.map(s=>`<option value="${s.id}">${s.id} — ${escapeHtml(s.subnet)}</option>`).join('');
 $('#content').innerHTML=`<div class="panel"><h2>Subneti</h2>${sub}${subForm}</div><div class="panel"><h2>Aktivni leaseovi (${leases.err?'—':leases.length})</h2>${lea}</div><div class="panel"><h2>Rezervacije</h2>${res}
