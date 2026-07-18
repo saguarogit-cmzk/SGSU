@@ -5,5 +5,6 @@
 packaging/sudoers/* text eol=lf
 Makefile text eol=lf
 packaging/deb/* text eol=lf
+scripts/saguaro-firewall text eol=lf
 *.yml text eol=lf
 *.go text eol=lf
