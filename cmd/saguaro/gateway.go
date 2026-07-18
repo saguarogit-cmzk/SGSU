@@ -108,6 +108,13 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// In router mode the appliance sits behind another gateway and must not do
+	// WAN routing/NAT. Enabling gateway mode requires the "gateway" profile.
+	if in.GatewayEnabled && a.getProfile() != profileGateway {
+		writeError(w, http.StatusConflict,
+			"deployment mode is 'router'; switch System profile to Gateway to enable WAN/NAT")
+		return
+	}
 	if err := a.setGateway(in); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist gateway configuration")
 		return

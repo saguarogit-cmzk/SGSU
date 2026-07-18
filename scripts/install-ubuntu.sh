@@ -307,6 +307,19 @@ run install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
 run install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro
 run install -d -o root -g saguaro -m 0750 /etc/saguaro
 
+# Deployment mode: "gateway" (firewall/gateway/VPN/UTM) or "router" (local
+# DHCP/DNS/router behind another gateway). Override with SAGUARO_PROFILE=router.
+# Seeds only on first install; the operator can change it later in System.
+SAGUARO_PROFILE="${SAGUARO_PROFILE:-gateway}"
+if [[ "$SAGUARO_PROFILE" != "gateway" && "$SAGUARO_PROFILE" != "router" ]]; then
+  echo "SAGUARO_PROFILE must be 'gateway' or 'router'" >&2; exit 1
+fi
+if [[ ! -s /etc/saguaro/profile ]] && ! $DRY_RUN; then
+  printf '%s\n' "$SAGUARO_PROFILE" >/etc/saguaro/profile
+  chmod 0644 /etc/saguaro/profile
+  echo "deployment mode: $SAGUARO_PROFILE"
+fi
+
 ADMIN_PASSWORD_FILE=/etc/saguaro/bootstrap-admin-password
 if [[ ! -s $ADMIN_PASSWORD_FILE ]] && ! $DRY_RUN; then
   umask 0077

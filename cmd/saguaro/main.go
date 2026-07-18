@@ -70,6 +70,9 @@ type state struct {
 	Backup    *backupConfig     `json:"backup,omitempty"`
 	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
 	Routes    *routesmod.Config `json:"routes,omitempty"`
+	// SystemProfile is the deployment mode: "gateway" (firewall/gateway/VPN) or
+	// "router" (local DHCP/DNS/router behind another gateway).
+	SystemProfile string `json:"systemProfile,omitempty"`
 }
 
 type store struct {
@@ -116,7 +119,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.19.0"
+const appVersion = "0.20.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -137,6 +140,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	seedProfile(s)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	passPHC, err := hashPassword(adminPass)
 	if err != nil {
@@ -337,6 +341,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/ids", a.auth(a.apiIDSGet))
 	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.apiIDSEnable))
 	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.apiIDSDisable))
+	mux.HandleFunc("GET /api/system", a.auth(a.apiSystemGet))
+	mux.HandleFunc("PUT /api/system/profile", a.authz(permFirewall, a.apiSystemProfilePut))
 	mux.HandleFunc("GET /api/profile", a.auth(a.apiProfile))
 	mux.HandleFunc("POST /api/profile/password", a.auth(a.apiProfilePassword))
 	assets, err := fs.Sub(webFS, "web")

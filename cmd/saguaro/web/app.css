@@ -45,6 +45,18 @@ label input[type=checkbox]{width:auto;justify-self:start;accent-color:var(--bran
 fieldset{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px;margin:12px 0}
 legend{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding:0 6px}
 .stack{display:grid;gap:2px}
+label.radio{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);
+  border-radius:var(--radius-sm);margin:4px 0;cursor:pointer;line-height:1.45}
+label.radio input[type=radio]{width:auto;margin-top:3px;accent-color:var(--brand)}
+label.radio:hover{border-color:var(--line2)}
+.help{margin:8px 0 4px;border:1px solid var(--line);border-radius:var(--radius-sm);
+  background:var(--panel2);padding:0 12px}
+.help>summary{cursor:pointer;color:var(--brand);font-size:13px;font-weight:600;padding:9px 0;list-style:none}
+.help>summary::-webkit-details-marker{display:none}
+.help>summary::before{content:"\24D8";margin-right:7px}
+.help[open]>summary{border-bottom:1px solid var(--line)}
+.help>div{color:var(--muted);font-size:13px;line-height:1.55;padding:10px 0}
+.help code{background:var(--line);padding:1px 5px;border-radius:4px;font-size:12px}
 
 /* ---------- buttons ---------- */
 button{
