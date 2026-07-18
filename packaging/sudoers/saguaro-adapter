@@ -1,3 +1,5 @@
-# Saguaro does not receive unrestricted sudo. A later package installs a root-owned
-# adapter that exposes only validated, allow-listed operations.
+# Saguaro does not receive unrestricted sudo. Only the root firewall adapter
+# is allowed — a fixed path with a fixed, validated set of subcommands
+# (check/apply/confirm/rollback) and a 120 s confirm-or-rollback window.
 # Do not add "saguaro ALL=(ALL) NOPASSWD: ALL" here.
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-firewall check, /usr/sbin/saguaro-firewall apply, /usr/sbin/saguaro-firewall confirm, /usr/sbin/saguaro-firewall rollback

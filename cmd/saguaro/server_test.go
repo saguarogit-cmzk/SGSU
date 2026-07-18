@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -55,6 +56,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 	}
 	a := &app{
 		mailKey:     mailKey,
+		runFirewall: func(context.Context, string) ([]byte, error) { return nil, nil },
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:       st,
 		adminUser:   "admin",

@@ -15,12 +15,13 @@ const (
 	permMailWrite    = "mail:write"
 	permUsersWrite   = "users:write"
 	permSessions     = "sessions:revoke"
+	permFirewall     = "firewall:write"
 )
 
 var rolePermissions = map[string]map[string]bool{
 	roleAdmin: {permDNSWrite: true, permDHCPWrite: true, permServiceCheck: true,
-		permMailWrite: true, permUsersWrite: true, permSessions: true},
-	roleNetworkOperator: {permDHCPWrite: true, permServiceCheck: true},
+		permMailWrite: true, permUsersWrite: true, permSessions: true, permFirewall: true},
+	roleNetworkOperator: {permDHCPWrite: true, permServiceCheck: true, permFirewall: true},
 	roleDNSOperator:     {permDNSWrite: true, permServiceCheck: true},
 	roleAuditor:         {},
 	roleReadOnly:        {},

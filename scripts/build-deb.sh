@@ -63,6 +63,7 @@ install -D -m 0644 "$ROOT/packaging/systemd/saguaro-eventd.service" "$STAGE/usr/
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.service" "$STAGE/usr/lib/systemd/system/saguaro-backup.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.timer"   "$STAGE/usr/lib/systemd/system/saguaro-backup.timer"
 install -D -m 0755 "$ROOT/scripts/saguaro-backup.sh"                "$STAGE/usr/sbin/saguaro-backup"
+install -D -m 0755 "$ROOT/scripts/saguaro-firewall"                 "$STAGE/usr/sbin/saguaro-firewall"
 install -D -m 0440 "$ROOT/packaging/sudoers/saguaro-adapter"        "$STAGE/etc/sudoers.d/saguaro-adapter"
 install -D -m 0644 "$ROOT/config/saguaro.env.example"               "$STAGE/usr/share/doc/saguaro/saguaro.env.example"
 install -D -m 0644 "$ROOT/README.md"                                "$STAGE/usr/share/doc/saguaro/README.md"

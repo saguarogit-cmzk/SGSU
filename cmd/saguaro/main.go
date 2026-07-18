@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"saguaro.local/network-manager/internal/adapters/kea"
+	"saguaro.local/network-manager/internal/adapters/nftgen"
 	evstore "saguaro.local/network-manager/internal/events"
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
@@ -54,6 +55,7 @@ type state struct {
 	Services []service       `json:"services"`
 	Audit    []auditEvent    `json:"audit"`
 	Mail     *mailmod.Config `json:"mail,omitempty"`
+	Gateway  *nftgen.Config  `json:"gateway,omitempty"`
 }
 
 type store struct {
@@ -76,6 +78,7 @@ type app struct {
 	events      *evstore.Store // nil without PostgreSQL (development)
 	mailKey     []byte         // AES-256 key for the stored SMTP password
 	keaHosts    *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
+	runFirewall func(ctx context.Context, action string) ([]byte, error)
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -86,7 +89,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.10.0"
+const appVersion = "0.11.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -182,6 +185,7 @@ func main() {
 		events:      eventStore,
 		mailKey:     mailKey,
 		keaHosts:    keaHosts,
+		runFirewall: defaultRunFirewall,
 
 		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
 		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),
@@ -255,6 +259,12 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/users", a.authz(permUsersWrite, a.apiUserCreate))
 	mux.HandleFunc("PATCH /api/users/{name}", a.authz(permUsersWrite, a.apiUserUpdate))
 	mux.HandleFunc("DELETE /api/users/{name}", a.authz(permUsersWrite, a.apiUserDelete))
+	mux.HandleFunc("GET /api/gateway", a.auth(a.apiGatewayGet))
+	mux.HandleFunc("PUT /api/gateway", a.authz(permFirewall, a.apiGatewayPut))
+	mux.HandleFunc("GET /api/gateway/preview", a.auth(a.apiGatewayPreview))
+	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
+	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
+	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
 	mux.HandleFunc("GET /api/profile", a.auth(a.apiProfile))
 	mux.HandleFunc("POST /api/profile/password", a.auth(a.apiProfilePassword))
 	assets, err := fs.Sub(webFS, "web")

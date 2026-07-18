@@ -1,0 +1,78 @@
+#!/bin/sh
+# saguaro-firewall — the root adapter for firewall changes (SNA spec: a
+# root-owned tool exposing only validated, allow-listed operations; the
+# saguaro user may run exactly this via sudoers).
+#
+#   check     validate the staged ruleset (nft -c)
+#   apply     validate, back up, install and load the staged ruleset, then
+#             schedule an automatic rollback in 120 s unless confirmed
+#   confirm   keep the applied ruleset (cancels the pending rollback)
+#   rollback  restore the previous ruleset immediately
+#   rollback-if-pending  used by the timer; restores only when unconfirmed
+set -eu
+
+STAGED=/var/lib/saguaro/staged-nftables.conf
+ACTIVE=/etc/nftables.conf
+RUNDIR=/run/saguaro
+BACKUP=$RUNDIR/nftables-backup.conf
+FLAG=$RUNDIR/firewall-pending
+TIMER_UNIT=saguaro-fw-rollback
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+[ $# -eq 1 ] || { echo "usage: saguaro-firewall check|apply|confirm|rollback|rollback-if-pending" >&2; exit 2; }
+
+do_check() {
+  [ -s "$STAGED" ] || { echo "no staged ruleset at $STAGED" >&2; exit 1; }
+  nft -c -f "$STAGED"
+}
+
+enable_forwarding_if_needed() {
+  if grep -q "saguaro-nat" "$STAGED"; then
+    printf 'net.ipv4.ip_forward=1\n' >/etc/sysctl.d/99-saguaro-forward.conf
+    sysctl -q -w net.ipv4.ip_forward=1
+  fi
+}
+
+restore_backup() {
+  [ -s "$BACKUP" ] || { echo "no backup to restore" >&2; exit 1; }
+  install -m 0644 -o root -g root "$BACKUP" "$ACTIVE"
+  nft -f "$ACTIVE"
+  rm -f "$FLAG"
+  logger -t saguaro-firewall "previous nftables ruleset restored"
+}
+
+case "$1" in
+  check)
+    do_check
+    ;;
+  apply)
+    do_check
+    install -d -m 0755 "$RUNDIR"
+    cp -p "$ACTIVE" "$BACKUP" 2>/dev/null || : >"$BACKUP"
+    install -m 0644 -o root -g root "$STAGED" "$ACTIVE"
+    nft -f "$ACTIVE"
+    enable_forwarding_if_needed
+    : >"$FLAG"
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
+    systemd-run --unit="$TIMER_UNIT" --on-active=120 --timer-property=AccuracySec=1s \
+      /usr/sbin/saguaro-firewall rollback-if-pending >/dev/null 2>&1
+    logger -t saguaro-firewall "new ruleset applied; auto-rollback in 120 s unless confirmed"
+    ;;
+  confirm)
+    rm -f "$FLAG"
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
+    logger -t saguaro-firewall "ruleset confirmed"
+    ;;
+  rollback)
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
+    restore_backup
+    ;;
+  rollback-if-pending)
+    [ -e "$FLAG" ] || exit 0
+    restore_backup
+    ;;
+  *)
+    echo "unknown action" >&2
+    exit 2
+    ;;
+esac
