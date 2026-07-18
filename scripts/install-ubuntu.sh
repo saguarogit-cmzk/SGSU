@@ -164,7 +164,7 @@ run apt-get update
 base_packages=(ca-certificates curl gpg openssl jq age dnsutils
   postgresql postgresql-client
   kea-dhcp4-server kea-dhcp-ddns-server kea-admin kea-ctrl-agent
-  unbound pdns-server pdns-backend-pgsql
+  unbound dns-root-data pdns-server pdns-backend-pgsql
   nginx nftables certbot wireguard-tools)
 # Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
 # go.mod dependencies are pinned to stay compatible with it).
@@ -400,10 +400,15 @@ EOF
   fi
   # Bootstrap the DNSSEC root trust anchor. Ubuntu's unbound references
   # /var/lib/unbound/root.key, and unbound-checkconf (and unbound itself)
-  # fail if it does not exist yet; unbound-anchor exits 1 when it writes a
-  # fresh anchor, which is expected.
+  # fail if it does not exist yet. Minimized installs with
+  # --no-install-recommends omit unbound-anchor, so fall back to the anchor
+  # shipped by dns-root-data.
   install -d -o unbound -g unbound /var/lib/unbound
-  runuser -u unbound -- unbound-anchor -a /var/lib/unbound/root.key || true
+  if command -v unbound-anchor >/dev/null 2>&1; then
+    runuser -u unbound -- "$(command -v unbound-anchor)" -a /var/lib/unbound/root.key || true
+  elif [[ -f /usr/share/dns/root.key ]]; then
+    install -o unbound -g unbound -m 0644 /usr/share/dns/root.key /var/lib/unbound/root.key
+  fi
   unbound-checkconf
 fi
 
