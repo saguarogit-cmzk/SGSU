@@ -254,7 +254,7 @@ fi
 
 log "Initializing Kea database schema"
 if ! $DRY_RUN; then
-  if ! runuser -u postgres -- psql -d kea -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='lease4'" | grep -q 1; then
+  if ! runuser -u postgres -- psql -d kea -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='lease4'" | grep -q 1; then
     kea-admin db-init pgsql -u kea -p "$KEA_DB_PASSWORD" -n kea -h 127.0.0.1
   fi
   # The GUI manages host reservations directly in Kea's hosts table (Kea
@@ -268,7 +268,10 @@ fi
 
 log "Initializing PowerDNS database schema"
 if ! $DRY_RUN; then
-  if ! runuser -u postgres -- psql -d pdns -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='domains'" | grep -q 1; then
+  # Qualify by public schema: information_schema itself contains a standard
+  # view named "domains", so an unqualified check is always true and the real
+  # schema load would be skipped, leaving PowerDNS with no tables.
+  if ! runuser -u postgres -- psql -d pdns -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='domains'" | grep -q 1; then
     PDNS_SCHEMA=$(ls /usr/share/pdns-backend-pgsql/schema/schema.pgsql.sql /usr/share/doc/pdns-backend-pgsql/schema.pgsql.sql 2>/dev/null | head -1)
     [[ -n $PDNS_SCHEMA ]] || die "PowerDNS PostgreSQL schema file not found."
     runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d pdns -f "$PDNS_SCHEMA"
