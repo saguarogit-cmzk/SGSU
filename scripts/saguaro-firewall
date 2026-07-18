@@ -27,7 +27,7 @@ do_check() {
 }
 
 enable_forwarding_if_needed() {
-  if grep -q "saguaro-nat" "$STAGED"; then
+  if grep -q "saguaro-nat" "$ACTIVE"; then
     printf 'net.ipv4.ip_forward=1\n' >/etc/sysctl.d/99-saguaro-forward.conf
     sysctl -q -w net.ipv4.ip_forward=1
   fi
@@ -50,6 +50,14 @@ case "$1" in
     install -d -m 0755 "$RUNDIR"
     cp -p "$ACTIVE" "$BACKUP" 2>/dev/null || : >"$BACKUP"
     install -m 0644 -o root -g root "$STAGED" "$ACTIVE"
+    # Validate and load the DESTINATION file, not the staged one, so a
+    # staged-file swap between check and load cannot slip an unvalidated
+    # ruleset past us (SR2). ACTIVE lives in /etc and saguaro cannot alter it.
+    if ! nft -c -f "$ACTIVE"; then
+      [ -s "$BACKUP" ] && install -m 0644 -o root -g root "$BACKUP" "$ACTIVE" || rm -f "$ACTIVE"
+      echo "installed ruleset failed validation; previous state restored" >&2
+      exit 1
+    fi
     nft -f "$ACTIVE"
     enable_forwarding_if_needed
     : >"$FLAG"

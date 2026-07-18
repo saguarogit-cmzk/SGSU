@@ -21,8 +21,17 @@ case "${1:-}" in
     [ "$MODE" = ids ] || [ "$MODE" = ips ] || { echo "usage: saguaro-ids apply ids|ips" >&2; exit 2; }
     [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
     command -v suricata >/dev/null || { echo "suricata is not installed (install the security package first)" >&2; exit 1; }
-    suricata -T -c "$STAGED" >/dev/null
+    # Install first, then validate the DESTINATION (SR2): a staged-file swap
+    # between test and install cannot slip an unchecked config past us. ACTIVE
+    # is root-owned in /etc and saguaro cannot alter it.
+    [ -e "$ACTIVE" ] && cp -p "$ACTIVE" "$ACTIVE.bak" || true
     install -m 0644 -o root -g root "$STAGED" "$ACTIVE"
+    if ! suricata -T -c "$ACTIVE" >/dev/null 2>&1; then
+      [ -e "$ACTIVE.bak" ] && mv "$ACTIVE.bak" "$ACTIVE" || rm -f "$ACTIVE"
+      echo "installed suricata config failed validation; previous state restored" >&2
+      exit 1
+    fi
+    rm -f "$ACTIVE.bak"
     install -d -m 0755 "$OVERRIDE_DIR"
     if [ "$MODE" = ips ]; then
       EXEC="/usr/bin/suricata -c $ACTIVE --pidfile /run/suricata.pid -q 0 -D"
