@@ -96,11 +96,11 @@ func (a *app) apiDHCPReservationAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := a.keaHosts.Add(r.Context(), in)
 	if err != nil {
-		a.record(r, a.adminUser, "dhcp-reservation-add", in.IP, "failed", map[string]any{"error": err.Error()})
+		a.record(r, a.actor(r), "dhcp-reservation-add", in.IP, "failed", map[string]any{"error": err.Error()})
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	a.record(r, a.adminUser, "dhcp-reservation-add", in.IP, "success",
+	a.record(r, a.actor(r), "dhcp-reservation-add", in.IP, "success",
 		map[string]any{"mac": in.MAC, "hostname": in.Hostname, "subnetId": in.SubnetID, "hostId": id})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
@@ -124,6 +124,6 @@ func (a *app) apiDHCPReservationDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "reservation not found")
 		return
 	}
-	a.record(r, a.adminUser, "dhcp-reservation-delete", strconv.FormatInt(id, 10), "success", nil)
+	a.record(r, a.actor(r), "dhcp-reservation-delete", strconv.FormatInt(id, 10), "success", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

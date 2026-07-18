@@ -66,7 +66,8 @@ type app struct {
 	log         *slog.Logger
 	store       *store
 	adminUser   string
-	passPHC     string
+	users       userStore
+	dummyPHC    string // constant-cost verify target for unknown usernames
 	sessions    sessionStore
 	sessionTTL  time.Duration
 	secure      bool
@@ -85,7 +86,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.7.0"
+const appVersion = "0.8.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -112,14 +113,21 @@ func main() {
 		panic(err)
 	}
 	var sessions sessionStore
+	var users userStore
 	var eventStore *evstore.Store
 	if dsn := os.Getenv("SAGUARO_DB_DSN"); dsn != "" {
-		sessions, err = openPGSessions(dsn)
+		pgSess, err := openPGSessions(dsn)
 		if err != nil {
 			logger.Error("cannot open PostgreSQL session store", "error", err)
 			os.Exit(1)
 		}
+		sessions = pgSess
 		logger.Info("session store: postgresql")
+		users, err = openPGUsers(pgSess.db)
+		if err != nil {
+			logger.Error("cannot open PostgreSQL user store", "error", err)
+			os.Exit(1)
+		}
 		eventStore, err = evstore.Open(dsn)
 		if err != nil {
 			logger.Error("cannot open event store", "error", err)
@@ -134,7 +142,17 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		users, err = openFileUsers(filepath.Join(dataDir, "users.json"))
+		if err != nil {
+			panic(err)
+		}
 		logger.Info("session store: file", "path", filepath.Join(dataDir, "sessions.json"))
+	}
+	if created, err := seedAdmin(users, adminUser, passPHC); err != nil {
+		logger.Error("cannot seed administrator", "error", err)
+		os.Exit(1)
+	} else if created {
+		logger.Info("seeded bootstrap administrator", "username", adminUser)
 	}
 	mailKey, err := mailmod.LoadOrCreateKey(env("SAGUARO_SECRET_KEY_FILE", filepath.Join(dataDir, "secret.key")))
 	if err != nil {
@@ -153,7 +171,8 @@ func main() {
 		log:        logger,
 		store:      s,
 		adminUser:  adminUser,
-		passPHC:    passPHC,
+		users:      users,
+		dummyPHC:   passPHC,
 		sessions:   sessions,
 		sessionTTL: time.Duration(atoi(env("SAGUARO_SESSION_HOURS", "8"), 8)) * time.Hour,
 		secure:     env("SAGUARO_SECURE_COOKIE", "true") == "true",
@@ -210,25 +229,31 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/health/deep", a.auth(a.healthDeep))
 	mux.HandleFunc("GET /api/dashboard", a.auth(a.dashboard))
 	mux.HandleFunc("GET /api/services", a.auth(a.services))
-	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.auth(a.serviceAction))
+	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.authz(permServiceCheck, a.serviceAction))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
 	mux.HandleFunc("GET /api/events", a.auth(a.apiEvents))
 	mux.HandleFunc("GET /api/mail", a.auth(a.apiMailGet))
-	mux.HandleFunc("PUT /api/mail", a.auth(a.apiMailPut))
-	mux.HandleFunc("POST /api/mail/test", a.auth(a.apiMailTest))
+	mux.HandleFunc("PUT /api/mail", a.authz(permMailWrite, a.apiMailPut))
+	mux.HandleFunc("POST /api/mail/test", a.authz(permMailWrite, a.apiMailTest))
 	mux.HandleFunc("GET /api/dns/zones", a.auth(a.apiDNSZones))
-	mux.HandleFunc("POST /api/dns/zones", a.auth(a.apiDNSZoneCreate))
+	mux.HandleFunc("POST /api/dns/zones", a.authz(permDNSWrite, a.apiDNSZoneCreate))
 	mux.HandleFunc("GET /api/dns/zones/{zone}", a.auth(a.apiDNSZoneGet))
-	mux.HandleFunc("DELETE /api/dns/zones/{zone}", a.auth(a.apiDNSZoneDelete))
-	mux.HandleFunc("PUT /api/dns/zones/{zone}/records", a.auth(a.apiDNSRecordPut))
+	mux.HandleFunc("DELETE /api/dns/zones/{zone}", a.authz(permDNSWrite, a.apiDNSZoneDelete))
+	mux.HandleFunc("PUT /api/dns/zones/{zone}/records", a.authz(permDNSWrite, a.apiDNSRecordPut))
 	mux.HandleFunc("GET /api/dhcp/status", a.auth(a.apiDHCPStatus))
 	mux.HandleFunc("GET /api/dhcp/subnets", a.auth(a.apiDHCPSubnets))
 	mux.HandleFunc("GET /api/dhcp/leases", a.auth(a.apiDHCPLeases))
 	mux.HandleFunc("GET /api/dhcp/reservations", a.auth(a.apiDHCPReservations))
-	mux.HandleFunc("POST /api/dhcp/reservations", a.auth(a.apiDHCPReservationAdd))
-	mux.HandleFunc("DELETE /api/dhcp/reservations/{id}", a.auth(a.apiDHCPReservationDelete))
+	mux.HandleFunc("POST /api/dhcp/reservations", a.authz(permDHCPWrite, a.apiDHCPReservationAdd))
+	mux.HandleFunc("DELETE /api/dhcp/reservations/{id}", a.authz(permDHCPWrite, a.apiDHCPReservationDelete))
 	mux.HandleFunc("GET /api/sessions", a.auth(a.listSessions))
-	mux.HandleFunc("POST /api/sessions/{id}/revoke", a.auth(a.revokeSession))
+	mux.HandleFunc("POST /api/sessions/{id}/revoke", a.authz(permSessions, a.revokeSession))
+	mux.HandleFunc("GET /api/users", a.authz(permUsersWrite, a.apiUsersList))
+	mux.HandleFunc("POST /api/users", a.authz(permUsersWrite, a.apiUserCreate))
+	mux.HandleFunc("PATCH /api/users/{name}", a.authz(permUsersWrite, a.apiUserUpdate))
+	mux.HandleFunc("DELETE /api/users/{name}", a.authz(permUsersWrite, a.apiUserDelete))
+	mux.HandleFunc("GET /api/profile", a.auth(a.apiProfile))
+	mux.HandleFunc("POST /api/profile/password", a.auth(a.apiProfilePassword))
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)
@@ -321,8 +346,16 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeLocked(w, retry)
 		return
 	}
-	userOK := subtle.ConstantTimeCompare([]byte(in.Username), []byte(a.adminUser)) == 1
-	if !verifyPassword(in.Password, a.passPHC) || !userOK {
+	rec0, found, lookupErr := a.users.Get(strings.ToLower(strings.TrimSpace(in.Username)))
+	if lookupErr != nil {
+		writeError(w, http.StatusInternalServerError, "user store unavailable")
+		return
+	}
+	phc := a.dummyPHC
+	if found {
+		phc = rec0.PHC
+	}
+	if !verifyPassword(in.Password, phc) || !found || !rec0.Enabled {
 		time.Sleep(350 * time.Millisecond)
 		lockIP := a.ipLimiter.fail("ip:"+ip, now)
 		lockUser := a.userLimiter.fail("user:"+in.Username, now)
@@ -341,7 +374,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	token := randomToken()
 	csrf := randomToken()
 	tokenHash := hashToken(token)
-	rec := sessionRecord{TokenHash: tokenHash, ID: sessionID(tokenHash), Username: in.Username, CreatedAt: now, ExpiresAt: now.Add(a.sessionTTL), RemoteIP: ip, CSRFHash: hashToken(csrf)}
+	rec := sessionRecord{TokenHash: tokenHash, ID: sessionID(tokenHash), Username: rec0.Username, CreatedAt: now, ExpiresAt: now.Add(a.sessionTTL), RemoteIP: ip, CSRFHash: hashToken(csrf)}
 	if err := a.sessions.Create(rec); err != nil {
 		a.log.Error("session create failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "session store unavailable")
@@ -351,8 +384,8 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	// Deliberately not HttpOnly: the SPA reads this cookie and echoes it in the
 	// X-CSRF-Token header, which the auth middleware checks against the session.
 	http.SetCookie(w, &http.Cookie{Name: "saguaro_csrf", Value: csrf, Path: "/", HttpOnly: false, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(a.sessionTTL.Seconds())})
-	a.record(r, in.Username, "login", "control-plane", "success", map[string]any{"sessionId": rec.ID})
-	writeJSON(w, http.StatusOK, map[string]any{"user": in.Username})
+	a.record(r, rec0.Username, "login", "control-plane", "success", map[string]any{"sessionId": rec.ID, "role": rec0.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"user": rec0.Username, "role": rec0.Role})
 }
 
 func randomToken() string {
@@ -418,7 +451,18 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxKeySession{}, tokenHash)))
+		user, userOK := a.resolveUser(r.Context(), rec.Username)
+		if !userOK {
+			// The account was deleted or disabled after login.
+			if err := a.sessions.Delete(tokenHash); err != nil {
+				a.log.Error("session delete failed", "error", err)
+			}
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxKeySession{}, tokenHash)
+		ctx = context.WithValue(ctx, ctxKeyUser{}, user)
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -455,7 +499,7 @@ func (a *app) revokeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	a.record(r, a.adminUser, "session-revoke", id, "success", nil)
+	a.record(r, a.actor(r), "session-revoke", id, "success", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -508,7 +552,7 @@ func (a *app) serviceAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "service not found")
 		return
 	}
-	a.record(r, a.adminUser, "health-check", id, res.Status, map[string]any{"detail": res.Detail, "latencyMs": res.LatencyMs})
+	a.record(r, a.actor(r), "health-check", id, res.Status, map[string]any{"detail": res.Detail, "latencyMs": res.LatencyMs})
 	writeJSON(w, http.StatusOK, map[string]any{"result": res})
 }
 

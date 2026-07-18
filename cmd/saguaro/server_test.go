@@ -37,12 +37,20 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	users, err := openFileUsers(filepath.Join(dir, "users.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedAdmin(users, "admin", phc); err != nil {
+		t.Fatal(err)
+	}
 	a := &app{
 		mailKey:     mailKey,
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:       st,
 		adminUser:   "admin",
-		passPHC:     phc,
+		users:       users,
+		dummyPHC:    phc,
 		sessions:    sess,
 		sessionTTL:  time.Hour,
 		secure:      false,

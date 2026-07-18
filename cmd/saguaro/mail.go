@@ -106,7 +106,7 @@ func (a *app) apiMailPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot persist mail configuration")
 		return
 	}
-	a.record(r, a.adminUser, "mail-config", "mail", "success", map[string]any{
+	a.record(r, a.actor(r), "mail-config", "mail", "success", map[string]any{
 		"host": cfg.Host, "port": cfg.Port, "tlsMode": cfg.TLSMode,
 		"recipients": len(cfg.Recipients), "minSeverity": cfg.MinSeverity, "enabled": cfg.Enabled})
 	writeJSON(w, http.StatusOK, toView(cfg))
@@ -121,11 +121,11 @@ func (a *app) apiMailTest(w http.ResponseWriter, r *http.Request) {
 	err := mailmod.Send(cfg, a.mailKey, "[SNA] Test message",
 		"This is a Saguaro Network Appliance test message. If you can read this, SMTP settings work.")
 	if err != nil {
-		a.record(r, a.adminUser, "mail-test", "mail", "failed", map[string]any{"error": err.Error()})
+		a.record(r, a.actor(r), "mail-test", "mail", "failed", map[string]any{"error": err.Error()})
 		writeError(w, http.StatusBadGateway, "test mail failed: "+err.Error())
 		return
 	}
-	a.record(r, a.adminUser, "mail-test", "mail", "success", nil)
+	a.record(r, a.actor(r), "mail-test", "mail", "success", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

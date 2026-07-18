@@ -62,11 +62,11 @@ func (a *app) apiDNSZoneCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := c.CreateZone(r.Context(), name, in.Nameservers); err != nil {
-		a.record(r, a.adminUser, "dns-zone-create", name, "failed", map[string]any{"error": err.Error()})
+		a.record(r, a.actor(r), "dns-zone-create", name, "failed", map[string]any{"error": err.Error()})
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a.record(r, a.adminUser, "dns-zone-create", name, "success", nil)
+	a.record(r, a.actor(r), "dns-zone-create", name, "success", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -92,11 +92,11 @@ func (a *app) apiDNSZoneDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	zone := r.PathValue("zone")
 	if err := c.DeleteZone(r.Context(), zone); err != nil {
-		a.record(r, a.adminUser, "dns-zone-delete", zone, "failed", map[string]any{"error": err.Error()})
+		a.record(r, a.actor(r), "dns-zone-delete", zone, "failed", map[string]any{"error": err.Error()})
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a.recordSev(r, a.adminUser, "dns-zone-delete", zone, "success", "warning", nil)
+	a.recordSev(r, a.actor(r), "dns-zone-delete", zone, "success", "warning", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -146,10 +146,10 @@ func (a *app) apiDNSRecordPut(w http.ResponseWriter, r *http.Request) {
 	}
 	target := pdns.Canonical(in.Name) + "/" + typ
 	if err := c.PatchRRSet(r.Context(), zone, rr, in.Delete); err != nil {
-		a.record(r, a.adminUser, action, target, "failed", map[string]any{"error": err.Error()})
+		a.record(r, a.actor(r), action, target, "failed", map[string]any{"error": err.Error()})
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a.record(r, a.adminUser, action, target, "success", map[string]any{"zone": zone, "ttl": rr.TTL, "values": len(rr.Records)})
+	a.record(r, a.actor(r), action, target, "success", map[string]any{"zone": zone, "ttl": rr.TTL, "values": len(rr.Records)})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
