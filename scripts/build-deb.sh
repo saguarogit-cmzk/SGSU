@@ -55,8 +55,11 @@ if ! $SKIP_TESTS; then
 fi
 (cd "$ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" \
   go build -trimpath -ldflags="-s -w" -o "$STAGE/usr/lib/saguaro/saguaro" ./cmd/saguaro)
+(cd "$ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" \
+  go build -trimpath -ldflags="-s -w" -o "$STAGE/usr/lib/saguaro/saguaro-eventd" ./cmd/saguaro-eventd)
 
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro.service"        "$STAGE/usr/lib/systemd/system/saguaro.service"
+install -D -m 0644 "$ROOT/packaging/systemd/saguaro-eventd.service" "$STAGE/usr/lib/systemd/system/saguaro-eventd.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.service" "$STAGE/usr/lib/systemd/system/saguaro-backup.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.timer"   "$STAGE/usr/lib/systemd/system/saguaro-backup.timer"
 install -D -m 0755 "$ROOT/scripts/saguaro-backup.sh"                "$STAGE/usr/sbin/saguaro-backup"

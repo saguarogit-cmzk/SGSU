@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	evstore "saguaro.local/network-manager/internal/events"
 )
 
 //go:embed web/*
@@ -67,6 +69,7 @@ type app struct {
 	secure      bool
 	ipLimiter   *loginLimiter
 	userLimiter *loginLimiter
+	events      *evstore.Store // nil without PostgreSQL (development)
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -77,7 +80,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.4.1"
+const appVersion = "0.5.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -104,6 +107,7 @@ func main() {
 		panic(err)
 	}
 	var sessions sessionStore
+	var eventStore *evstore.Store
 	if dsn := os.Getenv("SAGUARO_DB_DSN"); dsn != "" {
 		sessions, err = openPGSessions(dsn)
 		if err != nil {
@@ -111,6 +115,15 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("session store: postgresql")
+		eventStore, err = evstore.Open(dsn)
+		if err != nil {
+			logger.Error("cannot open event store", "error", err)
+			os.Exit(1)
+		}
+		if err := eventStore.EnsureSchema(context.Background()); err != nil {
+			logger.Error("cannot ensure event schema", "error", err)
+			os.Exit(1)
+		}
 	} else {
 		sessions, err = openFileSessions(filepath.Join(dataDir, "sessions.json"))
 		if err != nil {
@@ -129,6 +142,7 @@ func main() {
 
 		ipLimiter:   newLoginLimiter(),
 		userLimiter: newLoginLimiter(),
+		events:      eventStore,
 
 		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
 		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),
@@ -177,6 +191,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/services", a.auth(a.services))
 	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.auth(a.serviceAction))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
+	mux.HandleFunc("GET /api/events", a.auth(a.apiEvents))
 	mux.HandleFunc("GET /api/sessions", a.auth(a.listSessions))
 	mux.HandleFunc("POST /api/sessions/{id}/revoke", a.auth(a.revokeSession))
 	assets, err := fs.Sub(webFS, "web")
@@ -197,6 +212,21 @@ func openStore(path string) (*store, error) {
 	if err := json.Unmarshal(b, &s.data); err != nil {
 		return nil, fmt.Errorf("invalid state file: %w", err)
 	}
+	// Services added in newer releases must appear on upgraded installs too.
+	have := map[string]bool{}
+	for _, svc := range s.data.Services {
+		have[svc.ID] = true
+	}
+	added := false
+	for _, d := range defaultServices() {
+		if !have[d.ID] {
+			s.data.Services = append(s.data.Services, d)
+			added = true
+		}
+	}
+	if added {
+		return s, s.saveLocked()
+	}
 	return s, nil
 }
 
@@ -207,6 +237,7 @@ func defaultServices() []service {
 		{ID: "pdns", Name: "PowerDNS Authoritative", Description: "Local authoritative zones with HTTP API", Status: "not-configured"},
 		{ID: "kea", Name: "Kea DHCP", Description: "DHCPv4/v6, reservations and client classes", Status: "not-configured"},
 		{ID: "kea-ddns", Name: "Kea DDNS", Description: "Automatic A/PTR updates from DHCP leases", Status: "not-configured"},
+		{ID: "saguaro-eventd", Name: "Event Collector", Description: "journald to PostgreSQL structured events (layer 2 logging)", Status: "not-configured"},
 		{ID: "step-ca", Name: "Step CA", Description: "Internal certificate authority", Status: "not-configured"},
 		{ID: "nginx", Name: "Nginx", Description: "TLS reverse proxy", Status: "not-configured"},
 		{ID: "nftables", Name: "nftables", Description: "Host and gateway firewall", Status: "not-configured"},
@@ -396,6 +427,58 @@ func (a *app) recordSev(r *http.Request, actor, action, target, result, severity
 	if severity == "security" {
 		a.log.Warn("security event", "action", action, "actor", actor, "target", target, "remote", remoteIP(r))
 	}
+	if a.events == nil {
+		return
+	}
+	// Layer 2: the same record goes to the append-only audit_log; security
+	// events additionally land in the events table for alerting and reports.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var metaJSON json.RawMessage
+	if meta != nil {
+		metaJSON, _ = json.Marshal(meta)
+	}
+	if err := a.events.InsertAudit(ctx, evstore.AuditEntry{
+		TS: e.Time, Actor: actor, Action: action, Target: target,
+		NewValue: metaJSON, Result: result, RemoteIP: remoteIP(r),
+	}); err != nil {
+		a.log.Error("audit_log insert failed", "error", err)
+	}
+	if severity == "security" {
+		if err := a.events.Insert(ctx, evstore.Event{
+			TS: e.Time, Module: "control-plane", Severity: "security",
+			Username: actor, SrcIP: remoteIP(r), Action: action, Result: result,
+			Message: fmt.Sprintf("%s %s (%s)", action, target, result), Raw: metaJSON,
+		}); err != nil {
+			a.log.Error("security event insert failed", "error", err)
+		}
+	}
+}
+
+// apiEvents serves the layer-2 event listing. Without PostgreSQL there is no
+// event store, which is an explicit condition rather than an empty result.
+func (a *app) apiEvents(w http.ResponseWriter, r *http.Request) {
+	if a.events == nil {
+		writeError(w, http.StatusServiceUnavailable, "event store requires PostgreSQL (SAGUARO_DB_DSN)")
+		return
+	}
+	q := r.URL.Query()
+	sev := q.Get("severity")
+	if sev != "" && !evstore.ValidSeverity(sev) {
+		writeError(w, http.StatusBadRequest, "invalid severity")
+		return
+	}
+	opts := evstore.QueryOpts{Module: q.Get("module"), Severity: sev, Limit: atoi(q.Get("limit"), 100)}
+	out, err := a.events.Query(r.Context(), opts)
+	if err != nil {
+		a.log.Error("event query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "event query failed")
+		return
+	}
+	if out == nil {
+		out = []evstore.Event{}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // loadAdminPassword prefers file-based sources so the secret never has to live in

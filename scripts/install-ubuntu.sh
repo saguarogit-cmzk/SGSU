@@ -222,6 +222,23 @@ if ! $DRY_RUN; then
     runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1 || \
       runuser -u postgres -- createdb -O "${db}" "${db}"
   done
+  # audit_log is owned by postgres with INSERT/SELECT-only grants: the saguaro
+  # role cannot update, delete or drop it — append-only enforced by the DB.
+  # The partitioned events table is created by the application itself (the
+  # saguaro role must own it to manage monthly partitions and retention).
+  runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d saguaro <<'EOF'
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL,
+  old_value JSONB, new_value JSONB,
+  result TEXT NOT NULL, remote_ip INET,
+  config_version INT, correlation_id UUID
+);
+GRANT SELECT, INSERT ON audit_log TO saguaro;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO saguaro;
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM saguaro;
+EOF
 fi
 
 log "Initializing Kea database schema"
@@ -257,9 +274,12 @@ else
   log "Building Saguaro control plane from source (no --deb given; prefer the CI-built package)"
   run install -d -m 0755 /usr/lib/saguaro
   if ! $DRY_RUN; then
-    (cd "$SOURCE_DIR" && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/lib/saguaro/saguaro ./cmd/saguaro)
+    (cd "$SOURCE_DIR" && go test ./... \
+      && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/lib/saguaro/saguaro ./cmd/saguaro \
+      && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/lib/saguaro/saguaro-eventd ./cmd/saguaro-eventd)
   fi
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro.service" /etc/systemd/system/saguaro.service
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-eventd.service" /etc/systemd/system/saguaro-eventd.service
 fi
 run useradd --system --home-dir /var/lib/saguaro --shell /usr/sbin/nologin saguaro 2>/dev/null || true
 run install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
@@ -272,6 +292,8 @@ if [[ ! -s $ADMIN_PASSWORD_FILE ]] && ! $DRY_RUN; then
   openssl rand -base64 30 >"$ADMIN_PASSWORD_FILE"
 fi
 if ! $DRY_RUN; then
+  # Low-spec devices get a shorter event retention (monthly partitions).
+  EVENT_RETENTION=$($LOW_SPEC && echo 3 || echo 6)
   # The admin password reaches the service through systemd LoadCredential only;
   # the environment file carries no secrets that other components do not need.
   cat >/etc/saguaro/saguaro.env <<EOF
@@ -280,6 +302,7 @@ SAGUARO_DATA_DIR=/var/lib/saguaro
 SAGUARO_ADMIN_USER=admin
 SAGUARO_SECURE_COOKIE=true
 SAGUARO_DB_DSN=postgres:///saguaro?host=/var/run/postgresql
+SAGUARO_EVENT_RETENTION_MONTHS=${EVENT_RETENTION}
 SAGUARO_PDNS_API_URL=http://127.0.0.1:8081
 SAGUARO_PDNS_API_KEY=${PDNS_API_KEY}
 SAGUARO_KEA_API_URL=http://127.0.0.1:8000
@@ -585,7 +608,7 @@ EOF
 fi
 
 run systemctl daemon-reload
-services=(postgresql unbound pdns nginx saguaro saguaro-backup.timer kea-ctrl-agent)
+services=(postgresql unbound pdns nginx saguaro saguaro-eventd saguaro-backup.timer kea-ctrl-agent)
 ((dhcp_fields == 5)) && services+=(kea-dhcp4-server kea-dhcp-ddns-server)
 $ENABLE_DOCKER && services+=(docker)
 $ENABLE_MONITORING && services+=(prometheus-node-exporter)

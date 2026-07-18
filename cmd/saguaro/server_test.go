@@ -156,8 +156,23 @@ func TestDeepHealthRequiresAuthAndReportsAllComponents(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Total != 8 || len(out.Checks) != 8 {
-		t.Fatalf("expected 8 component checks, got total=%d len=%d", out.Total, len(out.Checks))
+	if out.Total != 9 || len(out.Checks) != 9 {
+		t.Fatalf("expected 9 component checks, got total=%d len=%d", out.Total, len(out.Checks))
+	}
+}
+
+func TestEventsEndpointWithoutPostgres(t *testing.T) {
+	srv, c, _ := newTestServer(t)
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: got %d", r.StatusCode)
+	}
+	resp, err := c.Get(srv.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("events without PG: got %d, want 503", resp.StatusCode)
 	}
 }
 

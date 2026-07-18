@@ -157,6 +157,9 @@ func (a *app) runHealthChecks(ctx context.Context) []checkResult {
 		"step-ca":    func(ctx context.Context) checkResult { return checkSystemdUnit(ctx, "step-ca", "step-ca-saguaro") },
 		"nginx":      func(ctx context.Context) checkResult { return checkSystemdUnit(ctx, "nginx", "nginx") },
 		"nftables":   func(ctx context.Context) checkResult { return checkSystemdUnit(ctx, "nftables", "nftables") },
+		"saguaro-eventd": func(ctx context.Context) checkResult {
+			return checkSystemdUnit(ctx, "saguaro-eventd", "saguaro-eventd")
+		},
 	}
 	var (
 		mu  sync.Mutex
@@ -200,6 +203,8 @@ func (a *app) runHealthCheck(ctx context.Context, id string) (checkResult, bool)
 		r = checkSystemdUnit(ctx, "nginx", "nginx")
 	case "nftables":
 		r = checkSystemdUnit(ctx, "nftables", "nftables")
+	case "saguaro-eventd":
+		r = checkSystemdUnit(ctx, "saguaro-eventd", "saguaro-eventd")
 	default:
 		return checkResult{}, false
 	}

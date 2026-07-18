@@ -1,0 +1,29 @@
+[Unit]
+Description=Saguaro event collector (journald to PostgreSQL)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=saguaro
+Group=saguaro
+# Read access to the system journal.
+SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/saguaro/saguaro.env
+ExecStart=/usr/lib/saguaro/saguaro-eventd
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=-/run/postgresql
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
