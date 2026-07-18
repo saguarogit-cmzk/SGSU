@@ -26,6 +26,7 @@ import (
 	"saguaro.local/network-manager/internal/adapters/multiwan"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/nginxgen"
+	routesmod "saguaro.local/network-manager/internal/adapters/routes"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
 	"saguaro.local/network-manager/internal/adapters/wireguard"
 	evstore "saguaro.local/network-manager/internal/events"
@@ -68,6 +69,7 @@ type state struct {
 	VPN       *wireguard.Config `json:"vpn,omitempty"`
 	Backup    *backupConfig     `json:"backup,omitempty"`
 	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
+	Routes    *routesmod.Config `json:"routes,omitempty"`
 }
 
 type store struct {
@@ -99,6 +101,7 @@ type app struct {
 	runVPN         func(ctx context.Context, action string) ([]byte, error)
 	runBackupCfg   func(ctx context.Context, action string) ([]byte, error)
 	runWAN         func(ctx context.Context, action string) ([]byte, error)
+	runRoute       func(ctx context.Context, action string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -113,7 +116,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.18.0"
+const appVersion = "0.19.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -218,6 +221,7 @@ func main() {
 		runVPN:         defaultRunVPN,
 		runBackupCfg:   defaultRunBackupCfg,
 		runWAN:         defaultRunWAN,
+		runRoute:       defaultRunRoute,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -316,6 +320,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/backup/drill", a.authz(permBackup, a.apiBackupMarkDrill))
 	mux.HandleFunc("GET /api/multiwan", a.auth(a.apiWANGet))
 	mux.HandleFunc("POST /api/multiwan/apply", a.authz(permFirewall, a.apiWANApply))
+	mux.HandleFunc("GET /api/routes", a.auth(a.apiRoutesGet))
+	mux.HandleFunc("PUT /api/routes", a.authz(permFirewall, a.apiRoutesPut))
 	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
 	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
 	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))

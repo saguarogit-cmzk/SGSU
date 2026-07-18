@@ -1,0 +1,14 @@
+# Re-applies operator static routes on boot from /etc/saguaro/routes.spec.
+# Enabled by the saguaro-route adapter when the first route is applied.
+[Unit]
+Description=Saguaro static routes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/saguaro-route boot
+
+[Install]
+WantedBy=multi-user.target

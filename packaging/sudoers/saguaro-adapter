@@ -11,3 +11,4 @@ saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-vpn apply, /usr/sbin/saguaro-vpn 
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-backup-config apply, /usr/sbin/saguaro-backup-config run, /usr/sbin/saguaro-backup-config disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-wan apply, /usr/sbin/saguaro-wan disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-net identify *
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-route apply, /usr/sbin/saguaro-route flush

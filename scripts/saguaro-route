@@ -1,0 +1,69 @@
+#!/bin/sh
+# saguaro-route — root adapter for the static routing module (SNA).
+# Installs the staged route spec and applies it with `ip route`. A companion
+# oneshot unit (saguaro-routes.service) re-applies /etc/saguaro/routes.spec on
+# boot so operator routes survive reboots. Allow-listed subcommands only; the
+# unprivileged saguaro user invokes these through sudoers.
+#
+#   apply   validate + install the staged spec, remove routes that were dropped,
+#           apply the new set, and enable the boot unit
+#   boot    apply /etc/saguaro/routes.spec (ExecStart of saguaro-routes.service)
+#   flush   delete all managed routes, remove the spec, disable the boot unit
+set -eu
+
+STAGED=/var/lib/saguaro/staged-routes.spec
+SPEC=/etc/saguaro/routes.spec
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+# apply_spec installs every route in $1 with `ip route replace`.
+apply_spec() {
+  [ -s "$1" ] || return 0
+  while read -r dest gw iface metric; do
+    case "$dest" in ''|\#*) continue ;; esac
+    set -- route replace "$dest" via "$gw"
+    [ "$iface" != "-" ] && set -- "$@" dev "$iface"
+    [ "${metric:-0}" != "0" ] && set -- "$@" metric "$metric"
+    ip "$@" || logger -t saguaro-route "failed: ip $*"
+  done <"$1"
+}
+
+# del_spec removes every route listed in $1 (best effort).
+del_spec() {
+  [ -s "$1" ] || return 0
+  while read -r dest gw iface metric; do
+    case "$dest" in ''|\#*) continue ;; esac
+    ip route del "$dest" 2>/dev/null || true
+  done <"$1"
+}
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED" ] || { echo "no staged spec at $STAGED" >&2; exit 1; }
+    # Fields flow straight into `ip route` arguments — restrict them to a safe
+    # charset so a compromised control plane cannot smuggle extra tokens.
+    if grep -qvE '^(#.*|(default|[0-9]+\.[0-9./]+) [0-9.]+ [A-Za-z0-9._-]+ [0-9]+)$' "$STAGED"; then
+      echo "staged route spec contains unsafe content; refusing to install" >&2
+      exit 1
+    fi
+    del_spec "$SPEC"            # drop routes removed in this revision
+    install -D -m 0644 -o root -g root "$STAGED" "$SPEC"
+    rm -f "$STAGED"
+    apply_spec "$SPEC"
+    systemctl enable saguaro-routes.service >/dev/null 2>&1 || true
+    logger -t saguaro-route "static routes applied"
+    ;;
+  boot)
+    apply_spec "$SPEC"
+    ;;
+  flush)
+    del_spec "$SPEC"
+    rm -f "$SPEC"
+    systemctl disable saguaro-routes.service >/dev/null 2>&1 || true
+    logger -t saguaro-route "static routes flushed"
+    ;;
+  *)
+    echo "usage: saguaro-route apply|boot|flush" >&2
+    exit 2
+    ;;
+esac

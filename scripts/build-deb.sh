@@ -72,6 +72,8 @@ install -D -m 0755 "$ROOT/scripts/saguaro-vpn"                      "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-backup-config"            "$STAGE/usr/sbin/saguaro-backup-config"
 install -D -m 0755 "$ROOT/scripts/saguaro-wan"                      "$STAGE/usr/sbin/saguaro-wan"
 install -D -m 0755 "$ROOT/scripts/saguaro-net"                      "$STAGE/usr/sbin/saguaro-net"
+install -D -m 0755 "$ROOT/scripts/saguaro-route"                    "$STAGE/usr/sbin/saguaro-route"
+install -D -m 0644 "$ROOT/packaging/systemd/saguaro-routes.service" "$STAGE/usr/lib/systemd/system/saguaro-routes.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.service" "$STAGE/usr/lib/systemd/system/saguaro-wan-check.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.timer"   "$STAGE/usr/lib/systemd/system/saguaro-wan-check.timer"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-cert-renew.service" "$STAGE/usr/lib/systemd/system/saguaro-cert-renew.service"
