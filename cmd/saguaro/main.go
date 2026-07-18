@@ -28,6 +28,7 @@ import (
 	"saguaro.local/network-manager/internal/adapters/nginxgen"
 	routesmod "saguaro.local/network-manager/internal/adapters/routes"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
+	"saguaro.local/network-manager/internal/adapters/s2s"
 	"saguaro.local/network-manager/internal/adapters/wireguard"
 	evstore "saguaro.local/network-manager/internal/events"
 	mailmod "saguaro.local/network-manager/internal/mail"
@@ -70,6 +71,7 @@ type state struct {
 	Backup    *backupConfig     `json:"backup,omitempty"`
 	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
 	Routes    *routesmod.Config `json:"routes,omitempty"`
+	S2S       *s2s.Config       `json:"s2s,omitempty"`
 	// SystemProfile is the deployment mode: "gateway" (firewall/gateway/VPN) or
 	// "router" (local DHCP/DNS/router behind another gateway).
 	SystemProfile string `json:"systemProfile,omitempty"`
@@ -105,6 +107,7 @@ type app struct {
 	runBackupCfg   func(ctx context.Context, action string) ([]byte, error)
 	runWAN         func(ctx context.Context, action string) ([]byte, error)
 	runRoute       func(ctx context.Context, action string) ([]byte, error)
+	runS2S         func(ctx context.Context, action string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -119,7 +122,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.20.0"
+const appVersion = "0.21.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -226,6 +229,7 @@ func main() {
 		runBackupCfg:   defaultRunBackupCfg,
 		runWAN:         defaultRunWAN,
 		runRoute:       defaultRunRoute,
+		runS2S:         defaultRunS2S,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -326,6 +330,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/multiwan/apply", a.authz(permFirewall, a.apiWANApply))
 	mux.HandleFunc("GET /api/routes", a.auth(a.apiRoutesGet))
 	mux.HandleFunc("PUT /api/routes", a.authz(permFirewall, a.apiRoutesPut))
+	mux.HandleFunc("GET /api/s2s", a.auth(a.apiS2SGet))
+	mux.HandleFunc("POST /api/s2s/apply", a.authz(permFirewall, a.apiS2SApply))
+	mux.HandleFunc("POST /api/s2s/sites", a.authz(permFirewall, a.apiS2SSiteAdd))
+	mux.HandleFunc("DELETE /api/s2s/sites/{name}", a.authz(permFirewall, a.apiS2SSiteDelete))
 	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
 	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
 	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))

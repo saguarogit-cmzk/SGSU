@@ -665,6 +665,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-wan" /usr/sbin/saguaro-wan
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-net" /usr/sbin/saguaro-net
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-route" /usr/sbin/saguaro-route
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-s2s" /usr/sbin/saguaro-s2s
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-routes.service" /etc/systemd/system/saguaro-routes.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.timer" /etc/systemd/system/saguaro-wan-check.timer

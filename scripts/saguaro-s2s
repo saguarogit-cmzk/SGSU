@@ -1,0 +1,52 @@
+#!/bin/sh
+# saguaro-s2s — root adapter for WireGuard site-to-site (net-to-net) tunnels.
+# Separate interface (wgs2s) from the road-warrior VPN (wg0). Allow-listed
+# subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply    install the staged wgs2s.conf and (re)start wg-quick@wgs2s;
+#            enable IPv4 forwarding so tunnelled networks are routed. A failed
+#            start restores the previous configuration.
+#   disable  stop and disable the tunnel interface
+set -eu
+
+STAGED=/var/lib/saguaro/staged-wgs2s.conf
+ACTIVE=/etc/wireguard/wgs2s.conf
+BACKUP=/run/saguaro/wgs2s-backup.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
+    command -v wg >/dev/null || { echo "wireguard-tools is not installed" >&2; exit 1; }
+    install -d -m 0700 /etc/wireguard
+    install -d -m 0755 /run/saguaro
+    if [ -e "$ACTIVE" ]; then cp -p "$ACTIVE" "$BACKUP"; else : >"$BACKUP"; fi
+    install -m 0600 -o root -g root "$STAGED" "$ACTIVE"
+    # The staged copy holds the private key; remove it once installed.
+    rm -f "$STAGED"
+    printf 'net.ipv4.ip_forward=1\n' >/etc/sysctl.d/99-saguaro-forward.conf
+    sysctl -q -w net.ipv4.ip_forward=1
+    if ! systemctl restart wg-quick@wgs2s; then
+      if [ -s "$BACKUP" ]; then
+        install -m 0600 -o root -g root "$BACKUP" "$ACTIVE"
+        systemctl restart wg-quick@wgs2s || true
+      else
+        rm -f "$ACTIVE"
+        systemctl stop wg-quick@wgs2s || true
+      fi
+      echo "wg-quick failed to start with the new configuration; previous state restored" >&2
+      exit 1
+    fi
+    systemctl enable wg-quick@wgs2s >/dev/null 2>&1 || true
+    logger -t saguaro-s2s "site-to-site configuration applied"
+    ;;
+  disable)
+    systemctl disable --now wg-quick@wgs2s 2>/dev/null || true
+    logger -t saguaro-s2s "site-to-site disabled"
+    ;;
+  *)
+    echo "usage: saguaro-s2s apply|disable" >&2
+    exit 2
+    ;;
+esac

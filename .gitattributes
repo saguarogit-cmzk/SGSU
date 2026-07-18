@@ -15,5 +15,6 @@ scripts/saguaro-backup-config text eol=lf
 scripts/saguaro-wan text eol=lf
 scripts/saguaro-net text eol=lf
 scripts/saguaro-route text eol=lf
+scripts/saguaro-s2s text eol=lf
 *.yml text eol=lf
 *.go text eol=lf
