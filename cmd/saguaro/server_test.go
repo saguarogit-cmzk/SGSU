@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mailmod "saguaro.local/network-manager/internal/mail"
 )
 
 const testPassword = "correct-horse-battery-14"
@@ -31,7 +33,12 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mailKey, err := mailmod.LoadOrCreateKey(filepath.Join(dir, "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &app{
+		mailKey:     mailKey,
 		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:       st,
 		adminUser:   "admin",
@@ -173,6 +180,83 @@ func TestEventsEndpointWithoutPostgres(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("events without PG: got %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestMailConfigAPI(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: got %d", r.StatusCode)
+	}
+	csrf := csrfCookie(t, srv, c)
+	putMail := func(body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/mail", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// Defaults before configuration.
+	resp, err := c.Get(srv.URL + "/api/mail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view struct {
+		TLSMode     string `json:"tlsMode"`
+		HasPassword bool   `json:"hasPassword"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if view.TLSMode != "starttls" || view.HasPassword {
+		t.Fatalf("defaults wrong: %+v", view)
+	}
+
+	// Invalid config is rejected.
+	if r := putMail(`{"enabled":false,"host":"","port":587,"tlsMode":"starttls","from":"a@b","username":"","password":"","recipients":["c@d"],"minSeverity":"error"}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty host: got %d, want 400", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+
+	// Valid config with a password.
+	if r := putMail(`{"enabled":false,"host":"smtp.example.com","port":587,"tlsMode":"starttls","from":"sna@example.com","username":"sna","password":"topsecret","recipients":["ops@example.com"],"minSeverity":"error"}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("valid put: got %d", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+	cfg, ok := a.getMail()
+	if !ok || cfg.PasswordEnc == "" || strings.Contains(cfg.PasswordEnc, "topsecret") {
+		t.Fatalf("password not stored encrypted: %+v", cfg)
+	}
+
+	// Saving again without a password keeps the stored one; the API never
+	// returns the ciphertext.
+	if r := putMail(`{"enabled":false,"host":"smtp.example.com","port":587,"tlsMode":"starttls","from":"sna@example.com","username":"sna","password":"","recipients":["ops@example.com"],"minSeverity":"security"}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("second put: got %d", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+	cfg2, _ := a.getMail()
+	if cfg2.PasswordEnc != cfg.PasswordEnc || cfg2.MinSeverity != "security" {
+		t.Fatal("empty password must keep the stored ciphertext while other fields update")
+	}
+	resp, err = c.Get(srv.URL + "/api/mail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := new(strings.Builder)
+	if _, err := io.Copy(raw, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if strings.Contains(raw.String(), "passwordEnc") || !strings.Contains(raw.String(), `"hasPassword":true`) {
+		t.Fatalf("view must redact the password: %s", raw)
 	}
 }
 

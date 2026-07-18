@@ -31,6 +31,16 @@ func Rank(severity string) int {
 // ValidSeverity reports whether s is one of the defined levels.
 func ValidSeverity(s string) bool { return Rank(s) >= 0 }
 
+// SeveritiesAtLeast returns every severity at or above min (min itself
+// included); nil for unknown input.
+func SeveritiesAtLeast(min string) []string {
+	r := Rank(min)
+	if r < 0 {
+		return nil
+	}
+	return append([]string(nil), severities[r:]...)
+}
+
 // FromJournalPriority maps syslog/journald PRIORITY (0=emerg..7=debug) to an
 // SNA severity.
 func FromJournalPriority(p int) string {
@@ -269,6 +279,57 @@ func (s *Store) InsertAudit(ctx context.Context, a AuditEntry) error {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		a.TS, a.Actor, a.Action, a.Target, nj(a.OldValue), nj(a.NewValue), a.Result, ns(a.RemoteIP))
 	return err
+}
+
+// MaxID returns the current highest event id (0 for an empty table) so an
+// alert poller can start from "now" without alerting on history.
+func (s *Store) MaxID(ctx context.Context) (int64, error) {
+	var id sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT max(id) FROM events`).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id.Int64, nil
+}
+
+// QueryAfter returns events with id greater than afterID whose severity is in
+// severities (which must come from SeveritiesAtLeast — the values are
+// interpolated as validated literals), oldest first.
+func (s *Store) QueryAfter(ctx context.Context, afterID int64, sevs []string, limit int) ([]Event, error) {
+	if len(sevs) == 0 {
+		return nil, nil
+	}
+	for _, sv := range sevs {
+		if !ValidSeverity(sv) {
+			return nil, fmt.Errorf("invalid severity %q", sv)
+		}
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	list := "'" + sevs[0] + "'"
+	for _, sv := range sevs[1:] {
+		list += ",'" + sv + "'"
+	}
+	q := fmt.Sprintf(`SELECT id, ts, module, severity,
+		COALESCE(host,''), COALESCE(username,''),
+		COALESCE(src_ip::text,''), COALESCE(dst_ip::text,''), COALESCE(mac::text,''),
+		COALESCE(iface,''), COALESCE(action,''), COALESCE(result,''), message
+		FROM events WHERE id > $1 AND severity IN (%s) ORDER BY id ASC LIMIT $2`, list)
+	rows, err := s.db.QueryContext(ctx, q, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ID, &e.TS, &e.Module, &e.Severity, &e.Host, &e.Username,
+			&e.SrcIP, &e.DstIP, &e.MAC, &e.Iface, &e.Action, &e.Result, &e.Message); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // QueryOpts filters the events listing; zero values mean "no filter".

@@ -48,13 +48,13 @@ func ModuleForUnit(unit string) string {
 // uses. MESSAGE can be a string or a byte array (binary payloads); only
 // string messages are ingested.
 type JournalEntry struct {
-	Cursor    string          `json:"__CURSOR"`
-	Realtime  string          `json:"__REALTIME_TIMESTAMP"`
-	Message   json.RawMessage `json:"MESSAGE"`
-	Priority  string          `json:"PRIORITY"`
-	Unit      string          `json:"_SYSTEMD_UNIT"`
-	Hostname  string          `json:"_HOSTNAME"`
-	Identifier string         `json:"SYSLOG_IDENTIFIER"`
+	Cursor     string          `json:"__CURSOR"`
+	Realtime   string          `json:"__REALTIME_TIMESTAMP"`
+	Message    json.RawMessage `json:"MESSAGE"`
+	Priority   string          `json:"PRIORITY"`
+	Unit       string          `json:"_SYSTEMD_UNIT"`
+	Hostname   string          `json:"_HOSTNAME"`
+	Identifier string          `json:"SYSLOG_IDENTIFIER"`
 }
 
 // ParseJournalLine turns one journalctl JSON line into an Event. ok is false

@@ -303,6 +303,7 @@ SAGUARO_ADMIN_USER=admin
 SAGUARO_SECURE_COOKIE=true
 SAGUARO_DB_DSN=postgres:///saguaro?host=/var/run/postgresql
 SAGUARO_EVENT_RETENTION_MONTHS=${EVENT_RETENTION}
+SAGUARO_SECRET_KEY_FILE=/etc/saguaro/secret.key
 SAGUARO_PDNS_API_URL=http://127.0.0.1:8081
 SAGUARO_PDNS_API_KEY=${PDNS_API_KEY}
 SAGUARO_KEA_API_URL=http://127.0.0.1:8000
@@ -313,6 +314,14 @@ EOF
   chmod 0600 "$ADMIN_PASSWORD_FILE"
   chown root:saguaro /etc/saguaro/saguaro.env
   chmod 0640 /etc/saguaro/saguaro.env
+  # AES-256 key for secrets the GUI stores (e.g. the SMTP password),
+  # per the spec: /etc/saguaro/secret.key, root:saguaro 0640.
+  if [[ ! -s /etc/saguaro/secret.key ]]; then
+    umask 0027
+    openssl rand -base64 32 >/etc/saguaro/secret.key
+    chown root:saguaro /etc/saguaro/secret.key
+    chmod 0640 /etc/saguaro/secret.key
+  fi
 fi
 
 log "Generating encrypted-backup key material"

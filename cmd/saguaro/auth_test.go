@@ -33,11 +33,11 @@ func TestVerifyPasswordMalformed(t *testing.T) {
 	cases := []string{
 		"",
 		"plaintext",
-		"$argon2i$v=19$m=65536,t=1,p=4$YWJj$YWJj",     // wrong variant
-		"$argon2id$v=18$m=65536,t=1,p=4$YWJj$YWJj",    // wrong version
-		"$argon2id$v=19$m=65536,t=1,p=4$!!$YWJj",      // bad salt encoding
-		"$argon2id$v=19$m=65536,t=1,p=4$YWJj$",        // empty key
-		"$argon2id$v=19$m=banana,t=1,p=4$YWJj$YWJj",   // bad params
+		"$argon2i$v=19$m=65536,t=1,p=4$YWJj$YWJj",   // wrong variant
+		"$argon2id$v=18$m=65536,t=1,p=4$YWJj$YWJj",  // wrong version
+		"$argon2id$v=19$m=65536,t=1,p=4$!!$YWJj",    // bad salt encoding
+		"$argon2id$v=19$m=65536,t=1,p=4$YWJj$",      // empty key
+		"$argon2id$v=19$m=banana,t=1,p=4$YWJj$YWJj", // bad params
 	}
 	for _, c := range cases {
 		if verifyPassword("anything", c) {
