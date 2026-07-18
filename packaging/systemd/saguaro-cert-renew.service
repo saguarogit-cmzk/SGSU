@@ -1,0 +1,7 @@
+[Unit]
+Description=Saguaro certificate renewal (step-ca managed certificates)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/saguaro-cert renew-all
+Nice=10

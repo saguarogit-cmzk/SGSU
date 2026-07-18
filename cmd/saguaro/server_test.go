@@ -61,6 +61,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		runRPZ:        func(context.Context, string) ([]byte, error) { return nil, nil },
 		runProxy:      func(context.Context, string) ([]byte, error) { return nil, nil },
 		probeUpstream: func(context.Context, string) error { return nil },
+		runCert:       func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store:         st,
 		adminUser:     "admin",

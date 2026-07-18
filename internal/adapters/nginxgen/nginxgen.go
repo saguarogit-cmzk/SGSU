@@ -17,8 +17,11 @@ import (
 const (
 	TLSAppliance = "appliance" // /etc/saguaro/bootstrap-tls.{crt,key}
 	TLSCustom    = "custom"    // caller-provided absolute paths
+	TLSManaged   = "managed"   // certificate issued by the W6 module (CertName)
 	TLSNone      = "none"      // plain HTTP on port 80
 )
+
+const managedCertDir = "/etc/saguaro/certs"
 
 const (
 	applianceCert = "/etc/saguaro/bootstrap-tls.crt"
@@ -30,10 +33,11 @@ type App struct {
 	Hostname     string   `json:"hostname"`
 	UpstreamIP   string   `json:"upstreamIp"`
 	UpstreamPort int      `json:"upstreamPort"`
-	TLS          string   `json:"tls"` // appliance | custom | none
+	TLS          string   `json:"tls"` // appliance | custom | managed | none
 	CertPath     string   `json:"certPath,omitempty"`
 	KeyPath      string   `json:"keyPath,omitempty"`
-	AllowCIDRs   []string `json:"allowCidrs"` // empty = open access
+	CertName     string   `json:"certName,omitempty"` // managed TLS: name from the certificates module
+	AllowCIDRs   []string `json:"allowCidrs"`         // empty = open access
 	WebSocket    bool     `json:"webSocket"`
 }
 
@@ -57,6 +61,10 @@ func (a App) Validate() error {
 	}
 	switch a.TLS {
 	case TLSAppliance, TLSNone:
+	case TLSManaged:
+		if !nameRe.MatchString(a.CertName) {
+			return fmt.Errorf("managed TLS requires a valid certName")
+		}
 	case TLSCustom:
 		if !strings.HasPrefix(a.CertPath, "/") || !strings.HasPrefix(a.KeyPath, "/") {
 			return fmt.Errorf("custom TLS requires absolute certPath and keyPath")
@@ -96,8 +104,12 @@ func Generate(apps []App) (string, error) {
 		seenHost[host] = true
 
 		cert, key := a.CertPath, a.KeyPath
-		if a.TLS == TLSAppliance {
+		switch a.TLS {
+		case TLSAppliance:
 			cert, key = applianceCert, applianceKey
+		case TLSManaged:
+			cert = managedCertDir + "/" + a.CertName + ".crt"
+			key = managedCertDir + "/" + a.CertName + ".key"
 		}
 		fmt.Fprintf(&b, "\n# service: %s\nserver {\n", a.Name)
 		if a.TLS == TLSNone {

@@ -603,6 +603,9 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ids" /usr/sbin/saguaro-ids
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-rpz" /usr/sbin/saguaro-rpz
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-proxy" /usr/sbin/saguaro-proxy
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-cert" /usr/sbin/saguaro-cert
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.service" /etc/systemd/system/saguaro-cert-renew.service
+  run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-cert-renew.timer" /etc/systemd/system/saguaro-cert-renew.timer
   run install -m 0440 "$SOURCE_DIR/packaging/sudoers/saguaro-adapter" /etc/sudoers.d/saguaro-adapter
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.service" /etc/systemd/system/saguaro-backup.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.timer" /etc/systemd/system/saguaro-backup.timer
@@ -648,7 +651,7 @@ EOF
 fi
 
 run systemctl daemon-reload
-services=(postgresql unbound pdns nginx saguaro saguaro-eventd saguaro-backup.timer kea-ctrl-agent)
+services=(postgresql unbound pdns nginx saguaro saguaro-eventd saguaro-backup.timer saguaro-cert-renew.timer kea-ctrl-agent)
 ((dhcp_fields == 5)) && services+=(kea-dhcp4-server kea-dhcp-ddns-server)
 $ENABLE_DOCKER && services+=(docker)
 $ENABLE_MONITORING && services+=(prometheus-node-exporter)

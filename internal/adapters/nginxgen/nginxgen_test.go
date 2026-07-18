@@ -83,6 +83,24 @@ func TestGenerateRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestGenerateManagedTLS(t *testing.T) {
+	a := appOK()
+	a.TLS = TLSManaged
+	a.CertName = "wiki"
+	text, err := Generate([]App{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "ssl_certificate /etc/saguaro/certs/wiki.crt;") ||
+		!strings.Contains(text, "ssl_certificate_key /etc/saguaro/certs/wiki.key;") {
+		t.Fatalf("managed cert paths missing:\n%s", text)
+	}
+	a.CertName = "Bad Name"
+	if _, err := Generate([]App{a}); err == nil {
+		t.Fatal("invalid certName must be refused")
+	}
+}
+
 func TestGenerateCustomTLS(t *testing.T) {
 	a := appOK()
 	a.TLS = TLSCustom

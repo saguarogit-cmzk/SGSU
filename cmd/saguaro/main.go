@@ -62,6 +62,7 @@ type state struct {
 	IDS       *idsState       `json:"ids,omitempty"`
 	RPZ       *rpzmod.Config  `json:"rpz,omitempty"`
 	ProxyApps []nginxgen.App  `json:"proxyApps,omitempty"`
+	Certs     []certRecord    `json:"certs,omitempty"`
 }
 
 type store struct {
@@ -89,6 +90,7 @@ type app struct {
 	runRPZ        func(ctx context.Context, action string) ([]byte, error)
 	runProxy      func(ctx context.Context, action string) ([]byte, error)
 	probeUpstream func(ctx context.Context, addr string) error
+	runCert       func(ctx context.Context, args ...string) ([]byte, error)
 	hwMemMB       int
 	hwCores       int
 
@@ -101,7 +103,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.14.0"
+const appVersion = "0.15.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -202,6 +204,7 @@ func main() {
 		runRPZ:        defaultRunRPZ,
 		runProxy:      defaultRunProxy,
 		probeUpstream: defaultProbeUpstream,
+		runCert:       defaultRunCert,
 		hwMemMB:       readMemTotalMB(),
 		hwCores:       runtime.NumCPU(),
 
@@ -283,6 +286,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
 	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
 	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("GET /api/certs", a.auth(a.apiCertsList))
+	mux.HandleFunc("POST /api/certs/issue", a.authz(permCerts, a.apiCertIssue))
+	mux.HandleFunc("POST /api/certs/{name}/deploy-gui", a.authz(permCerts, a.apiCertDeployGUI))
+	mux.HandleFunc("DELETE /api/certs/{name}", a.authz(permCerts, a.apiCertDelete))
 	mux.HandleFunc("GET /api/proxy", a.auth(a.apiProxyGet))
 	mux.HandleFunc("POST /api/proxy/apply", a.authz(permProxy, a.apiProxyApply))
 	mux.HandleFunc("GET /api/rpz", a.auth(a.apiRPZGet))

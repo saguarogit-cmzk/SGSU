@@ -1,0 +1,89 @@
+#!/bin/sh
+# saguaro-cert — root adapter for the certificates module (SNA wizard W6).
+# Issues internal certificates from the appliance Step CA and deploys them.
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   issue            issue a certificate from the staged request file
+#                    (line 1: name, following lines: SANs)
+#   renew-all        renew every managed certificate (also run by the
+#                    saguaro-cert-renew.timer) and reload nginx
+#   remove NAME      delete a managed certificate
+#   deploy-gui NAME  install a managed certificate as the GUI TLS cert
+set -eu
+
+STAGED=/var/lib/saguaro/staged-cert-request
+CERTDIR=/etc/saguaro/certs
+CA_URL=https://127.0.0.1:9000
+CA_ROOT=/etc/step-ca/certs/root_ca.crt
+CA_PASS=/etc/step-ca/password
+GUI_CRT=/etc/saguaro/bootstrap-tls.crt
+GUI_KEY=/etc/saguaro/bootstrap-tls.key
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+valid_name() { echo "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'; }
+valid_san()  { echo "$1" | grep -Eq '^(\*\.)?[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; }
+
+case "${1:-}" in
+  issue)
+    [ -s "$STAGED" ] || { echo "no staged request at $STAGED" >&2; exit 1; }
+    command -v step >/dev/null || { echo "step CLI is not installed" >&2; exit 1; }
+    [ -s "$CA_PASS" ] || { echo "step-ca is not initialized on this appliance" >&2; exit 1; }
+    NAME=$(sed -n 1p "$STAGED")
+    valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
+    SANS=$(sed -n '2,$p' "$STAGED")
+    [ -n "$SANS" ] || { echo "at least one SAN is required" >&2; exit 1; }
+    SUBJECT=""
+    SAN_ARGS=""
+    for s in $SANS; do
+      valid_san "$s" || { echo "invalid SAN: $s" >&2; exit 1; }
+      [ -n "$SUBJECT" ] || SUBJECT="$s"
+      SAN_ARGS="$SAN_ARGS --san $s"
+    done
+    install -d -m 0755 "$CERTDIR"
+    # shellcheck disable=SC2086
+    step ca certificate "$SUBJECT" "$CERTDIR/$NAME.crt" "$CERTDIR/$NAME.key" \
+      --ca-url "$CA_URL" --root "$CA_ROOT" \
+      --provisioner admin --provisioner-password-file "$CA_PASS" \
+      --not-after 2160h --force $SAN_ARGS >/dev/null
+    chmod 0644 "$CERTDIR/$NAME.crt"
+    chown root:root "$CERTDIR/$NAME.crt" "$CERTDIR/$NAME.key"
+    chmod 0600 "$CERTDIR/$NAME.key"
+    logger -t saguaro-cert "issued certificate $NAME"
+    ;;
+  renew-all)
+    command -v step >/dev/null || exit 0
+    [ -d "$CERTDIR" ] || exit 0
+    renewed=0
+    for crt in "$CERTDIR"/*.crt; do
+      [ -e "$crt" ] || break
+      key="${crt%.crt}.key"
+      if step ca renew --force "$crt" "$key" --ca-url "$CA_URL" --root "$CA_ROOT" >/dev/null 2>&1; then
+        renewed=$((renewed+1))
+      fi
+    done
+    [ "$renewed" -gt 0 ] && { nginx -t >/dev/null 2>&1 && systemctl reload nginx || true; }
+    logger -t saguaro-cert "renewed $renewed certificate(s)"
+    ;;
+  remove)
+    NAME="${2:-}"
+    valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
+    rm -f "$CERTDIR/$NAME.crt" "$CERTDIR/$NAME.key"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+    logger -t saguaro-cert "removed certificate $NAME"
+    ;;
+  deploy-gui)
+    NAME="${2:-}"
+    valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
+    [ -s "$CERTDIR/$NAME.crt" ] && [ -s "$CERTDIR/$NAME.key" ] || { echo "certificate $NAME not found" >&2; exit 1; }
+    install -m 0644 -o root -g root "$CERTDIR/$NAME.crt" "$GUI_CRT"
+    install -m 0600 -o root -g root "$CERTDIR/$NAME.key" "$GUI_KEY"
+    nginx -t >/dev/null 2>&1 || { echo "nginx -t failed after deploy" >&2; exit 1; }
+    systemctl reload nginx
+    logger -t saguaro-cert "deployed certificate $NAME to the GUI vhost"
+    ;;
+  *)
+    echo "usage: saguaro-cert issue | renew-all | remove NAME | deploy-gui NAME" >&2
+    exit 2
+    ;;
+esac

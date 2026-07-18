@@ -9,5 +9,6 @@ scripts/saguaro-firewall text eol=lf
 scripts/saguaro-ids text eol=lf
 scripts/saguaro-rpz text eol=lf
 scripts/saguaro-proxy text eol=lf
+scripts/saguaro-cert text eol=lf
 *.yml text eol=lf
 *.go text eol=lf
