@@ -90,6 +90,20 @@ func main() {
 	in := make(chan events.Event, 1024)
 	go batcher(ctx, log, store, in)
 
+	// Suricata eve.json alerts (W9): the tailer idles quietly until the
+	// security module is enabled and the file appears.
+	evePath := envDefault("SAGUARO_EVE_PATH", "/var/log/suricata/eve.json")
+	go events.TailEve(ctx, evePath, 0, func(e events.Event) {
+		if events.Rank(e.Severity) < minRank {
+			return
+		}
+		select {
+		case in <- e:
+		default:
+			log.Warn("event buffer full, dropping IDS event")
+		}
+	})
+
 	log.Info("saguaro-eventd starting", "units", len(units), "minSeverity", minSev, "retentionMonths", retention)
 	cursor := ""
 	for ctx.Err() == nil {

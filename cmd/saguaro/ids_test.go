@@ -1,0 +1,117 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type testServerBundle struct {
+	srv *httptest.Server
+	c   *http.Client
+	a   *app
+}
+
+func idsTestServer(t *testing.T) (*testServerBundle, *[]string, *[]string) {
+	t.Helper()
+	srv, c, a := newTestServer(t)
+	var idsCalls, fwCalls []string
+	a.runIDS = func(_ context.Context, args ...string) ([]byte, error) {
+		idsCalls = append(idsCalls, strings.Join(args, " "))
+		return []byte("ok"), nil
+	}
+	a.runFirewall = func(_ context.Context, action string) ([]byte, error) {
+		fwCalls = append(fwCalls, action)
+		return []byte("ok"), nil
+	}
+	a.hwMemMB, a.hwCores = 16384, 8
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	return &testServerBundle{srv: srv, c: c, a: a}, &idsCalls, &fwCalls
+}
+
+func TestIDSHardwareGate(t *testing.T) {
+	b, _, _ := idsTestServer(t)
+	b.a.hwMemMB = 2048
+	body := `{"mode":"ids","interface":"enp1s0","homeNet":"","force":false}`
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", body); r.StatusCode != http.StatusConflict {
+		t.Fatalf("low-spec IDS enable: got %d, want 409", r.StatusCode)
+	}
+}
+
+func TestIDSEnableAndEmergencyOff(t *testing.T) {
+	b, idsCalls, _ := idsTestServer(t)
+	body := `{"mode":"ids","interface":"enp1s0","homeNet":"192.168.10.0/24","force":false}`
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", body); r.StatusCode != http.StatusOK {
+		t.Fatalf("IDS enable: got %d", r.StatusCode)
+	}
+	staged, err := os.ReadFile(filepath.Join(filepath.Dir(b.a.store.path), stagedSuricataName))
+	if err != nil || !strings.Contains(string(staged), "af-packet:") {
+		t.Fatalf("staged suricata config wrong: %v %s", err, staged)
+	}
+	if len(*idsCalls) != 1 || (*idsCalls)[0] != "apply ids" {
+		t.Fatalf("adapter calls wrong: %v", *idsCalls)
+	}
+	st := b.a.getIDS()
+	if st.Mode != "ids" || st.IDSEnabledAt.IsZero() {
+		t.Fatalf("state wrong: %+v", st)
+	}
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/disable", "{}"); r.StatusCode != http.StatusOK {
+		t.Fatalf("disable: got %d", r.StatusCode)
+	}
+	if b.a.getIDS().Mode != "off" {
+		t.Fatal("disable must set mode off")
+	}
+}
+
+func TestIPSPreconditionsAndQueueRule(t *testing.T) {
+	b, idsCalls, fwCalls := idsTestServer(t)
+	// IPS without gateway mode is refused.
+	ipsBody := `{"mode":"ips","interface":"enp1s0","homeNet":"","force":true}`
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", ipsBody); r.StatusCode != http.StatusConflict {
+		t.Fatalf("IPS without gateway: got %d, want 409", r.StatusCode)
+	}
+	// Configure gateway, then enable IDS.
+	if r := reqJSON(t, b.srv, b.c, http.MethodPut, "/api/gateway", gwBody); r.StatusCode != http.StatusOK {
+		t.Fatalf("gateway config: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", `{"mode":"ids","interface":"enp1s0","homeNet":"","force":false}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("IDS enable: got %d", r.StatusCode)
+	}
+	// IPS before the observation period without force is refused...
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", `{"mode":"ips","interface":"","homeNet":"","force":false}`); r.StatusCode != http.StatusConflict {
+		t.Fatalf("IPS before observation period: got %d, want 409", r.StatusCode)
+	}
+	// ...and allowed with force: suricata switches to ips and the firewall
+	// transaction applies the queue rule.
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/enable", `{"mode":"ips","interface":"","homeNet":"","force":true}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("forced IPS enable: got %d", r.StatusCode)
+	}
+	if (*idsCalls)[len(*idsCalls)-1] != "apply ips" {
+		t.Fatalf("expected apply ips, calls: %v", *idsCalls)
+	}
+	if len(*fwCalls) == 0 || (*fwCalls)[len(*fwCalls)-1] != "apply" {
+		t.Fatalf("firewall apply missing: %v", *fwCalls)
+	}
+	gw, _ := b.a.getGateway()
+	if !gw.IPSEnabled {
+		t.Fatal("gateway config must record IPSEnabled")
+	}
+	stagedFW, err := os.ReadFile(filepath.Join(filepath.Dir(b.a.store.path), stagedRulesetName))
+	if err != nil || !strings.Contains(string(stagedFW), "queue num 0 bypass") {
+		t.Fatalf("staged firewall lacks queue rule: %v", err)
+	}
+	// Emergency off removes the queue rule again.
+	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/disable", "{}"); r.StatusCode != http.StatusOK {
+		t.Fatalf("emergency off: got %d", r.StatusCode)
+	}
+	gw, _ = b.a.getGateway()
+	if gw.IPSEnabled {
+		t.Fatal("emergency off must clear IPSEnabled")
+	}
+}

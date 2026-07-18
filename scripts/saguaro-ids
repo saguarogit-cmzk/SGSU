@@ -1,0 +1,54 @@
+#!/bin/sh
+# saguaro-ids — root adapter for the Suricata security module (SNA W9).
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   apply ids|ips  validate the staged config (suricata -T), install it,
+#                  point the service at it and (re)start Suricata in the
+#                  requested mode (af-packet IDS or NFQUEUE 0 IPS)
+#   disable        stop and disable Suricata (the Emergency IPS off path)
+#   update-rules   refresh rulesets via suricata-update (best effort)
+set -eu
+
+STAGED=/var/lib/saguaro/staged-suricata.yaml
+ACTIVE=/etc/suricata/saguaro.yaml
+OVERRIDE_DIR=/etc/systemd/system/suricata.service.d
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  apply)
+    MODE="${2:-}"
+    [ "$MODE" = ids ] || [ "$MODE" = ips ] || { echo "usage: saguaro-ids apply ids|ips" >&2; exit 2; }
+    [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
+    command -v suricata >/dev/null || { echo "suricata is not installed (install the security package first)" >&2; exit 1; }
+    suricata -T -c "$STAGED" >/dev/null
+    install -m 0644 -o root -g root "$STAGED" "$ACTIVE"
+    install -d -m 0755 "$OVERRIDE_DIR"
+    if [ "$MODE" = ips ]; then
+      EXEC="/usr/bin/suricata -c $ACTIVE --pidfile /run/suricata.pid -q 0 -D"
+    else
+      EXEC="/usr/bin/suricata -c $ACTIVE --pidfile /run/suricata.pid --af-packet -D"
+    fi
+    cat >"$OVERRIDE_DIR/saguaro.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=$EXEC
+EOF
+    systemctl daemon-reload
+    systemctl enable suricata >/dev/null 2>&1 || true
+    systemctl restart suricata
+    logger -t saguaro-ids "suricata started in $MODE mode"
+    ;;
+  disable)
+    systemctl disable --now suricata 2>/dev/null || true
+    logger -t saguaro-ids "suricata disabled"
+    ;;
+  update-rules)
+    command -v suricata-update >/dev/null && suricata-update --no-test-mode >/dev/null 2>&1 || true
+    systemctl try-restart suricata 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: saguaro-ids apply ids|ips | disable | update-rules" >&2
+    exit 2
+    ;;
+esac

@@ -82,6 +82,23 @@ func TestGenerateGateway(t *testing.T) {
 	}
 }
 
+func TestGenerateIPSQueueRule(t *testing.T) {
+	c := gwCfg()
+	c.IPSEnabled = true
+	text, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "ct state new queue num 0 bypass") {
+		t.Fatalf("missing IPS queue rule:\n%s", text)
+	}
+	c.IPSEnabled = false
+	text, _ = c.Generate()
+	if strings.Contains(text, "queue num 0") {
+		t.Fatal("queue rule must be absent without IPS")
+	}
+}
+
 func TestGenerateGatewayWithoutNAT(t *testing.T) {
 	c := gwCfg()
 	c.NATEnabled = false

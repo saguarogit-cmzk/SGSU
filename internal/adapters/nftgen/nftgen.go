@@ -28,6 +28,10 @@ type Config struct {
 	LANInterface   string        `json:"lanInterface"`
 	NATEnabled     bool          `json:"natEnabled"`
 	PortForwards   []PortForward `json:"portForwards"`
+	// IPSEnabled queues new forwarded connections to NFQUEUE 0 for Suricata
+	// inline inspection; `bypass` keeps traffic flowing if Suricata dies
+	// (fail-open by design — W9).
+	IPSEnabled bool `json:"ipsEnabled"`
 }
 
 func validIface(name string) bool {
@@ -117,6 +121,9 @@ func (c Config) Generate() (string, error) {
 	if c.GatewayEnabled {
 		b.WriteString("    ct state established,related accept\n")
 		b.WriteString("    ct state invalid drop\n")
+		if c.IPSEnabled {
+			b.WriteString("    ct state new queue num 0 bypass\n")
+		}
 		fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", c.LANInterface, c.WANInterface)
 		for _, pf := range c.PortForwards {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s %s dport %d ct state new accept\n",

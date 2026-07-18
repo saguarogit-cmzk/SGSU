@@ -332,6 +332,27 @@ func (s *Store) QueryAfter(ctx context.Context, afterID int64, sevs []string, li
 	return out, rows.Err()
 }
 
+// ModuleStats returns event counts per severity for one module since a
+// point in time (the W9 wizard shows 14-day IDS statistics from this).
+func (s *Store) ModuleStats(ctx context.Context, module string, since time.Time) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT severity, count(*) FROM events WHERE module = $1 AND ts >= $2 GROUP BY severity`, module, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var sev string
+		var n int64
+		if err := rows.Scan(&sev, &n); err != nil {
+			return nil, err
+		}
+		out[sev] = n
+	}
+	return out, rows.Err()
+}
+
 // QueryOpts filters the events listing; zero values mean "no filter".
 type QueryOpts struct {
 	Module   string

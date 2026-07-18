@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,7 @@ type state struct {
 	Audit    []auditEvent    `json:"audit"`
 	Mail     *mailmod.Config `json:"mail,omitempty"`
 	Gateway  *nftgen.Config  `json:"gateway,omitempty"`
+	IDS      *idsState       `json:"ids,omitempty"`
 }
 
 type store struct {
@@ -79,6 +81,9 @@ type app struct {
 	mailKey     []byte         // AES-256 key for the stored SMTP password
 	keaHosts    *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
 	runFirewall func(ctx context.Context, action string) ([]byte, error)
+	runIDS      func(ctx context.Context, args ...string) ([]byte, error)
+	hwMemMB     int
+	hwCores     int
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -89,7 +94,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.11.0"
+const appVersion = "0.12.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -186,6 +191,9 @@ func main() {
 		mailKey:     mailKey,
 		keaHosts:    keaHosts,
 		runFirewall: defaultRunFirewall,
+		runIDS:      defaultRunIDS,
+		hwMemMB:     readMemTotalMB(),
+		hwCores:     runtime.NumCPU(),
 
 		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
 		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),
@@ -265,6 +273,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
 	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
 	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("GET /api/ids", a.auth(a.apiIDSGet))
+	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.apiIDSEnable))
+	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.apiIDSDisable))
 	mux.HandleFunc("GET /api/profile", a.auth(a.apiProfile))
 	mux.HandleFunc("POST /api/profile/password", a.auth(a.apiProfilePassword))
 	assets, err := fs.Sub(webFS, "web")

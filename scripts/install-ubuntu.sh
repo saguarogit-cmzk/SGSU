@@ -17,6 +17,7 @@ SERVER_NAME="$(hostname -f 2>/dev/null || hostname)"
 CA_NAME="Saguaro Internal CA"
 CA_DNS=""
 DEB_SOURCE=""
+ENABLE_SURICATA=false
 NON_INTERACTIVE=false
 ENABLE_FIREWALL=true
 ENABLE_DOCKER=false
@@ -47,6 +48,8 @@ Usage: sudo ./scripts/install-ubuntu.sh [options]
   --deb PATH|URL             Install the prebuilt saguaro .deb (from CI) instead of
                              building from source on this host (recommended; avoids
                              installing a Go toolchain on the appliance)
+  --with-suricata            Install the Suricata security package (needs >= 8 GB RAM
+                             and >= 4 cores; enable IDS/IPS later from the GUI, W9)
   --with-docker              Install Docker (off by default: it manipulates netfilter)
   --without-step-ca          Do not initialize Step CA
   --without-monitoring       Do not install node exporter
@@ -76,6 +79,7 @@ while (($#)); do
     --ca-name) CA_NAME=${2:?}; shift 2 ;;
     --ca-dns) CA_DNS=${2:?}; shift 2 ;;
     --deb) DEB_SOURCE=${2:?}; shift 2 ;;
+    --with-suricata) ENABLE_SURICATA=true; shift ;;
     --with-docker) ENABLE_DOCKER=true; shift ;;
     --without-step-ca) ENABLE_STEP_CA=false; shift ;;
     --without-monitoring) ENABLE_MONITORING=false; shift ;;
@@ -165,6 +169,13 @@ base_packages=(ca-certificates curl gpg openssl jq age dnsutils
 # Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
 # go.mod dependencies are pinned to stay compatible with it).
 [[ -z $DEB_SOURCE ]] && base_packages+=(golang-go)
+if $ENABLE_SURICATA; then
+  # Hardware profile rule (§2.1): no Suricata below 8 GB RAM / 4 cores.
+  if (( MEM_MB < 7500 || CPU_CORES < 4 )); then
+    die "--with-suricata requires >= 8 GB RAM and >= 4 cores (detected ${MEM_MB} MB, ${CPU_CORES} cores); use RPZ filtering instead."
+  fi
+  base_packages+=(suricata suricata-update)
+fi
 $ENABLE_DOCKER && base_packages+=(docker.io docker-compose-v2)
 $ENABLE_MONITORING && base_packages+=(prometheus-node-exporter)
 log "Installing Ubuntu packages"
@@ -589,6 +600,7 @@ if [[ -z $DEB_SOURCE ]]; then
   log "Installing backup job and firewall adapter"
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup.sh" /usr/sbin/saguaro-backup
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-firewall" /usr/sbin/saguaro-firewall
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ids" /usr/sbin/saguaro-ids
   run install -m 0440 "$SOURCE_DIR/packaging/sudoers/saguaro-adapter" /etc/sudoers.d/saguaro-adapter
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.service" /etc/systemd/system/saguaro-backup.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-backup.timer" /etc/systemd/system/saguaro-backup.timer
