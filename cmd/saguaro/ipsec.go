@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +16,36 @@ import (
 	"saguaro.local/network-manager/internal/adapters/ipsec"
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
+
+// validatePEMCert confirms s is a parseable PEM X.509 certificate.
+func validatePEMCert(s string) error {
+	block, _ := pem.Decode([]byte(strings.TrimSpace(s)))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return fmt.Errorf("expected a PEM certificate")
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return fmt.Errorf("unparseable certificate")
+	}
+	return nil
+}
+
+// validatePEMKey confirms s is a parseable PEM private key (PKCS#1/#8 or EC).
+func validatePEMKey(s string) error {
+	block, _ := pem.Decode([]byte(strings.TrimSpace(s)))
+	if block == nil {
+		return fmt.Errorf("expected a PEM private key")
+	}
+	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		return nil
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return nil
+	}
+	if _, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return nil
+	}
+	return fmt.Errorf("unparseable private key")
+}
 
 const stagedIPsecName = "staged-swanctl.conf"
 
@@ -57,10 +89,15 @@ func ipsecView(cfg ipsec.Config) map[string]any {
 		if esp == "" {
 			esp = ipsec.DefaultESPProposal
 		}
+		auth := c.Auth
+		if auth == "" {
+			auth = "psk"
+		}
 		conns = append(conns, map[string]any{
 			"name": c.Name, "remoteAddr": c.RemoteAddr, "localId": c.LocalID, "remoteId": c.RemoteID,
 			"localSubnets": c.LocalSubnets, "remoteSubnets": c.RemoteSubnets,
-			"ikeProposal": ike, "espProposal": esp, "initiate": c.Initiate, "hasPsk": c.PSKEnc != "",
+			"ikeProposal": ike, "espProposal": esp, "initiate": c.Initiate,
+			"auth": auth, "hasPsk": c.PSKEnc != "", "hasCert": c.LocalCert != "", "hasKey": c.LocalKeyEnc != "", "hasCa": c.RemoteCA != "",
 		})
 	}
 	return map[string]any{"enabled": cfg.Enabled, "connections": conns,
@@ -85,6 +122,9 @@ func (a *app) applyIPsec(ctx context.Context, cfg ipsec.Config) error {
 	}
 	psks := map[string]string{}
 	for _, c := range cfg.Connections {
+		if c.IsCert() {
+			continue // certificate connections carry no PSK
+		}
 		if c.PSKEnc == "" {
 			return fmt.Errorf("connection %s has no preshared key", c.Name)
 		}
@@ -101,6 +141,35 @@ func (a *app) applyIPsec(ctx context.Context, cfg ipsec.Config) error {
 	staged := filepath.Join(filepath.Dir(a.store.path), stagedIPsecName)
 	if err := os.WriteFile(staged, []byte(text), 0600); err != nil {
 		return fmt.Errorf("cannot write staged config: %w", err)
+	}
+	// Stage per-connection certificate material for cert-auth connections.
+	credsDir := filepath.Join(filepath.Dir(a.store.path), "staged-swanctl-creds")
+	if err := os.RemoveAll(credsDir); err != nil {
+		return fmt.Errorf("cannot reset staged creds: %w", err)
+	}
+	if err := os.MkdirAll(credsDir, 0700); err != nil {
+		return fmt.Errorf("cannot create staged creds: %w", err)
+	}
+	for _, c := range cfg.Connections {
+		if !c.IsCert() {
+			continue
+		}
+		key, err := mailmod.Decrypt(a.mailKey, c.LocalKeyEnc)
+		if err != nil {
+			return fmt.Errorf("cannot unseal private key for %s: %w", c.Name, err)
+		}
+		writeCred := func(suffix, data string) error {
+			return os.WriteFile(filepath.Join(credsDir, c.Name+suffix), []byte(data), 0600)
+		}
+		if err := writeCred(".cert.pem", c.LocalCert); err != nil {
+			return err
+		}
+		if err := writeCred(".key.pem", key); err != nil {
+			return err
+		}
+		if err := writeCred(".ca.pem", c.RemoteCA); err != nil {
+			return err
+		}
 	}
 	if out, err := a.runIPsec(ctx, "apply"); err != nil {
 		return fmt.Errorf("apply failed: %s", truncate(string(out), 300))
@@ -148,28 +217,74 @@ func (a *app) apiIPsecConnAdd(w http.ResponseWriter, r *http.Request) {
 		IKEProposal   string   `json:"ikeProposal"`
 		ESPProposal   string   `json:"espProposal"`
 		Initiate      bool     `json:"initiate"`
+		Auth          string   `json:"auth"`
 		PSK           string   `json:"psk"`
+		LocalCert     string   `json:"localCert"`
+		LocalKey      string   `json:"localKey"`
+		RemoteCA      string   `json:"remoteCa"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
+	}
+	auth := in.Auth
+	if auth == "" {
+		auth = "psk"
 	}
 	conn := ipsec.Connection{
 		Name: strings.ToLower(strings.TrimSpace(in.Name)), RemoteAddr: strings.TrimSpace(in.RemoteAddr),
 		LocalID: strings.TrimSpace(in.LocalID), RemoteID: strings.TrimSpace(in.RemoteID),
 		LocalSubnets: in.LocalSubnets, RemoteSubnets: in.RemoteSubnets,
 		IKEProposal: strings.TrimSpace(in.IKEProposal), ESPProposal: strings.TrimSpace(in.ESPProposal),
-		Initiate: in.Initiate,
+		Initiate: in.Initiate, Auth: auth,
 	}
 	cfg := a.getIPsec()
-	// Reuse the existing sealed PSK when the caller edits a connection without
-	// re-entering the key; require one for brand-new connections.
+	// Reuse existing sealed secrets when the caller edits a connection without
+	// re-entering them; require them for brand-new connections.
 	var existing *ipsec.Connection
 	for i := range cfg.Connections {
 		if cfg.Connections[i].Name == conn.Name {
 			existing = &cfg.Connections[i]
 		}
 	}
-	if psk := strings.TrimSpace(in.PSK); psk != "" {
+	if auth == "cert" {
+		conn.LocalCert = strings.TrimSpace(in.LocalCert)
+		conn.RemoteCA = strings.TrimSpace(in.RemoteCA)
+		if conn.LocalCert == "" && existing != nil {
+			conn.LocalCert = existing.LocalCert
+		}
+		if conn.RemoteCA == "" && existing != nil {
+			conn.RemoteCA = existing.RemoteCA
+		}
+		if err := validatePEMCert(conn.LocalCert); err != nil {
+			writeError(w, http.StatusBadRequest, "localCert: "+err.Error())
+			return
+		}
+		if err := validatePEMCert(conn.RemoteCA); err != nil {
+			writeError(w, http.StatusBadRequest, "remoteCa: "+err.Error())
+			return
+		}
+		if key := strings.TrimSpace(in.LocalKey); key != "" {
+			if err := validatePEMKey(key); err != nil {
+				writeError(w, http.StatusBadRequest, "localKey: "+err.Error())
+				return
+			}
+			if a.mailKey == nil {
+				writeError(w, http.StatusInternalServerError, "secret key unavailable; cannot store the private key")
+				return
+			}
+			enc, err := mailmod.Encrypt(a.mailKey, key)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "cannot seal private key")
+				return
+			}
+			conn.LocalKeyEnc = enc
+		} else if existing != nil && existing.LocalKeyEnc != "" {
+			conn.LocalKeyEnc = existing.LocalKeyEnc
+		} else {
+			writeError(w, http.StatusBadRequest, "a private key is required for certificate auth")
+			return
+		}
+	} else if psk := strings.TrimSpace(in.PSK); psk != "" {
 		if !ipsecPSKRe.MatchString(psk) {
 			writeError(w, http.StatusBadRequest, "preshared key must be 8-64 characters without quotes, backslashes or spaces")
 			return
@@ -184,7 +299,7 @@ func (a *app) apiIPsecConnAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		conn.PSKEnc = enc
-	} else if existing != nil {
+	} else if existing != nil && existing.PSKEnc != "" {
 		conn.PSKEnc = existing.PSKEnc
 	} else {
 		writeError(w, http.StatusBadRequest, "a preshared key is required")

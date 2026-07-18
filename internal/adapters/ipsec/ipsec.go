@@ -36,8 +36,20 @@ type Connection struct {
 	IKEProposal   string   `json:"ikeProposal"`
 	ESPProposal   string   `json:"espProposal"`
 	Initiate      bool     `json:"initiate"` // true: start on boot; false: on-demand (trap)
+	Auth          string   `json:"auth"`     // "psk" (default) | "cert"
 	PSKEnc        string   `json:"pskEnc,omitempty"`
+	// Certificate auth material (PEM). LocalKeyEnc is sealed like the PSK.
+	LocalCert   string `json:"localCert,omitempty"`
+	LocalKeyEnc string `json:"localKeyEnc,omitempty"`
+	RemoteCA    string `json:"remoteCa,omitempty"`
 }
+
+// IsCert reports whether the connection authenticates with certificates.
+func (c Connection) IsCert() bool { return c.Auth == "cert" }
+
+// CertFile is the filename used for a connection's certificate in the swanctl
+// x509 directory; the adapter installs it there and swanctl.conf references it.
+func CertFile(name string) string { return "saguaro-" + name + ".pem" }
 
 type Config struct {
 	Enabled     bool         `json:"enabled"`
@@ -91,6 +103,21 @@ func (c Config) Validate() error {
 		if !proposalRe.MatchString(ike) || !proposalRe.MatchString(esp) {
 			return fmt.Errorf("connection %q: invalid proposal", conn.Name)
 		}
+		switch conn.Auth {
+		case "", "psk":
+		case "cert":
+			if conn.LocalID == "" || conn.RemoteID == "" {
+				return fmt.Errorf("connection %q: certificate auth needs local and remote IDs (the certificate identities)", conn.Name)
+			}
+			if !strings.Contains(conn.LocalCert, "BEGIN CERTIFICATE") {
+				return fmt.Errorf("connection %q: localCert must be a PEM certificate", conn.Name)
+			}
+			if !strings.Contains(conn.RemoteCA, "BEGIN CERTIFICATE") {
+				return fmt.Errorf("connection %q: remoteCa must be a PEM certificate", conn.Name)
+			}
+		default:
+			return fmt.Errorf("connection %q: auth must be psk or cert", conn.Name)
+		}
 	}
 	return nil
 }
@@ -123,14 +150,24 @@ func (c Config) GenerateConf(psks map[string]string) (string, error) {
 		fmt.Fprintf(&b, "      remote_addrs = %s\n", conn.RemoteAddr)
 		fmt.Fprintf(&b, "      proposals = %s\n", ike)
 		b.WriteString("      dpd_delay = 30s\n")
-		b.WriteString("      local {\n         auth = psk\n")
-		if conn.LocalID != "" {
+		if conn.IsCert() {
+			b.WriteString("      local {\n         auth = pubkey\n")
+			fmt.Fprintf(&b, "         certs = %s\n", CertFile(conn.Name))
 			fmt.Fprintf(&b, "         id = %s\n", conn.LocalID)
+			b.WriteString("      }\n")
+			b.WriteString("      remote {\n         auth = pubkey\n")
+			fmt.Fprintf(&b, "         id = %s\n", conn.RemoteID)
+			b.WriteString("      }\n")
+		} else {
+			b.WriteString("      local {\n         auth = psk\n")
+			if conn.LocalID != "" {
+				fmt.Fprintf(&b, "         id = %s\n", conn.LocalID)
+			}
+			b.WriteString("      }\n")
+			b.WriteString("      remote {\n         auth = psk\n")
+			fmt.Fprintf(&b, "         id = %s\n", remoteID(conn))
+			b.WriteString("      }\n")
 		}
-		b.WriteString("      }\n")
-		b.WriteString("      remote {\n         auth = psk\n")
-		fmt.Fprintf(&b, "         id = %s\n", remoteID(conn))
-		b.WriteString("      }\n")
 		b.WriteString("      children {\n")
 		fmt.Fprintf(&b, "         %s {\n", conn.Name)
 		fmt.Fprintf(&b, "            local_ts = %s\n", strings.Join(conn.LocalSubnets, ", "))
@@ -146,6 +183,9 @@ func (c Config) GenerateConf(psks map[string]string) (string, error) {
 	b.WriteString("}\n")
 	b.WriteString("secrets {\n")
 	for _, conn := range c.Connections {
+		if conn.IsCert() {
+			continue // certificate auth loads its private key from swanctl/private
+		}
 		fmt.Fprintf(&b, "   ike-%s {\n", conn.Name)
 		fmt.Fprintf(&b, "      id = %s\n", remoteID(conn))
 		if conn.LocalID != "" {

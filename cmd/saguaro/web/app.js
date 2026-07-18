@@ -320,14 +320,15 @@ function isPsk(s){return /^[A-Za-z0-9._~!@#$%^&*()+=:;,/?|-]{8,64}$/.test(s)}
 function isProposal(s){return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s)}
 async function ipsecPage(){const s=await api('/api/ipsec');const conns=s.connections||[];const e=escapeHtml;
 const dike=s.defaultIke||'aes256-sha256-modp2048',desp=s.defaultEsp||'aes256-sha256-modp2048';
-const rows=conns.length?conns.map(c=>`<tr><td><b>${e(c.name)}</b></td><td>${e(c.remoteAddr)}</td><td class="muted">${e((c.localSubnets||[]).join(', '))} → ${e((c.remoteSubnets||[]).join(', '))}</td><td class="muted">${c.initiate?'start':'on-demand'}</td><td>${c.hasPsk?'<span class="badge">PSK</span>':'<span class="muted">—</span>'}</td><td><button class="ipDel danger" data-n="${e(c.name)}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="6" class="muted">Nema tunela.</td></tr>';
+const authOk=c=>(c.auth==='cert')?(c.hasCert&&c.hasKey&&c.hasCa):c.hasPsk;
+const rows=conns.length?conns.map(c=>`<tr><td><b>${e(c.name)}</b></td><td>${e(c.remoteAddr)}</td><td class="muted">${e((c.localSubnets||[]).join(', '))} → ${e((c.remoteSubnets||[]).join(', '))}</td><td class="muted">${c.initiate?'start':'on-demand'}</td><td><span class="badge">${e(c.auth||'psk')}</span>${authOk(c)?'':' <span class="st-error">⚠</span>'}</td><td><button class="ipDel danger" data-n="${e(c.name)}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="6" class="muted">Nema tunela.</td></tr>';
 $('#content').innerHTML=`<div class="panel"><h2>IPsec IKEv2 ${s.enabled?'<span class="badge">aktivan</span>':''}</h2>
 <p class="muted">Site-to-site tunel prema uređajima koji ne koriste WireGuard (Sophos, FortiGate, MikroTik, Cisco…). IKEv2 s preshared ključem.</p>
 ${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>, iste <b>proposal</b> algoritme (default <code>'+e(dike)+'</code>) i <b>zrcalne</b> mreže — naše <b>Lokalne mreže</b> su njihove udaljene i obrnuto. <b>Remote adresa</b> je javni IP/FQDN drugog uređaja. <b>Initiate</b> uključi na strani koja prva uspostavlja tunel (druga strana čeka); ako obje imaju stalni IP, može bilo koja. <b>ID</b> ostavi prazno da se koristi IP, ili upiši npr. FQDN/@ime ako to peer traži. Na Sophos XGS: IPsec → IKEv2, Authentication Preshared key, Local/Remote subnets zrcalno, isti algoritmi. Potreban je otvoren UDP 500/4500 prema nama i dozvoljen forwarding.')}
 <div class="wizRow">${conns.length?`<button id="ipToggle">${s.enabled?'Isključi IPsec':'Uključi IPsec'}</button>`:'<span class="muted">Dodaj barem jedan tunel pa ga možeš uključiti.</span>'}</div>
 <div id="ipMsg" class="muted"></div></div>
 <div class="panel"><h3>Tuneli (${conns.length})</h3>
-<table><thead><tr><th>Naziv</th><th>Remote</th><th>Lokalno → Udaljeno</th><th>Način</th><th>PSK</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+<table><thead><tr><th>Naziv</th><th>Remote</th><th>Lokalno → Udaljeno</th><th>Način</th><th>Auth</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
 <div class="panel"><h3>Dodaj / uredi tunel</h3><form id="ipAdd" class="stack">
 <label>Naziv <input id="ipName" placeholder="sophos-hq" required></label>
 <label>Remote adresa (IP ili FQDN) <input id="ipRemote" placeholder="203.0.113.5" required></label>
@@ -338,20 +339,34 @@ ${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>
 <label>IKE proposal <input id="ipIke" value="${e(dike)}"></label>
 <label>ESP proposal <input id="ipEsp" value="${e(desp)}"></label>
 <label><input id="ipInit" type="checkbox" checked> Initiate (ova strana uspostavlja tunel)</label>
-<label>Preshared key <input id="ipPsk" placeholder="8-64 znaka (prazno = zadrži postojeći)"></label>
+<label>Autentikacija <select id="ipAuth"><option value="psk">Preshared key (PSK)</option><option value="cert">Certifikat (X.509)</option></select></label>
+<div id="ipPskWrap"><label>Preshared key <input id="ipPsk" placeholder="8-64 znaka (prazno = zadrži postojeći)"></label></div>
+<div id="ipCertWrap" style="display:none">
+<label>Naš certifikat (PEM) <textarea id="ipCert" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+<label>Naš privatni ključ (PEM, prazno = zadrži) <textarea id="ipKey" rows="3" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></label>
+<label>CA certifikat udaljene strane (PEM) <textarea id="ipCa" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+<p class="muted">Za certifikate su <b>Local ID</b> i <b>Remote ID</b> obavezni i moraju odgovarati identitetima u certifikatima (npr. CN/SAN). Certifikate možeš izdati u modulu <b>Certificates</b> ili unijeti tuđe.</p></div>
 <div><button type="submit">Spremi tunel</button></div>
 <div id="ipaMsg" class="muted"></div></form></div>`;
 if($('#ipToggle'))$('#ipToggle').onclick=async()=>{const m=$('#ipMsg');m.textContent='Primjena…';try{await api('/api/ipsec/apply',{method:'POST',body:JSON.stringify({enabled:!s.enabled})});ipsecPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.ipDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati tunel ${el.dataset.n}?`))return;try{await api(`/api/ipsec/connections/${encodeURIComponent(el.dataset.n)}`,{method:'DELETE'});ipsecPage()}catch(err){alert(err.message)}});
+$('#ipAuth').onchange=()=>{const cert=$('#ipAuth').value==='cert';$('#ipPskWrap').style.display=cert?'none':'';$('#ipCertWrap').style.display=cert?'':'none'};
 $('#ipAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ipaMsg');m.textContent='';
 const local=$('#ipLocal').value.split(',').map(x=>x.trim()).filter(Boolean),rem=$('#ipRemNets').value.split(',').map(x=>x.trim()).filter(Boolean);
-const ike=$('#ipIke').value.trim()||dike,esp=$('#ipEsp').value.trim()||desp,psk=$('#ipPsk').value.trim();
+const ike=$('#ipIke').value.trim()||dike,esp=$('#ipEsp').value.trim()||desp,auth=$('#ipAuth').value,psk=$('#ipPsk').value.trim();
+const lid=$('#ipLid').value.trim(),rid=$('#ipRid').value.trim();
 if(!$('#ipRemote').value.trim()){m.textContent='Upiši remote adresu.';return}
 if(!local.length||!rem.length){m.textContent='Upiši barem jednu lokalnu i jednu udaljenu mrežu.';return}
 for(const n of local.concat(rem)){if(!isCIDR(n)){m.textContent='Neispravna mreža: '+n;return}}
 if(!isProposal(ike)||!isProposal(esp)){m.textContent='Proposal smije sadržavati samo mala slova, brojke i crtice (npr. aes256-sha256-modp2048).';return}
-if(psk&&!isPsk(psk)){m.textContent='PSK mora imati 8-64 znaka, bez navodnika, razmaka i obrnute kose crte.';return}
-m.textContent='Spremam…';try{await api('/api/ipsec/connections',{method:'POST',body:JSON.stringify({name:$('#ipName').value.trim(),remoteAddr:$('#ipRemote').value.trim(),localSubnets:local,remoteSubnets:rem,localId:$('#ipLid').value.trim(),remoteId:$('#ipRid').value.trim(),ikeProposal:ike,espProposal:esp,initiate:$('#ipInit').checked,psk:psk})});ipsecPage()}catch(err){m.textContent=err.message}}}
+const body={name:$('#ipName').value.trim(),remoteAddr:$('#ipRemote').value.trim(),localSubnets:local,remoteSubnets:rem,localId:lid,remoteId:rid,ikeProposal:ike,espProposal:esp,initiate:$('#ipInit').checked,auth};
+if(auth==='cert'){if(!lid||!rid){m.textContent='Za certifikat su Local ID i Remote ID obavezni.';return}
+const cert=$('#ipCert').value.trim(),key=$('#ipKey').value.trim(),ca=$('#ipCa').value.trim();
+if(cert&&!cert.includes('BEGIN CERTIFICATE')){m.textContent='Naš certifikat mora biti PEM.';return}
+if(ca&&!ca.includes('BEGIN CERTIFICATE')){m.textContent='CA certifikat mora biti PEM.';return}
+body.localCert=cert;body.localKey=key;body.remoteCa=ca;}
+else{if(psk&&!isPsk(psk)){m.textContent='PSK mora imati 8-64 znaka, bez navodnika, razmaka i obrnute kose crte.';return}body.psk=psk;}
+m.textContent='Spremam…';try{await api('/api/ipsec/connections',{method:'POST',body:JSON.stringify(body)});ipsecPage()}catch(err){m.textContent=err.message}}}
 function svcState(s){return({active:'st-healthy',inactive:'st-muted',failed:'st-error',activating:'st-unknown',deactivating:'st-unknown'})[s]||'st-unknown'}
 async function servicesCtlPage(){const list=await api('/api/svcctl');const e=escapeHtml;
 const rows=list.map(s=>`<tr><td><b>${e(s.name)}</b><div class="muted" style="font-size:12px">${e(s.key)}</div></td>

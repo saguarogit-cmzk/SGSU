@@ -32,6 +32,44 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+const fakeCert = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+
+func TestGenerateConfCert(t *testing.T) {
+	c := Config{Enabled: true, Connections: []Connection{{
+		Name: "certconn", RemoteAddr: "203.0.113.9", LocalID: "vpn.local", RemoteID: "peer.remote",
+		LocalSubnets: []string{"10.0.0.0/24"}, RemoteSubnets: []string{"10.9.0.0/24"},
+		Auth: "cert", LocalCert: fakeCert, RemoteCA: fakeCert, Initiate: true,
+	}}}
+	conf, err := c.GenerateConf(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"auth = pubkey", "certs = saguaro-certconn.pem", "id = vpn.local", "id = peer.remote"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("cert conf missing %q:\n%s", want, conf)
+		}
+	}
+	// certificate connections carry no secrets{} entry
+	if strings.Contains(conf, "ike-certconn") {
+		t.Errorf("cert connection must not emit a PSK secret:\n%s", conf)
+	}
+}
+
+func TestValidateCertErrors(t *testing.T) {
+	base := Connection{Name: "c", RemoteAddr: "1.2.3.4", LocalSubnets: []string{"10.0.0.0/24"}, RemoteSubnets: []string{"10.1.0.0/16"}, Auth: "cert"}
+	noID := base
+	noID.LocalCert, noID.RemoteCA = fakeCert, fakeCert // missing IDs
+	if err := (Config{Connections: []Connection{noID}}).Validate(); err == nil {
+		t.Error("cert without IDs should be invalid")
+	}
+	badPEM := base
+	badPEM.LocalID, badPEM.RemoteID = "a", "b"
+	badPEM.LocalCert, badPEM.RemoteCA = "not pem", fakeCert
+	if err := (Config{Connections: []Connection{badPEM}}).Validate(); err == nil {
+		t.Error("cert with a non-PEM localCert should be invalid")
+	}
+}
+
 func TestGenerateConf(t *testing.T) {
 	c := Config{Enabled: true, Connections: []Connection{validConn(),
 		{Name: "responder", RemoteAddr: "gw.example.com", RemoteID: "gw.example.com",

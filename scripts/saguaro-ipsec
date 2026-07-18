@@ -11,6 +11,7 @@ set -eu
 STAGED=/var/lib/saguaro/staged-swanctl.conf
 ACTIVE=/etc/swanctl/swanctl.conf
 BACKUP=/run/saguaro/swanctl-backup.conf
+STAGED_CREDS=/var/lib/saguaro/staged-swanctl-creds
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -37,6 +38,27 @@ wait_vici() {
   return 1
 }
 
+# install_creds replaces the Saguaro-managed certificate material for cert-auth
+# connections from the staged directory; other credentials are left untouched.
+install_creds() {
+  install -d -m 0755 /etc/swanctl/x509 /etc/swanctl/x509ca
+  install -d -m 0700 /etc/swanctl/private
+  rm -f /etc/swanctl/x509/saguaro-*.pem /etc/swanctl/private/saguaro-*.pem /etc/swanctl/x509ca/saguaro-*.pem
+  [ -d "$STAGED_CREDS" ] || return 0
+  for f in "$STAGED_CREDS"/*; do
+    [ -e "$f" ] || continue
+    base=$(basename "$f")
+    conn=${base%.*.pem}
+    echo "$conn" | grep -Eq '^[a-z0-9-]+$' || continue
+    case "$base" in
+      *.cert.pem) install -m 0644 -o root -g root "$f" "/etc/swanctl/x509/saguaro-$conn.pem" ;;
+      *.key.pem)  install -m 0600 -o root -g root "$f" "/etc/swanctl/private/saguaro-$conn.pem" ;;
+      *.ca.pem)   install -m 0644 -o root -g root "$f" "/etc/swanctl/x509ca/saguaro-$conn-ca.pem" ;;
+    esac
+  done
+  rm -rf "$STAGED_CREDS"
+}
+
 case "${1:-}" in
   apply)
     [ -s "$STAGED" ] || { echo "no staged config at $STAGED" >&2; exit 1; }
@@ -53,8 +75,10 @@ case "${1:-}" in
     systemctl enable "$SVC" >/dev/null 2>&1 || true
     # Start (not restart) so an already-running charon keeps live tunnels;
     # swanctl --load-all reconciles the configuration into it.
+    install_creds
     systemctl start "$SVC"
     wait_vici || { echo "charon vici socket did not appear" >&2; exit 1; }
+    swanctl --load-creds >/dev/null 2>&1 || true
     if ! swanctl --load-all; then
       if [ -s "$BACKUP" ]; then
         install -m 0600 -o root -g root "$BACKUP" "$ACTIVE"
@@ -65,6 +89,7 @@ case "${1:-}" in
       echo "swanctl failed to load the new configuration; previous state restored" >&2
       exit 1
     fi
+    swanctl --load-creds >/dev/null 2>&1 || true
     logger -t saguaro-ipsec "ipsec configuration applied"
     ;;
   disable)
