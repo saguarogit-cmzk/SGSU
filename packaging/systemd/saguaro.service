@@ -12,12 +12,16 @@ LoadCredential=admin-password:/etc/saguaro/bootstrap-admin-password
 ExecStart=/usr/lib/saguaro/saguaro
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
+# NoNewPrivileges and ProtectSystem=strict are intentionally NOT set: the
+# control plane must sudo to the root adapters (/usr/sbin/saguaro-*), and those
+# adapters — running in this unit's namespace — must write /etc. Containment is
+# provided by the unprivileged saguaro user, the tightly scoped sudoers
+# allow-list and the adapters' own input validation. ProtectSystem=true still
+# keeps /usr and /boot read-only.
 PrivateTmp=true
 PrivateDevices=true
-ProtectSystem=strict
+ProtectSystem=true
 ProtectHome=true
-ReadWritePaths=/var/lib/saguaro /var/log/saguaro -/run/postgresql
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
 MemoryDenyWriteExecute=true
