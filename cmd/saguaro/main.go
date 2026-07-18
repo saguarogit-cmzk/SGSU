@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"saguaro.local/network-manager/internal/adapters/kea"
 	evstore "saguaro.local/network-manager/internal/events"
 	mailmod "saguaro.local/network-manager/internal/mail"
 )
@@ -73,6 +74,7 @@ type app struct {
 	userLimiter *loginLimiter
 	events      *evstore.Store // nil without PostgreSQL (development)
 	mailKey     []byte         // AES-256 key for the stored SMTP password
+	keaHosts    *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -83,7 +85,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.6.0"
+const appVersion = "0.7.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -139,6 +141,14 @@ func main() {
 		logger.Warn("secret key unavailable; SMTP password storage disabled", "error", err)
 		mailKey = nil
 	}
+	var keaHosts *kea.HostStore
+	if dsn := os.Getenv("SAGUARO_KEA_DB_DSN"); dsn != "" {
+		keaHosts, err = kea.OpenHosts(dsn)
+		if err != nil {
+			logger.Error("cannot open Kea host database; reservations disabled", "error", err)
+			keaHosts = nil
+		}
+	}
 	a := &app{
 		log:        logger,
 		store:      s,
@@ -152,6 +162,7 @@ func main() {
 		userLimiter: newLoginLimiter(),
 		events:      eventStore,
 		mailKey:     mailKey,
+		keaHosts:    keaHosts,
 
 		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
 		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),
@@ -205,6 +216,17 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/mail", a.auth(a.apiMailGet))
 	mux.HandleFunc("PUT /api/mail", a.auth(a.apiMailPut))
 	mux.HandleFunc("POST /api/mail/test", a.auth(a.apiMailTest))
+	mux.HandleFunc("GET /api/dns/zones", a.auth(a.apiDNSZones))
+	mux.HandleFunc("POST /api/dns/zones", a.auth(a.apiDNSZoneCreate))
+	mux.HandleFunc("GET /api/dns/zones/{zone}", a.auth(a.apiDNSZoneGet))
+	mux.HandleFunc("DELETE /api/dns/zones/{zone}", a.auth(a.apiDNSZoneDelete))
+	mux.HandleFunc("PUT /api/dns/zones/{zone}/records", a.auth(a.apiDNSRecordPut))
+	mux.HandleFunc("GET /api/dhcp/status", a.auth(a.apiDHCPStatus))
+	mux.HandleFunc("GET /api/dhcp/subnets", a.auth(a.apiDHCPSubnets))
+	mux.HandleFunc("GET /api/dhcp/leases", a.auth(a.apiDHCPLeases))
+	mux.HandleFunc("GET /api/dhcp/reservations", a.auth(a.apiDHCPReservations))
+	mux.HandleFunc("POST /api/dhcp/reservations", a.auth(a.apiDHCPReservationAdd))
+	mux.HandleFunc("DELETE /api/dhcp/reservations/{id}", a.auth(a.apiDHCPReservationDelete))
 	mux.HandleFunc("GET /api/sessions", a.auth(a.listSessions))
 	mux.HandleFunc("POST /api/sessions/{id}/revoke", a.auth(a.revokeSession))
 	assets, err := fs.Sub(webFS, "web")

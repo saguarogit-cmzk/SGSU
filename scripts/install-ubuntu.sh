@@ -246,6 +246,13 @@ if ! $DRY_RUN; then
   if ! runuser -u postgres -- psql -d kea -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='lease4'" | grep -q 1; then
     kea-admin db-init pgsql -u kea -p "$KEA_DB_PASSWORD" -n kea -h 127.0.0.1
   fi
+  # The GUI manages host reservations directly in Kea's hosts table (Kea
+  # reads the PG host backend per DHCP transaction — no premium hooks needed).
+  runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d kea <<'EOF'
+GRANT SELECT, INSERT, UPDATE, DELETE ON hosts TO saguaro;
+GRANT USAGE, SELECT ON SEQUENCE hosts_host_id_seq TO saguaro;
+GRANT SELECT ON lease4 TO saguaro;
+EOF
 fi
 
 log "Initializing PowerDNS database schema"
@@ -302,6 +309,7 @@ SAGUARO_DATA_DIR=/var/lib/saguaro
 SAGUARO_ADMIN_USER=admin
 SAGUARO_SECURE_COOKIE=true
 SAGUARO_DB_DSN=postgres:///saguaro?host=/var/run/postgresql
+SAGUARO_KEA_DB_DSN=postgres:///kea?host=/var/run/postgresql
 SAGUARO_EVENT_RETENTION_MONTHS=${EVENT_RETENTION}
 SAGUARO_SECRET_KEY_FILE=/etc/saguaro/secret.key
 SAGUARO_PDNS_API_URL=http://127.0.0.1:8081
@@ -475,11 +483,16 @@ EOF
   chmod 0640 /etc/kea/kea-ctrl-agent.conf /etc/kea/kea-dhcp-ddns.conf
 fi
 if ((dhcp_fields == 5)) && ! $DRY_RUN; then
+  # lease_cmds is an open-source hook shipped with Ubuntu's Kea packages; the
+  # GUI uses lease4-get-all through the control agent for the lease view.
+  KEA_HOOKS_DIR=$(ls -d /usr/lib/*/kea/hooks 2>/dev/null | head -1)
+  [[ -n $KEA_HOOKS_DIR ]] || die "Kea hooks directory not found."
   cat >/etc/kea/kea-dhcp4.conf <<EOF
 {
   "Dhcp4": {
     "interfaces-config": { "interfaces": [ "${DHCP_INTERFACE}" ] },
     "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea4-ctrl-socket" },
+    "hooks-libraries": [ { "library": "${KEA_HOOKS_DIR}/libdhcp_lease_cmds.so" } ],
     "lease-database": { "type": "postgresql", "name": "kea", "user": "kea", "password": "${KEA_DB_PASSWORD}", "host": "127.0.0.1" },
     "hosts-database": { "type": "postgresql", "name": "kea", "user": "kea", "password": "${KEA_DB_PASSWORD}", "host": "127.0.0.1" },
     "valid-lifetime": 3600,

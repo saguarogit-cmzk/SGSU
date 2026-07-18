@@ -260,6 +260,84 @@ func TestMailConfigAPI(t *testing.T) {
 	}
 }
 
+func TestAdapterEndpointsUnconfigured(t *testing.T) {
+	srv, c, _ := newTestServer(t)
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: got %d", r.StatusCode)
+	}
+	for _, path := range []string{"/api/dns/zones", "/api/dhcp/subnets", "/api/dhcp/leases", "/api/dhcp/status", "/api/dhcp/reservations"} {
+		resp, err := c.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("%s unconfigured: got %d, want 503", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestDNSAPIThroughFakePowerDNS(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v1/servers/localhost/zones":
+			w.Write([]byte(`[{"id":"z.internal.","name":"z.internal.","kind":"Native","serial":7}]`))
+		case r.Method == "PATCH":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"nope"}`))
+		}
+	}))
+	defer fake.Close()
+
+	srv, c, a := newTestServer(t)
+	a.pdnsURL, a.pdnsKey = fake.URL, "k"
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: got %d", r.StatusCode)
+	}
+	csrf := csrfCookie(t, srv, c)
+
+	resp, err := c.Get(srv.URL + "/api/dns/zones")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zones []struct{ Name string }
+	if err := json.NewDecoder(resp.Body).Decode(&zones); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(zones) != 1 || zones[0].Name != "z.internal." {
+		t.Fatalf("zones through API: %+v", zones)
+	}
+
+	// Record upsert goes through, invalid type is rejected before PowerDNS.
+	put := func(body string) int {
+		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/dns/zones/z.internal/records", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := put(`{"name":"h.z.internal","type":"A","ttl":300,"contents":["192.168.1.5"],"delete":false}`); code != http.StatusOK {
+		t.Fatalf("record upsert: got %d", code)
+	}
+	if code := put(`{"name":"h.z.internal","type":"DNSKEY","ttl":300,"contents":["x"],"delete":false}`); code != http.StatusBadRequest {
+		t.Fatalf("forbidden type: got %d, want 400", code)
+	}
+	if code := put(`{"name":"h.z.internal","type":"A","ttl":300,"contents":[],"delete":false}`); code != http.StatusBadRequest {
+		t.Fatalf("empty contents: got %d, want 400", code)
+	}
+}
+
 func TestLoginLockoutAfterRepeatedFailures(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	for i := 1; i <= 5; i++ {
