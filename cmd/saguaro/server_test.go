@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -123,6 +124,40 @@ func TestCSRFEnforcedOnMutatingRequests(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST with valid token: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDeepHealthRequiresAuthAndReportsAllComponents(t *testing.T) {
+	srv, c, _ := newTestServer(t)
+	resp, err := c.Get(srv.URL + "/api/health/deep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated deep health: got %d, want 401", resp.StatusCode)
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: got %d", r.StatusCode)
+	}
+	resp, err = c.Get(srv.URL + "/api/health/deep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deep health: got %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Healthy int           `json:"healthy"`
+		Total   int           `json:"total"`
+		Checks  []checkResult `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Total != 8 || len(out.Checks) != 8 {
+		t.Fatalf("expected 8 component checks, got total=%d len=%d", out.Total, len(out.Checks))
 	}
 }
 

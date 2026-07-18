@@ -594,6 +594,11 @@ for unit in "${services[@]}"; do run systemctl enable --now "$unit"; done
 
 if ! $DRY_RUN; then
   curl --fail --silent http://127.0.0.1:9080/api/health | jq -e '.status == "ok"' >/dev/null
+  # Unit-level verification; the control plane keeps probing these continuously
+  # (background health sweep + GET /api/health/deep after login).
+  for unit in "${services[@]}"; do
+    systemctl is-active --quiet "$unit" || log "WARNING: unit is not active: $unit"
+  done
   unbound-checkconf
   pdnsutil check-all-zones || true
   nginx -t

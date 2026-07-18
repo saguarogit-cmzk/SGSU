@@ -67,7 +67,17 @@ type app struct {
 	secure      bool
 	ipLimiter   *loginLimiter
 	userLimiter *loginLimiter
+
+	// component endpoints used by health checks
+	resolverAddr string
+	pdnsURL      string
+	pdnsKey      string
+	keaURL       string
+	keaUser      string
+	keaPass      string
 }
+
+const appVersion = "0.4.1"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -119,6 +129,13 @@ func main() {
 
 		ipLimiter:   newLoginLimiter(),
 		userLimiter: newLoginLimiter(),
+
+		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
+		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),
+		pdnsKey:      os.Getenv("SAGUARO_PDNS_API_KEY"),
+		keaURL:       os.Getenv("SAGUARO_KEA_API_URL"),
+		keaUser:      os.Getenv("SAGUARO_KEA_API_USER"),
+		keaPass:      os.Getenv("SAGUARO_KEA_API_PASSWORD"),
 	}
 	if err := a.sessions.PruneExpired(time.Now()); err != nil {
 		a.log.Error("session prune failed", "error", err)
@@ -130,6 +147,16 @@ func main() {
 			}
 			a.ipLimiter.prune(time.Now())
 			a.userLimiter.prune(time.Now())
+		}
+	}()
+	go func() {
+		// One early sweep so the dashboard shows real statuses shortly after
+		// boot, then a periodic refresh.
+		time.Sleep(5 * time.Second)
+		a.runHealthChecks(context.Background())
+		interval := time.Duration(atoi(env("SAGUARO_HEALTH_INTERVAL_MIN", "5"), 5)) * time.Minute
+		for range time.Tick(interval) {
+			a.runHealthChecks(context.Background())
 		}
 	}()
 	srv := &http.Server{Addr: listen, Handler: a.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
@@ -145,6 +172,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/login", a.login)
 	mux.HandleFunc("POST /api/logout", a.auth(a.logout))
 	mux.HandleFunc("GET /api/health", a.health)
+	mux.HandleFunc("GET /api/health/deep", a.auth(a.healthDeep))
 	mux.HandleFunc("GET /api/dashboard", a.auth(a.dashboard))
 	mux.HandleFunc("GET /api/services", a.auth(a.services))
 	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.auth(a.serviceAction))
@@ -327,7 +355,16 @@ func (a *app) revokeSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (a *app) health(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": "0.1.0"}) }
+// health is the unauthenticated liveness probe: it confirms only that the
+// control plane answers. Component details require an authenticated session.
+func (a *app) health(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": appVersion}) }
+
+func (a *app) healthDeep(w http.ResponseWriter, r *http.Request) {
+	results := a.runHealthChecks(r.Context())
+	healthy := 0
+	for _, res := range results { if res.Status == "healthy" { healthy++ } }
+	writeJSON(w, http.StatusOK, map[string]any{"healthy": healthy, "total": len(results), "checks": results})
+}
 
 func (a *app) dashboard(w http.ResponseWriter, _ *http.Request) {
 	a.store.mu.RLock(); defer a.store.mu.RUnlock()
@@ -341,11 +378,10 @@ func (a *app) services(w http.ResponseWriter, _ *http.Request) { a.store.mu.RLoc
 func (a *app) serviceAction(w http.ResponseWriter, r *http.Request) {
 	id, action := r.PathValue("id"), r.PathValue("action")
 	if action != "check" { writeError(w, http.StatusNotImplemented, "only safe health checks are enabled in this milestone"); return }
-	a.store.mu.RLock(); var found *service
-	for i := range a.store.data.Services { if a.store.data.Services[i].ID == id { copy := a.store.data.Services[i]; found = &copy; break } }; a.store.mu.RUnlock()
-	if found == nil { writeError(w, http.StatusNotFound, "service not found"); return }
-	a.record(r, a.adminUser, "health-check", id, "success", map[string]any{"mode": "dry-run"})
-	writeJSON(w, http.StatusOK, map[string]any{"service": found, "result": "adapter ready; host execution disabled"})
+	res, ok := a.runHealthCheck(r.Context(), id)
+	if !ok { writeError(w, http.StatusNotFound, "service not found"); return }
+	a.record(r, a.adminUser, "health-check", id, res.Status, map[string]any{"detail": res.Detail, "latencyMs": res.LatencyMs})
+	writeJSON(w, http.StatusOK, map[string]any{"result": res})
 }
 
 func (a *app) audit(w http.ResponseWriter, _ *http.Request) { a.store.mu.RLock(); defer a.store.mu.RUnlock(); writeJSON(w, http.StatusOK, first(a.store.data.Audit, 200)) }
