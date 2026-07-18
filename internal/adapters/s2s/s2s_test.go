@@ -24,10 +24,10 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("expected valid: %v", err)
 	}
 	bad := []Config{
-		{ListenPort: 0, Sites: nil},                                       // bad port
-		{ListenPort: 51821, TunnelAddress: "nope"},                        // bad tunnel
-		{ListenPort: 51821, Sites: []Site{{Name: "x", PubKey: "bad"}}},    // bad key
-		{ListenPort: 51821, Sites: []Site{{Name: "x", PubKey: pub}}},      // no remote nets
+		{ListenPort: 0, Sites: nil},                                    // bad port
+		{ListenPort: 51821, TunnelAddress: "nope"},                     // bad tunnel
+		{ListenPort: 51821, Sites: []Site{{Name: "x", PubKey: "bad"}}}, // bad key
+		{ListenPort: 51821, Sites: []Site{{Name: "x", PubKey: pub}}},   // no remote nets
 		{ListenPort: 51821, Sites: []Site{{Name: "x", PubKey: pub, Endpoint: "hostonly", RemoteNetworks: []string{"10.0.0.0/8"}}}}, // bad endpoint
 	}
 	for i, c := range bad {
