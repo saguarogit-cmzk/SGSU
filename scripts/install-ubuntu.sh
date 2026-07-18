@@ -516,7 +516,9 @@ if ((dhcp_fields == 5)) && ! $DRY_RUN; then
   }
 }
 EOF
-  chown root:_kea /etc/kea/kea-dhcp4.conf
+  # _kea owns the file so the GUI's subnet transaction can persist the
+  # running config via the core config-write API command.
+  chown _kea:_kea /etc/kea/kea-dhcp4.conf
   chmod 0640 /etc/kea/kea-dhcp4.conf
   kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
 fi
