@@ -355,16 +355,16 @@ if [[ ! -s /etc/saguaro/backup.agekey ]] && ! $DRY_RUN; then
   chmod 0644 /etc/saguaro/backup-recipient.txt
 fi
 
-log "Configuring systemd-resolved to use the local resolver"
+log "Disabling systemd-resolved so Unbound can own port 53"
 if ! $DRY_RUN; then
-  install -d /etc/systemd/resolved.conf.d
-  cat >/etc/systemd/resolved.conf.d/saguaro.conf <<'EOF'
-[Resolve]
-DNS=127.0.0.1
-DNSStubListener=no
-EOF
-  ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-  systemctl restart systemd-resolved
+  # On systemd 255 (Ubuntu 24.04) DNSStubListener=no does not free the
+  # 127.0.0.54 stub, so Unbound cannot bind 0.0.0.0:53. Disable resolved
+  # entirely — the appliance runs its own resolver — and point resolv.conf
+  # at Unbound with a static file.
+  systemctl disable --now systemd-resolved 2>/dev/null || true
+  rm -f /etc/resolv.conf
+  printf 'nameserver 127.0.0.1\noptions edns0 trust-ad\n' >/etc/resolv.conf
+  chattr +i /etc/resolv.conf 2>/dev/null || true
 fi
 
 log "Configuring Unbound resolver"
@@ -611,6 +611,10 @@ EOF
   ln -sfn /etc/nginx/sites-available/saguaro /etc/nginx/sites-enabled/saguaro
   rm -f /etc/nginx/sites-enabled/default
   nginx -t
+  # apt starts nginx with the default config (port 80 only); enable --now on an
+  # already-running unit does not re-read config, so reload to pick up the
+  # 443 vhost.
+  systemctl reload nginx || systemctl restart nginx
 fi
 
 if [[ -z $DEB_SOURCE ]]; then
