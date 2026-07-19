@@ -1,7 +1,7 @@
 :root{
-  --bg:#0a0f14; --bg2:#0e151c; --panel:#111a22; --panel2:#0d151c;
-  --line:#1e2c38; --line2:#283a49;
-  --fg:#e6edf3; --muted:#8aa0b0; --faint:#5f7484;
+  --bg:#0f151b; --bg2:#141d26; --panel:#18222c; --panel2:#141d26;
+  --line:#283846; --line2:#3a4f60;
+  --fg:#eef4f9; --muted:#a4b7c6; --faint:#758a9c;
   --brand:#3ddc97; --brand-ink:#052015; --brand-dim:#1c3b30;
   --accent:#4aa8ff;
   --ok:#3ddc97; --warn:#f5b849; --err:#ff6b6b; --info:#6ea8fe; --sec:#c07bff;
@@ -13,8 +13,9 @@
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100vh}
 body{background:
-  radial-gradient(1200px 600px at 80% -10%, #10221c 0%, transparent 60%),
-  radial-gradient(900px 500px at -10% 10%, #101a26 0%, transparent 55%),
+  radial-gradient(1200px 600px at 80% -10%, #16302603 0%, transparent 60%),
+  radial-gradient(1200px 600px at 80% -10%, #163026 0%, transparent 60%),
+  radial-gradient(900px 500px at -10% 10%, #15243299 0%, transparent 55%),
   var(--bg);
   -webkit-font-smoothing:antialiased}
 .hidden{display:none!important}
@@ -35,7 +36,7 @@ a:hover{text-decoration:underline}
 /* ---------- forms ---------- */
 label{display:grid;gap:7px;color:var(--muted);margin:14px 0;font-size:13px;font-weight:500}
 input,select,textarea{
-  background:#08111a;border:1px solid var(--line2);color:var(--fg);
+  background:#0e1822;border:1px solid var(--line2);color:var(--fg);
   border-radius:var(--radius-sm);padding:11px 12px;font:inherit;font-size:14px;
   transition:border-color .15s, box-shadow .15s;width:100%}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand);
@@ -102,7 +103,7 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .card{box-shadow:0 1px 0 #ffffff08 inset}
 .metric{font-size:30px;font-weight:750;letter-spacing:-.5px;margin-top:6px}
 .muted{color:var(--muted)}
-.panel{margin-top:18px;overflow-x:auto}
+.panel{margin-top:16px;overflow-x:auto}
 .panel h2{margin:0 0 6px;font-size:16px;font-weight:700}
 .panel h3{margin:16px 0 4px;font-size:14px;font-weight:700;color:var(--fg)}
 
@@ -129,12 +130,18 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .sev-notice,.sev-info{color:var(--muted)}
 
 /* ---------- tables ---------- */
-table{width:100%;border-collapse:collapse;font-size:13.5px}
-thead th{text-align:left;padding:10px 12px;color:var(--faint);font-weight:600;
-  text-transform:uppercase;letter-spacing:.04em;font-size:11.5px;border-bottom:1px solid var(--line2)}
-tbody td{padding:11px 12px;border-bottom:1px solid var(--line)}
-tbody tr:hover{background:#ffffff06}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;padding:7px 12px;color:var(--faint);font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;font-size:11px;border-bottom:1px solid var(--line2);
+  position:sticky;top:0;background:var(--panel);z-index:1;white-space:nowrap}
+tbody td{padding:6px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:nth-child(even){background:#ffffff05}
+tbody tr:hover{background:#ffffff0c}
 tbody tr:last-child td{border-bottom:0}
+/* Long tables scroll within the panel instead of pushing the page down. */
+.panel.scroll{max-height:62vh;overflow:auto}
+.panel.scroll thead th{top:-1px}
+table.compact td,table.compact th{padding-top:4px;padding-bottom:4px}
 
 /* ---------- wizard buttons row ---------- */
 .wizRow{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
