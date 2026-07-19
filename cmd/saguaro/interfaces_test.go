@@ -73,6 +73,41 @@ func TestInterfaceIdentify(t *testing.T) {
 	}
 }
 
+func TestInterfaceLabel(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	a.readInterfaces = func(context.Context) ([]nicInfo, error) {
+		return []nicInfo{{Name: "enp1s0", MAC: "aa:bb:cc:dd:ee:01", State: "up"}}, nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/interfaces/enp1s0/label", `{"label":"WAN1"}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("set label: got %d", r.StatusCode)
+	}
+	if a.getNICLabels()["enp1s0"] != "WAN1" {
+		t.Fatalf("label not stored: %v", a.getNICLabels())
+	}
+	// the label surfaces on the interfaces list
+	resp, _ := c.Get(srv.URL + "/api/interfaces")
+	var nics []nicInfo
+	json.NewDecoder(resp.Body).Decode(&nics)
+	resp.Body.Close()
+	if len(nics) != 1 || nics[0].Label != "WAN1" {
+		t.Fatalf("label not on interfaces list: %+v", nics)
+	}
+	// clearing removes it
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/interfaces/enp1s0/label", `{"label":""}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("clear label: got %d", r.StatusCode)
+	}
+	if _, ok := a.getNICLabels()["enp1s0"]; ok {
+		t.Fatal("cleared label still present")
+	}
+	// invalid label rejected
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/interfaces/enp1s0/label", `{"label":"<script>alert(1)</script>"}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad label: got %d, want 400", r.StatusCode)
+	}
+}
+
 func TestInterfaceIdentifyRequiresRole(t *testing.T) {
 	srv, admin, a := newTestServer(t)
 	a.runNet = func(context.Context, ...string) ([]byte, error) { return nil, nil }

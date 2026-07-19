@@ -89,6 +89,8 @@ type state struct {
 	SIEM *siemConfig `json:"siem,omitempty"`
 	// WebProxy is the Squid/e2guardian caching+filtering proxy configuration.
 	WebProxy *squidcfg.Config `json:"webProxy,omitempty"`
+	// NICLabels maps a kernel interface name to an operator-friendly alias.
+	NICLabels map[string]string `json:"nicLabels,omitempty"`
 }
 
 type store struct {
@@ -144,7 +146,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.42.0"
+const appVersion = "0.43.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -375,6 +377,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.apiWANConfigApply))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))
 	mux.HandleFunc("POST /api/interfaces/{name}/identify", a.authz(permFirewall, a.apiInterfaceIdentify))
+	mux.HandleFunc("PUT /api/interfaces/{name}/label", a.authz(permFirewall, a.apiInterfaceLabel))
 	mux.HandleFunc("GET /api/backup", a.auth(a.apiBackupGet))
 	mux.HandleFunc("POST /api/backup/apply", a.authz(permBackup, a.apiBackupApply))
 	mux.HandleFunc("POST /api/backup/run", a.authz(permBackup, a.apiBackupRunNow))

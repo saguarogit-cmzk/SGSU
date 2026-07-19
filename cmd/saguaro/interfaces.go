@@ -21,10 +21,60 @@ type nicInfo struct {
 	SpeedMb   int      `json:"speedMb"`
 	Driver    string   `json:"driver"`
 	Addresses []string `json:"addresses"`
-	Role      string   `json:"role"` // WAN | LAN | mgmt | ""
+	Role      string   `json:"role"`  // WAN | LAN | mgmt | ""
+	Label     string   `json:"label"` // operator-friendly alias (e.g. "WAN1", "LAN")
 }
 
 var nicNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
+var nicLabelRe = regexp.MustCompile(`^[A-Za-z0-9 ._-]{0,24}$`)
+
+func (a *app) getNICLabels() map[string]string {
+	a.store.mu.RLock()
+	defer a.store.mu.RUnlock()
+	out := map[string]string{}
+	for k, v := range a.store.data.NICLabels {
+		out[k] = v
+	}
+	return out
+}
+
+func (a *app) setNICLabel(name, label string) error {
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+	if a.store.data.NICLabels == nil {
+		a.store.data.NICLabels = map[string]string{}
+	}
+	if label == "" {
+		delete(a.store.data.NICLabels, name)
+	} else {
+		a.store.data.NICLabels[name] = label
+	}
+	return a.store.saveLocked()
+}
+
+// apiInterfaceLabel sets (or clears) an interface's friendly alias.
+func (a *app) apiInterfaceLabel(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nicNameRe.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "invalid interface name")
+		return
+	}
+	var in struct {
+		Label string `json:"label"`
+	}
+	_ = decodeJSONOptional(r, &in)
+	in.Label = strings.TrimSpace(in.Label)
+	if !nicLabelRe.MatchString(in.Label) {
+		writeError(w, http.StatusBadRequest, "label may be up to 24 chars (letters, digits, space . _ -)")
+		return
+	}
+	if err := a.setNICLabel(name, in.Label); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist interface label")
+		return
+	}
+	a.record(r, a.actor(r), "nic-label", name, "success", map[string]any{"label": in.Label})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": name, "label": in.Label})
+}
 
 func defaultRunNet(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -119,8 +169,10 @@ func (a *app) apiInterfacesList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot read interfaces")
 		return
 	}
+	labels := a.getNICLabels()
 	for i := range nics {
 		nics[i].Role = a.nicRole(nics[i].Name)
+		nics[i].Label = labels[nics[i].Name]
 	}
 	if nics == nil {
 		nics = []nicInfo{}

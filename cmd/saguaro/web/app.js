@@ -4,7 +4,10 @@ function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)saguaro_csrf=([^;]
 async function api(path,options={}){const headers={'Content-Type':'application/json'};const method=(options.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD'){headers['X-CSRF-Token']=csrfToken()}const r=await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});if(r.status===401){showLogin();throw Error('Prijava je istekla.')}const body=await r.json();if(!r.ok)throw Error(body.error||'Greška zahtjeva');return body}
 function showLogin(){$('#login').classList.remove('hidden');$('#shell').classList.add('hidden')}
 let sysProfile={profile:'gateway',gateway:true,utm:true};
-async function showShell(){$('#login').classList.add('hidden');$('#shell').classList.remove('hidden');try{sysProfile=await api('/api/system')}catch(e){}renderNav();openModule(current)}
+let nicLabels={};
+function nlabel(n){return nicLabels[n]?nicLabels[n]+' ('+n+')':n}
+async function loadNicLabels(){try{const ni=await api('/api/interfaces');nicLabels={};ni.forEach(n=>{if(n.label)nicLabels[n.name]=n.label})}catch(e){}}
+async function showShell(){$('#login').classList.add('hidden');$('#shell').classList.remove('hidden');try{sysProfile=await api('/api/system')}catch(e){}await loadNicLabels();renderNav();openModule(current)}
 function help(html){return `<details class="help"><summary>Kako ovo postaviti?</summary><div>${html}</div></details>`}
 const svg=p=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const ICONS={
@@ -82,7 +85,7 @@ const ct=m.conntrack||{};const ctPct=ct.max?100*ct.count/ct.max:0;$('#mCt').text
 $('#mUp').textContent=fmtUptime(m.uptimeSec||0);
 const cores=cpu.cores||[];$('#mCores').innerHTML=cores.length?cores.map((c,i)=>`<div class="core"><span class="muted">c${i}</span>${barPct(c)}<span class="cnum">${c.toFixed(0)}%</span></div>`).join(''):'<span class="muted">nedostupno (razvojno okruženje)</span>';
 const ifs=m.interfaces||[],prev=lastMetric,dt=prev?Math.max(1,m.ts-prev.ts):0,pmap={};if(prev)(prev.interfaces||[]).forEach(p=>pmap[p.name]=p);
-$('#mIf').innerHTML=ifs.length?ifs.map(f=>{let rx=0,tx=0;const p=pmap[f.name];if(p&&dt>0){rx=(f.rxBytes-p.rxBytes)*8/dt;tx=(f.txBytes-p.txBytes)*8/dt}const link=f.carrier?`<span class="status st-healthy">up${f.speedMb?' · '+f.speedMb+'Mb':''}</span>`:'<span class="status st-muted">down</span>';return `<tr><td><b>${escapeHtml(f.name)}</b></td><td>${f.role?`<span class="badge">${escapeHtml(f.role)}</span>`:''}</td><td>${link}</td><td>${fmtRate(rx)}</td><td>${fmtRate(tx)}</td></tr>`}).join(''):'<tr><td colspan="5" class="muted">nedostupno</td></tr>';
+$('#mIf').innerHTML=ifs.length?ifs.map(f=>{let rx=0,tx=0;const p=pmap[f.name];if(p&&dt>0){rx=(f.rxBytes-p.rxBytes)*8/dt;tx=(f.txBytes-p.txBytes)*8/dt}const link=f.carrier?`<span class="status st-healthy">up${f.speedMb?' · '+f.speedMb+'Mb':''}</span>`:'<span class="status st-muted">down</span>';return `<tr><td><b>${escapeHtml(nlabel(f.name))}</b></td><td>${f.role?`<span class="badge">${escapeHtml(f.role)}</span>`:''}</td><td>${link}</td><td>${fmtRate(rx)}</td><td>${fmtRate(tx)}</td></tr>`}).join(''):'<tr><td colspan="5" class="muted">nedostupno</td></tr>';
 lastMetric=m;if(dashTick%5===0)refreshLogs();dashTick++}
 async function checkService(id){try{const r=await api(`/api/services/${id}/actions/check`,{method:'POST',body:'{}'});alert(`${r.result.id}: ${r.result.status}\n${r.result.detail||''} (${r.result.latencyMs} ms)`);openModule(current)}catch(e){alert(e.message)}}
 async function modulePage(id){const details={dns:['Zone i zapisi','U idućem milestoneu: forward/reverse zone, DNSSEC, ACL i validirani reload.'],dhcp:['Kea DHCP','Subneti, poolovi, rezervacije, KNOWN/UNKNOWN/DROP klase i quarantine politike.'],certificates:['Upravljanje certifikatima','Step CA za internu PKI te ACME/Let’s Encrypt za javne domene.'],proxy:['Nginx aplikacije','Deklarativni virtual hosts, TLS, WebSocket i rollback nakon nginx -t provjere.'],monitoring:['Monitoring','Servisi, resursi, DHCP poolovi, DNS greške i certifikati pred istekom.'],backup:['Backup','Šifrirane kopije, retention, provjera integriteta i restore test.'],users:['Korisnici i uloge','Planirane uloge: admin, network-operator, dns-operator, auditor i read-only.']}[id];$('#content').innerHTML=`<div class="panel"><h2>${details[0]}</h2><p class="muted">${details[1]}</p><p>Modul je registriran u GUI-ju; CRUD adapter dolazi u sljedećem koraku.</p></div>`}
@@ -111,7 +114,7 @@ ${help('Postavi JEDNO ili VIŠE WAN sučelja (npr. WAN1 + GSM WAN2). Svako je <b
 <div id="wanMsg" class="muted"></div></form></div>`;
 const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const nics=`<table><thead><tr><th>Interface</th><th>Stanje</th><th>IPv4</th></tr></thead><tbody>${(g.nics||[]).map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${escapeHtml(n.state)}</td><td>${escapeHtml((n.addresses||[]).join(', '))}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nedostupno (razvojno okruženje)</td></tr>'}</tbody></table>`;
-const nicOpt=v=>(g.nics||[]).map(n=>`<option ${n.name===v?'selected':''}>${escapeHtml(n.name)}</option>`).join('')||(v?`<option selected>${escapeHtml(v)}</option>`:'<option value="">—</option>');
+const nicOpt=v=>(g.nics||[]).map(n=>`<option value="${escapeHtml(n.name)}" ${n.name===v?'selected':''}>${escapeHtml(nlabel(n.name))}</option>`).join('')||(v?`<option selected>${escapeHtml(v)}</option>`:'<option value="">—</option>');
 $('#content').innerHTML=`${pend}<div class="panel"><h2>Mrežna sučelja</h2>${nics}</div>
 ${wanPanel}
 <div class="panel"><h2>Gateway konfiguracija</h2>
@@ -131,7 +134,7 @@ ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
 const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
-const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>Sučelje</th><th>Način</th><th>Adresa</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(x.interface)}</b></td><td>${x.mode}</td><td class="muted">${ew(x.mode==='static'?(x.address||''):'—')}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||''):'—')}</td><td class="muted">${x.metric||100}</td><td><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN sučelja.</p>';
+const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>Sučelje</th><th>Način</th><th>Adresa</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(nlabel(x.interface))}</b></td><td>${x.mode}</td><td class="muted">${ew(x.mode==='static'?(x.address||''):'—')}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||''):'—')}</td><td class="muted">${x.metric||100}</td><td><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN sučelja.</p>';
 document.querySelectorAll('.wanRm').forEach(el=>el.onclick=()=>{wans.splice(+el.dataset.i,1);renderWanList()});
 document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+el.dataset.i];$('#wanIf').value=x.interface;$('#wanMode').value=x.mode;$('#wanMetric').value=x.metric||100;$('#wanAddr').value=x.address||'';$('#wanGw').value=x.gateway||'';$('#wanDns').value=(x.dns||[]).join(', ');$('#wanAliases').value=(x.aliases||[]).join(', ');$('#wanStatic').style.display=x.mode==='static'?'':'none';wans.splice(+el.dataset.i,1);renderWanList()});};
 renderWanList();
@@ -291,14 +294,17 @@ async function interfacesPage(){const nics=await api('/api/interfaces');
 const link=n=>n.carrier?`<span class="status st-healthy">up${n.speedMb?' · '+n.speedMb+'Mb':''}</span>`:`<span class="status st-muted">no link</span>`;
 const role=n=>n.role?`<span class="badge">${escapeHtml(n.role)}</span>`:'';
 $('#content').innerHTML=`<div class="panel"><h2>Mrežna sučelja (${nics.length})</h2>
-<p class="muted">Ne znaš koji je fizički port? Klikni <b>Identificiraj</b> — LED na tom NIC-u će zatreptati ~10 s da ga nađeš na uređaju.</p>
-<table><thead><tr><th>Sučelje</th><th>Uloga</th><th>Link</th><th>MAC</th><th>IPv4</th><th>Driver</th><th></th></tr></thead><tbody>${nics.map(n=>`<tr>
-<td><b>${escapeHtml(n.name)}</b></td><td>${role(n)}</td><td>${link(n)}</td>
+<p class="muted">Daj svakom sučelju <b>naziv (alias)</b> — npr. <b>WAN1</b>, <b>LAN</b>, <b>GSM WAN2</b> — pa se prikazuje kroz cijeli sustav umjesto <code>enpXsY</code>. Ne znaš koji je fizički port? Klikni <b>Identificiraj</b> — LED zatreperi ~10 s.</p>
+<table><thead><tr><th>Sučelje</th><th>Naziv (alias)</th><th>Uloga</th><th>Link</th><th>MAC</th><th>IPv4</th><th>Driver</th><th></th></tr></thead><tbody>${nics.map(n=>`<tr>
+<td><b>${escapeHtml(n.name)}</b></td>
+<td><input class="nicLbl" data-n="${escapeHtml(n.name)}" value="${escapeHtml(n.label||'')}" placeholder="npr. WAN1" style="max-width:140px;padding:5px 8px"></td>
+<td>${role(n)}</td><td>${link(n)}</td>
 <td class="muted">${escapeHtml(n.mac||'')}</td>
 <td>${escapeHtml((n.addresses||[]).join(', ')||'—')}</td>
 <td class="muted">${escapeHtml(n.driver||'')}</td>
-<td><button class="nicId" data-n="${escapeHtml(n.name)}">Identificiraj</button></td></tr>`).join('')}</tbody></table>
+<td><button class="nicSave ghost" data-n="${escapeHtml(n.name)}">Spremi naziv</button> <button class="nicId" data-n="${escapeHtml(n.name)}">Identificiraj</button></td></tr>`).join('')}</tbody></table>
 <div id="nicMsg" class="muted"></div></div>`;
+document.querySelectorAll('.nicSave').forEach(el=>el.onclick=async()=>{$('#nicMsg').textContent='';const inp=document.querySelector('.nicLbl[data-n="'+el.dataset.n+'"]');try{await api(`/api/interfaces/${encodeURIComponent(el.dataset.n)}/label`,{method:'PUT',body:JSON.stringify({label:inp.value.trim()})});await loadNicLabels();renderNav();$('#nicMsg').textContent=`Naziv za ${el.dataset.n} spremljen — vidljiv kroz sve menije.`}catch(e){$('#nicMsg').textContent=e.message}});
 document.querySelectorAll('.nicId').forEach(el=>el.onclick=async()=>{$('#nicMsg').textContent='';try{const r=await api(`/api/interfaces/${encodeURIComponent(el.dataset.n)}/identify`,{method:'POST',body:JSON.stringify({seconds:10})});$('#nicMsg').textContent=`${el.dataset.n}: LED treperi ~${r.seconds}s — pogledaj koji port svijetli.`}catch(e){$('#nicMsg').textContent=e.message}})}
 function isIPv4(s){return /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(s)}
 function isCIDR(s){const m=/^(.+)\/(\d{1,2})$/.exec(s);if(!m)return false;return isIPv4(m[1])&&+m[2]>=0&&+m[2]<=32}
@@ -538,7 +544,7 @@ ${help('<b>ping</b> — dostupnost + latencija. <b>nslookup</b> — DNS razluči
 <form id="tlForm" class="stack">
 <label>Alat <select id="tlTool"><option value="ping">ping</option><option value="dns">nslookup (DNS)</option><option value="trace">traceroute</option><option value="mtr">mtr</option><option value="http">HTTP test (https)</option></select></label>
 <label>Cilj (host ili IP) <input id="tlHost" placeholder="1.1.1.1 ili example.com"></label>
-<label>Preko sučelja (ping/trace/mtr/http) <select id="tlIface"><option value="">(bilo koji / default ruta)</option>${nics.map(n=>`<option value="${e(n.name)}">${e(n.name)}${n.role?' ('+e(n.role)+')':''}</option>`).join('')}</select></label>
+<label>Preko sučelja (ping/trace/mtr/http) <select id="tlIface"><option value="">(bilo koji / default ruta)</option>${nics.map(n=>`<option value="${e(n.name)}">${e(nlabel(n.name))}${n.role?' · '+e(n.role):''}</option>`).join('')}</select></label>
 <label>DNS server (samo za nslookup) <input id="tlServer" placeholder="npr. 192.168.50.1 (prazno = sistemski)"></label>
 <div><button type="submit">Pokreni</button></div></form>
 <pre id="tlOut" class="muted" style="margin-top:12px;white-space:pre-wrap;min-height:60px">Rezultat će se prikazati ovdje.</pre></div>`;
