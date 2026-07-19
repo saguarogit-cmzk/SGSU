@@ -192,10 +192,10 @@ func (a *app) apiMetrics(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ts":  time.Now().Unix(),
-		"cpu": map[string]any{"cores": cores, "avg": cpuAvg, "load1": load1, "load5": load5, "load15": load15},
-		"mem": map[string]any{"totalMB": memTotal / 1024, "usedMB": memUsed / 1024, "usedPct": memPct},
-		"swap": map[string]any{"totalMB": swapTotal / 1024, "usedMB": (swapTotal - swapFree) / 1024},
+		"ts":         time.Now().Unix(),
+		"cpu":        map[string]any{"cores": cores, "avg": cpuAvg, "load1": load1, "load5": load5, "load15": load15},
+		"mem":        map[string]any{"totalMB": memTotal / 1024, "usedMB": memUsed / 1024, "usedPct": memPct},
+		"swap":       map[string]any{"totalMB": swapTotal / 1024, "usedMB": (swapTotal - swapFree) / 1024},
 		"uptimeSec":  int64(uptime),
 		"conntrack":  map[string]any{"count": ctCount, "max": ctMax},
 		"interfaces": a.readIfaceStats(),
