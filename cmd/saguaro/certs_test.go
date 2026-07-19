@@ -32,8 +32,9 @@ func TestCertIssueFlow(t *testing.T) {
 			t.Fatalf("%s: got %d, want 400", name, r.StatusCode)
 		}
 	}
-	if r := reqJSON(t, srv, c, http.MethodPost, "/api/certs/issue", `{"type":"public","name":"pub","sans":["x.example.com"],"deployGui":false}`); r.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("public type: got %d, want 501", r.StatusCode)
+	// public without a domain/email is a validation error (400), handled before the adapter
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/certs/issue", `{"type":"public","name":"pub","deployGui":false}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("public without domain: got %d, want 400", r.StatusCode)
 	}
 	if len(calls) != 0 {
 		t.Fatalf("adapter must not run on validation failures: %v", calls)
