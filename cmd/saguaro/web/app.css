@@ -107,6 +107,19 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .panel h2{margin:0 0 6px;font-size:16px;font-weight:700}
 .panel h3{margin:16px 0 4px;font-size:14px;font-weight:700;color:var(--fg)}
 
+/* ---------- dashboard bars / cores ---------- */
+.bar{background:var(--line);border-radius:6px;height:7px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;border-radius:6px;transition:width .4s ease}
+.cores{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:9px 18px}
+.core{display:grid;grid-template-columns:26px 1fr 40px;align-items:center;gap:8px;font-size:12px}
+.core .bar{margin-top:0}
+.core .cnum{text-align:right;color:var(--muted)}
+
+/* ---------- grouped nav ---------- */
+.nav-group{color:var(--faint);font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.09em;padding:15px 12px 5px}
+.nav-group:first-child{padding-top:2px}
+
 /* ---------- services ---------- */
 .services{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:13px;margin-top:12px}
 .service{display:flex;justify-content:space-between;gap:16px;align-items:center}

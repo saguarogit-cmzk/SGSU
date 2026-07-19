@@ -121,6 +121,8 @@ type app struct {
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
 	hwCores        int
+	cpuMu          sync.Mutex
+	cpuPrev        *cpuStat
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -131,7 +133,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.29.0"
+const appVersion = "0.30.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -341,6 +343,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PUT /api/firewall/aliases", a.authz(permFirewall, a.apiFirewallAliasesPut))
 	mux.HandleFunc("PUT /api/firewall/rules", a.authz(permFirewall, a.apiFirewallRulesPut))
 	mux.HandleFunc("POST /api/firewall/apply", a.authz(permFirewall, a.apiFirewallApply))
+	mux.HandleFunc("GET /api/metrics", a.auth(a.apiMetrics))
 	mux.HandleFunc("GET /api/wan", a.auth(a.apiWANConfigGet))
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.apiWANConfigApply))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))
