@@ -119,6 +119,7 @@ type app struct {
 	runS2S         func(ctx context.Context, action string) ([]byte, error)
 	runIPsec       func(ctx context.Context, action string) ([]byte, error)
 	runSvc         func(ctx context.Context, args ...string) ([]byte, error)
+	runLogs        func(ctx context.Context, args ...string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -136,7 +137,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.37.0"
+const appVersion = "0.38.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -246,6 +247,7 @@ func main() {
 		runS2S:         defaultRunS2S,
 		runIPsec:       defaultRunIPsec,
 		runSvc:         defaultRunSvc,
+		runLogs:        defaultRunLogs,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -355,6 +357,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PUT /api/firewall/rules", a.authz(permFirewall, a.apiFirewallRulesPut))
 	mux.HandleFunc("POST /api/firewall/apply", a.authz(permFirewall, a.apiFirewallApply))
 	mux.HandleFunc("GET /api/metrics", a.auth(a.apiMetrics))
+	mux.HandleFunc("GET /api/logs/unbound", a.auth(a.apiUnboundStats))
+	mux.HandleFunc("GET /api/logs/suricata", a.auth(a.apiSuricataAlerts))
 	mux.HandleFunc("GET /api/wan", a.auth(a.apiWANConfigGet))
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.apiWANConfigApply))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))

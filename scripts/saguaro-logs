@@ -1,0 +1,30 @@
+#!/bin/sh
+# saguaro-logs — read-only root adapter surfacing Unbound resolver stats and
+# recent Suricata alerts for the dashboard. No mutations; allow-listed only.
+#
+#   unbound-stats      print `unbound-control stats` (key=value lines)
+#   suricata-alerts N  print the last N Suricata EVE alert JSON lines
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  unbound-stats)
+    command -v unbound-control >/dev/null || { echo "unbound-control not installed" >&2; exit 1; }
+    unbound-control stats_noreset 2>/dev/null || unbound-control stats 2>/dev/null || {
+      echo "unbound-control unavailable (control interface not configured)" >&2
+      exit 1
+    }
+    ;;
+  suricata-alerts)
+    N="${2:-50}"
+    echo "$N" | grep -Eq '^[0-9]{1,4}$' || N=50
+    F=/var/log/suricata/eve.json
+    [ -r "$F" ] || exit 0 # no log yet / IDS not running: empty is fine
+    grep -a '"event_type":"alert"' "$F" 2>/dev/null | tail -n "$N" || true
+    ;;
+  *)
+    echo "usage: saguaro-logs unbound-stats | suricata-alerts N" >&2
+    exit 2
+    ;;
+esac
