@@ -1,0 +1,118 @@
+#!/bin/sh
+# saguaro-pkg — root adapter for appliance package/update management from the
+# GUI. Only an allow-listed set of packages can be queried or upgraded, mapped
+# from a stable key so the caller can never name an arbitrary apt package (an
+# `apt-get install <anything>` primitive would be a full root-code-exec hole).
+# Reads (list/status) are safe; upgrade touches ONE allow-listed package only,
+# never a blanket `apt upgrade`, and never installs new packages.
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+export DEBIAN_FRONTEND=noninteractive
+
+# pkg_for maps a stable key to its apt package; unknown keys are refused.
+pkg_for() {
+  case "$1" in
+    control-plane)  echo saguaro ;;
+    postgresql)     echo postgresql ;;
+    unbound)        echo unbound ;;
+    pdns)           echo pdns-server ;;
+    kea)            echo kea ;;
+    nginx)          echo nginx ;;
+    nftables)       echo nftables ;;
+    suricata)       echo suricata ;;
+    strongswan)     echo strongswan ;;
+    wireguard)      echo wireguard-tools ;;
+    step-ca)        echo step-ca ;;
+    squid)          echo squid ;;
+    e2guardian)     echo e2guardian ;;
+    certbot)        echo certbot ;;
+    *) return 1 ;;
+  esac
+}
+
+KEYS="control-plane postgresql unbound pdns kea nginx nftables suricata strongswan wireguard step-ca squid e2guardian certbot"
+
+# Our own drop-in so we never clobber Ubuntu's 20auto-upgrades; apt merges all
+# files in apt.conf.d and the last-read value wins alphabetically (52 > 20/50).
+AUTO_FILE=/etc/apt/apt.conf.d/52saguaro-unattended
+
+ACTION="${1:-}"
+KEY="${2:-}"
+
+case "$ACTION" in
+  list)
+    for k in $KEYS; do
+      p=$(pkg_for "$k")
+      inst=$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null || true)
+      if [ -z "$inst" ]; then
+        printf '%s %s - - na\n' "$k" "$p"
+        continue
+      fi
+      cand=$(apt-cache policy "$p" 2>/dev/null | awk '/Candidate:/{print $2; exit}')
+      [ -n "$cand" ] && [ "$cand" != "(none)" ] || cand="$inst"
+      up=no
+      if dpkg --compare-versions "$inst" lt "$cand" 2>/dev/null; then up=yes; fi
+      printf '%s %s %s %s %s\n' "$k" "$p" "$inst" "$cand" "$up"
+    done
+    ;;
+
+  refresh)
+    apt-get update -qq
+    echo "package lists refreshed"
+    ;;
+
+  upgrade)
+    p=$(pkg_for "$KEY") || { echo "unknown package" >&2; exit 1; }
+    # --only-upgrade never installs a package that is not already present.
+    apt-get install -y --only-upgrade \
+      -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef "$p"
+    logger -t saguaro-pkg "upgrade $p"
+    dpkg-query -W -f='${Version}\n' "$p" 2>/dev/null || true
+    ;;
+
+  unattended-status)
+    if dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q "install ok installed"; then
+      echo "installed yes"
+    else
+      echo "installed no"
+    fi
+    # Enabled when a periodic Unattended-Upgrade "1" is set anywhere in apt config.
+    if apt-config dump 2>/dev/null | grep -qi 'APT::Periodic::Unattended-Upgrade "1"'; then
+      echo "enabled yes"
+    else
+      echo "enabled no"
+    fi
+    ;;
+
+  unattended-enable)
+    if ! dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q "install ok installed"; then
+      apt-get update -qq
+      apt-get install -y unattended-upgrades
+    fi
+    cat > "$AUTO_FILE" <<'EOF'
+// Managed by Saguaro (saguaro-pkg). Security-only automatic upgrades.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+    systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+    logger -t saguaro-pkg "unattended-upgrades enabled"
+    echo "unattended security upgrades enabled"
+    ;;
+
+  unattended-disable)
+    cat > "$AUTO_FILE" <<'EOF'
+// Managed by Saguaro (saguaro-pkg). Automatic upgrades disabled.
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
+EOF
+    logger -t saguaro-pkg "unattended-upgrades disabled"
+    echo "unattended security upgrades disabled"
+    ;;
+
+  *)
+    echo "usage: saguaro-pkg list|refresh|upgrade KEY|unattended-status|unattended-enable|unattended-disable" >&2
+    exit 2
+    ;;
+esac

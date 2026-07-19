@@ -11,6 +11,7 @@ saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-vpn apply, /usr/sbin/saguaro-vpn 
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-s2s apply, /usr/sbin/saguaro-s2s disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ipsec apply, /usr/sbin/saguaro-ipsec disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-svc statusall, /usr/sbin/saguaro-svc status *, /usr/sbin/saguaro-svc start *, /usr/sbin/saguaro-svc stop *, /usr/sbin/saguaro-svc restart *
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-pkg list, /usr/sbin/saguaro-pkg refresh, /usr/sbin/saguaro-pkg upgrade *, /usr/sbin/saguaro-pkg unattended-status, /usr/sbin/saguaro-pkg unattended-enable, /usr/sbin/saguaro-pkg unattended-disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-logs unbound-stats, /usr/sbin/saguaro-logs suricata-alerts *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-tools ping *, /usr/sbin/saguaro-tools dns *, /usr/sbin/saguaro-tools trace *, /usr/sbin/saguaro-tools mtr *, /usr/sbin/saguaro-tools http *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-webproxy apply *, /usr/sbin/saguaro-webproxy disable

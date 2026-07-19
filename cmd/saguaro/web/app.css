@@ -132,6 +132,9 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .st-error{color:var(--err);border-color:#dc354555;background:#fdecee}
 .st-unknown{color:var(--warn);border-color:#c67c0a55;background:#fdf3e3}
 .st-muted{color:var(--faint);background:#f2f5f8}
+.up{color:var(--brand)}
+.switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;font-weight:600}
+.switch input{width:16px;height:16px}
 
 /* severity text (audit/events) */
 .sev-security,.sev-critical{color:var(--sec);font-weight:700}

@@ -129,6 +129,7 @@ type app struct {
 	runSvc         func(ctx context.Context, args ...string) ([]byte, error)
 	runLogs        func(ctx context.Context, args ...string) ([]byte, error)
 	runTools       func(ctx context.Context, args ...string) ([]byte, error)
+	runPkg         func(ctx context.Context, args ...string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -146,7 +147,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.44.0"
+const appVersion = "0.45.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -259,6 +260,7 @@ func main() {
 		runSvc:         defaultRunSvc,
 		runLogs:        defaultRunLogs,
 		runTools:       defaultRunTools,
+		runPkg:         defaultRunPkg,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -332,6 +334,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/siem/test", a.authz(permMailWrite, a.apiSIEMTest))
 	mux.HandleFunc("GET /api/svcctl", a.authz(permServiceCheck, a.apiSvcCtlList))
 	mux.HandleFunc("POST /api/svcctl/{key}/{action}", a.authz(permServiceControl, a.apiSvcCtlAction))
+	mux.HandleFunc("GET /api/packages", a.authz(permServiceCheck, a.apiPkgList))
+	mux.HandleFunc("POST /api/packages/refresh", a.authz(permPackages, a.apiPkgRefresh))
+	mux.HandleFunc("POST /api/packages/upgrade/{key}", a.authz(permPackages, a.apiPkgUpgrade))
+	mux.HandleFunc("POST /api/packages/unattended", a.authz(permPackages, a.apiPkgUnattended))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
 	mux.HandleFunc("GET /api/events", a.auth(a.apiEvents))
 	mux.HandleFunc("GET /api/mail", a.auth(a.apiMailGet))

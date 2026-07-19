@@ -21,5 +21,6 @@ scripts/saguaro-webproxy text eol=lf
 scripts/saguaro-s2s text eol=lf
 scripts/saguaro-ipsec text eol=lf
 scripts/saguaro-svc text eol=lf
+scripts/saguaro-pkg text eol=lf
 *.yml text eol=lf
 *.go text eol=lf
