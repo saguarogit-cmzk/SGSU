@@ -9,6 +9,8 @@ set -eu
 
 STAGED_WAN=/var/lib/saguaro/staged-wan-netplan.yaml
 WAN_DEST=/etc/netplan/60-saguaro-wan.yaml
+STAGED_VLAN=/var/lib/saguaro/staged-vlan-netplan.yaml
+VLAN_DEST=/etc/netplan/65-saguaro-vlans.yaml
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -43,8 +45,24 @@ case "${1:-}" in
     netplan apply
     logger -t saguaro-net "wan netplan applied"
     ;;
+  vlan-apply)
+    [ -s "$STAGED_VLAN" ] || { echo "no staged VLAN netplan at $STAGED_VLAN" >&2; exit 1; }
+    # The control plane validates every value; keep the file to a safe charset.
+    if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$STAGED_VLAN"; then
+      echo "staged VLAN netplan contains unexpected characters; refusing" >&2
+      exit 1
+    fi
+    install -m 0600 -o root -g root "$STAGED_VLAN" "$VLAN_DEST"
+    rm -f "$STAGED_VLAN"
+    if ! netplan generate; then
+      echo "netplan generate failed; VLAN configuration not applied" >&2
+      exit 1
+    fi
+    netplan apply
+    logger -t saguaro-net "vlan netplan applied"
+    ;;
   *)
-    echo "usage: saguaro-net identify NIC SECS | wan-apply" >&2
+    echo "usage: saguaro-net identify NIC SECS | wan-apply | vlan-apply" >&2
     exit 2
     ;;
 esac

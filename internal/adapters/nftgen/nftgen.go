@@ -60,8 +60,25 @@ type Rule struct {
 type Zone struct {
 	Name      string `json:"name"`
 	Kind      string `json:"kind"`      // wan | lan | dmz | guest
-	Interface string `json:"interface"` // bound NIC
-	Network   string `json:"network"`   // CIDR (optional for wan)
+	Interface string `json:"interface"` // bound NIC (the VLAN parent when VLANID>0)
+	Network   string `json:"network"`   // CIDR of the segment (optional for wan)
+	// VLANID tags the zone onto an 802.1Q VLAN on the parent Interface. 0 means
+	// untagged (the physical interface). When set (1-4094) the effective forward
+	// interface is "<Interface>.<VLANID>" (e.g. enp2.30).
+	VLANID int `json:"vlanId,omitempty"`
+	// Address is the appliance's own IP/CIDR on this zone's sub-interface. It is
+	// required for VLAN zones (used to create the sub-interface via netplan) and
+	// ignored for untagged zones, whose addressing is configured elsewhere.
+	Address string `json:"address,omitempty"`
+}
+
+// IfaceName is the effective forwarding interface for a zone: the physical NIC
+// when untagged, or the 802.1Q sub-interface "<parent>.<vlan>" when tagged.
+func (z Zone) IfaceName() string {
+	if z.VLANID > 0 {
+		return fmt.Sprintf("%s.%d", z.Interface, z.VLANID)
+	}
+	return z.Interface
 }
 
 // zoneTrust ranks zone kinds; a zone may initiate to any strictly lower rank.
@@ -193,12 +210,25 @@ func (c Config) validateObjects() error {
 		if !validIface(z.Interface) {
 			return fmt.Errorf("zone %q has an invalid interface %q", z.Name, z.Interface)
 		}
-		if zoneIfaces[z.Interface] {
-			return fmt.Errorf("interface %q is already assigned to another zone", z.Interface)
+		if z.VLANID < 0 || z.VLANID > 4094 {
+			return fmt.Errorf("zone %q VLAN id must be 0 (untagged) or 1-4094", z.Name)
 		}
-		zoneIfaces[z.Interface] = true
+		// The effective interface (incl. the VLAN suffix) must be a valid,
+		// unique kernel interface name; two zones may share a parent NIC only on
+		// different VLANs.
+		ifn := z.IfaceName()
+		if !validIface(ifn) {
+			return fmt.Errorf("zone %q interface name %q is invalid (too long?)", z.Name, ifn)
+		}
+		if zoneIfaces[ifn] {
+			return fmt.Errorf("interface %q is already assigned to another zone", ifn)
+		}
+		zoneIfaces[ifn] = true
 		if z.Kind != "wan" && !validCIDR4(z.Network) {
 			return fmt.Errorf("zone %q needs an IPv4 CIDR network", z.Name)
+		}
+		if z.VLANID > 0 && !validCIDR4(z.Address) {
+			return fmt.Errorf("VLAN zone %q needs the appliance's IPv4 CIDR address on that VLAN", z.Name)
 		}
 	}
 	ruleNames := map[string]bool{}
@@ -247,7 +277,7 @@ func (c Config) validateObjects() error {
 func (c Config) zoneIfaceMap() map[string]string {
 	m := map[string]string{}
 	for _, z := range c.Zones {
-		m[z.Name] = z.Interface
+		m[z.Name] = z.IfaceName()
 	}
 	return m
 }
@@ -585,9 +615,9 @@ func (c Config) Generate() (string, error) {
 	// a DMZ cannot reach the LAN and guests are isolated.
 	if c.GatewayEnabled && len(c.Zones) > 0 {
 		for _, z := range c.Zones {
-			if z.Kind != "wan" && c.WANInterface != "" && z.Interface != c.WANInterface {
+			if z.Kind != "wan" && c.WANInterface != "" && z.IfaceName() != c.WANInterface {
 				fmt.Fprintf(&b, "    iifname %q oifname %q accept comment \"zone %s->wan\"\n",
-					z.Interface, c.WANInterface, z.Name)
+					z.IfaceName(), c.WANInterface, z.Name)
 			}
 		}
 		for _, sz := range c.Zones {
@@ -600,7 +630,7 @@ func (c Config) Generate() (string, error) {
 				}
 				if zoneTrust[sz.Kind] > zoneTrust[dz.Kind] {
 					fmt.Fprintf(&b, "    iifname %q oifname %q accept comment \"zone %s->%s\"\n",
-						sz.Interface, dz.Interface, sz.Name, dz.Name)
+						sz.IfaceName(), dz.IfaceName(), sz.Name, dz.Name)
 				}
 			}
 		}

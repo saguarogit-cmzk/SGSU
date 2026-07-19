@@ -500,7 +500,9 @@ const putZones=list=>api('/api/firewall/zones',{method:'PUT',body:JSON.stringify
 const ZKINDS=[['lan','LAN (povjerljivo)'],['dmz','DMZ (poluizolirano)'],['guest','Gost (izolirano)'],['wan','WAN (nepovjerljivo)']];
 const zkindLabel=k=>{const z=ZKINDS.find(x=>x[0]===k);return z?z[1]:k};
 const zoneOpt=sel=>['<option value="">(bilo koja)</option>'].concat(zones.map(z=>`<option ${z.name===sel?'selected':''}>${e(z.name)}</option>`)).join('');
-const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><td><span class="badge">${e(zkindLabel(z.kind))}</span></td><td>${e(nlabel(z.interface))}</td><td class="muted">${e(z.network||'—')}</td><td><div class="rowacts">${iconBtn('del','Obriši zonu','danger',`data-i="${i}"`).replace('iconbtn','iconbtn znDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema definiranih zona (vrijedi osnovna LAN↔WAN politika).</td></tr>';
+const zoneIfLabel=z=>e(nlabel(z.interface))+(z.vlanId?` <span class="badge">VLAN ${z.vlanId}</span> <span class="muted">${e(z.interface)}.${z.vlanId}</span>`:'');
+const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><td><span class="badge">${e(zkindLabel(z.kind))}</span></td><td>${zoneIfLabel(z)}</td><td class="muted">${e(z.network||'—')}${z.vlanId&&z.address?' · '+e(z.address):''}</td><td><div class="rowacts">${iconBtn('del','Obriši zonu','danger',`data-i="${i}"`).replace('iconbtn','iconbtn znDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema definiranih zona (vrijedi osnovna LAN↔WAN politika).</td></tr>';
+const hasVlan=zones.some(z=>z.vlanId);
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
 const aliasVals=n=>{const a=aliases.find(x=>x.name===n);return a?(a.values||[]).join(', '):''};
@@ -550,13 +552,16 @@ ${toggle('ruEnabled',true,'Omogućeno')}
 <div class="tabpane" data-pane="fwTabs" data-tabkey="zone">
 <div class="panel"><h3>Zone (${zones.length})</h3>
 <p class="muted">Segmentiraj mrežu po povjerenju. Zadana politika: zona veće razine povjerenja može otvarati promet prema nižoj (LAN→DMZ, DMZ→internet), nikad obrnuto — pa <b>DMZ ne doseže LAN</b>, a <b>Gost je izoliran</b> od svih. Sve što nije eksplicitno dopušteno (ili port-forward/pravilo) se odbacuje.</p>
-${help('Svaka zona veže <b>sučelje</b> (fizički NIC) i <b>mrežu</b> (CIDR) uz <b>tip</b>: <code>lan</code> (povjerljivo), <code>dmz</code> (poluizolirano — serveri dostupni izvana), <code>guest</code> (izolirano) ili <code>wan</code> (nepovjerljivo, internet). Iz tipova se izvodi automatska međuzonska politika. Za iznimke (npr. propusti samo tcp/443 iz LAN u DMZ) dodaj <b>pravilo</b> s poljima <i>Iz zone / U zonu</i>. Nakon promjene zona klikni <b>Primijeni firewall</b>.')}
-<table><thead><tr><th>Naziv</th><th>Tip</th><th>Sučelje</th><th>Mreža</th><th>Akcije</th></tr></thead><tbody>${zoneRows}</tbody></table>
+${help('Svaka zona veže <b>sučelje</b> (fizički NIC ili VLAN na njemu) i <b>mrežu</b> (CIDR) uz <b>tip</b>: <code>lan</code> (povjerljivo), <code>dmz</code> (poluizolirano — serveri dostupni izvana), <code>guest</code> (izolirano) ili <code>wan</code> (nepovjerljivo, internet). Iz tipova se izvodi automatska međuzonska politika. <b>VLAN (802.1Q):</b> upiši VLAN ID (1-4094) da zona bude tagirani VLAN na istom fizičkom portu — više izoliranih zona na jednom kabelu (npr. DMZ=VLAN20, Gost=VLAN30 na enp2). Tada upiši i <b>adresu appliancea</b> na toj zoni (npr. 10.20.0.1/24) i klikni <b>Primijeni VLAN sučelja</b> (kreira <code>enpX.ID</code> preko netplana). Za iznimke dodaj <b>pravilo</b> s poljima <i>Iz zone / U zonu</i>. Nakon promjene zona/pravila klikni <b>Primijeni firewall</b>.')}
+<table><thead><tr><th>Naziv</th><th>Tip</th><th>Sučelje</th><th>Mreža / adresa</th><th>Akcije</th></tr></thead><tbody>${zoneRows}</tbody></table>
+${hasVlan?'<div class="wizRow"><button id="znVlanApply">Primijeni VLAN sučelja (netplan)</button></div><div id="znVlanMsg" class="muted"></div>':''}
 <form id="znAdd" class="stack">
 <label>Naziv <input id="znName" placeholder="dmz" required></label>
 <label>Tip <select id="znKind">${ZKINDS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label>
-<label>Sučelje <select id="znIf">${nics.length?nics.map(n=>`<option value="${e(n.name)}">${e(nlabel(n.name))}</option>`).join(''):'<option value="">(nema NIC-eva)</option>'}</select></label>
+<label>Sučelje (fizički NIC / VLAN parent) <select id="znIf">${nics.length?nics.map(n=>`<option value="${e(n.name)}">${e(nlabel(n.name))}</option>`).join(''):'<option value="">(nema NIC-eva)</option>'}</select></label>
+<label>VLAN ID (0 = bez VLAN-a) <input id="znVlan" type="number" min="0" max="4094" value="0"></label>
 <label>Mreža (CIDR, prazno za WAN) <input id="znNet" placeholder="10.20.0.0/24"></label>
+<label>Adresa appliancea na VLAN-u (CIDR) <input id="znAddr" placeholder="10.20.0.1/24"></label>
 <div><button type="submit">Dodaj zonu</button></div><div id="znMsg" class="muted"></div></form></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="test">
 <div class="panel"><h3>Test pravila</h3>
@@ -592,13 +597,18 @@ if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoj
 const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
 try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.znDel').forEach(el=>el.onclick=async()=>{const list=zones.filter((_,j)=>j!==+el.dataset.i);try{await putZones(list);fwRulesPage()}catch(err){alert(err.message)}});
-$('#znAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#znMsg');m.textContent='';const name=$('#znName').value.trim(),kind=$('#znKind').value,iface=$('#znIf').value,net=$('#znNet').value.trim();
+const znVlanBtn=$('#znVlanApply');if(znVlanBtn)znVlanBtn.onclick=async()=>{if(!confirm('Primijeniti VLAN sučelja? Ovo piše netplan i radi netplan apply (kreira/mijenja VLAN pod-sučelja).'))return;const m=$('#znVlanMsg');znVlanBtn.disabled=true;m.textContent='Primjena netplana…';try{const r=await api('/api/firewall/zones/apply-vlans',{method:'POST',body:'{}'});m.textContent=`VLAN sučelja primijenjena (${r.vlans}).`}catch(err){m.textContent=err.message}finally{znVlanBtn.disabled=false}};
+$('#znAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#znMsg');m.textContent='';const name=$('#znName').value.trim(),kind=$('#znKind').value,iface=$('#znIf').value,vlan=parseInt($('#znVlan').value,10)||0,net=$('#znNet').value.trim(),addr=$('#znAddr').value.trim();
 if(!/^[a-z][a-z0-9_-]{0,20}$/.test(name)){m.textContent='Naziv zone: počni slovom (a-z 0-9 _ -).';return}
 if(!iface){m.textContent='Odaberi sučelje.';return}
+if(vlan<0||vlan>4094){m.textContent='VLAN ID mora biti 0 (bez) ili 1-4094.';return}
 if(kind!=='wan'&&!isCIDR(net)){m.textContent='Mreža mora biti CIDR (npr. 10.20.0.0/24).';return}
+if(vlan>0&&!isCIDR(addr)){m.textContent='Za VLAN upiši adresu appliancea (CIDR, npr. 10.20.0.1/24).';return}
+const ifn=vlan>0?iface+'.'+vlan:iface;
 if(zones.some(z=>z.name===name)){m.textContent='Zona s tim imenom već postoji.';return}
-if(zones.some(z=>z.interface===iface)){m.textContent='To je sučelje već dodijeljeno drugoj zoni.';return}
-try{await putZones(zones.concat([{name,kind,interface:iface,network:kind==='wan'?net:net}]));fwRulesPage()}catch(err){m.textContent=err.message}};
+if(zones.some(z=>(z.vlanId?z.interface+'.'+z.vlanId:z.interface)===ifn)){m.textContent='To je sučelje ('+ifn+') već dodijeljeno drugoj zoni.';return}
+const zone={name,kind,interface:iface,network:net};if(vlan>0){zone.vlanId=vlan;zone.address=addr}
+try{await putZones(zones.concat([zone]));fwRulesPage()}catch(err){m.textContent=err.message}};
 $('#ruTest').onsubmit=async ev=>{ev.preventDefault();const o=$('#tsOut');const src=$('#tsSrc').value.trim(),dst=$('#tsDst').value.trim();
 if(src&&!isIPv4(src)){o.innerHTML='<span class="error">Izvor mora biti IPv4 adresa.</span>';return}
 if(dst&&!isIPv4(dst)){o.innerHTML='<span class="error">Odredište mora biti IPv4 adresa.</span>';return}

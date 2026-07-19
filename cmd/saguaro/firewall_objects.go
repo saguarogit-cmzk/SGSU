@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 
 	"saguaro.local/network-manager/internal/adapters/nftgen"
+	"saguaro.local/network-manager/internal/adapters/vlangen"
 )
+
+const stagedVLANNetplanName = "staged-vlan-netplan.yaml"
 
 // The Firewall objects (aliases) and rules are stored inside the firewall
 // (gateway) nftgen.Config because nftables is generated as one holistic
@@ -112,6 +115,38 @@ func (a *app) apiFirewallZonesPut(w http.ResponseWriter, r *http.Request) {
 	}
 	a.record(r, a.actor(r), "firewall-zones", "objects", "success", map[string]any{"count": len(in.Zones)})
 	writeJSON(w, http.StatusOK, map[string]any{"zones": cfg.Zones})
+}
+
+// apiFirewallVLANsApply creates (or removes) the 802.1Q sub-interfaces backing
+// the tagged zones via a generated netplan. Applying with no VLAN zones writes
+// an empty netplan, cleaning up any previously created Saguaro VLANs.
+func (a *app) apiFirewallVLANsApply(w http.ResponseWriter, r *http.Request) {
+	cfg, _ := a.getGateway()
+	yaml, err := vlangen.Generate(cfg.Zones)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	staged := filepath.Join(filepath.Dir(a.store.path), stagedVLANNetplanName)
+	if err := os.WriteFile(staged, []byte(yaml), 0600); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot write staged VLAN netplan")
+		return
+	}
+	if out, err := a.runNet(r.Context(), "vlan-apply"); err != nil {
+		a.recordSev(r, a.actor(r), "zone-vlans", "netplan", "failed", "security",
+			map[string]any{"error": err.Error(), "output": truncate(string(out), 300)})
+		writeError(w, http.StatusBadGateway, "apply failed: "+truncate(string(out), 300))
+		return
+	}
+	vlanCount := 0
+	for _, z := range cfg.Zones {
+		if z.VLANID > 0 {
+			vlanCount++
+		}
+	}
+	a.recordSev(r, a.actor(r), "zone-vlans", "netplan", "success", "security",
+		map[string]any{"vlans": vlanCount})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vlans": vlanCount})
 }
 
 func (a *app) apiFirewallAliasesPut(w http.ResponseWriter, r *http.Request) {

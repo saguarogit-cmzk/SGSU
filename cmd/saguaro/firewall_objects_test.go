@@ -78,6 +78,33 @@ func TestFirewallZones(t *testing.T) {
 	}
 }
 
+func TestFirewallVLANApply(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var actions []string
+	a.runNet = func(_ context.Context, args ...string) ([]byte, error) {
+		actions = append(actions, strings.Join(args, " "))
+		return []byte("ok"), nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// A tagged (VLAN) zone and an untagged one.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/zones",
+		`{"zones":[{"name":"lan","kind":"lan","interface":"enp2","network":"10.10.10.0/24"},{"name":"dmz","kind":"dmz","interface":"enp2","vlanId":20,"network":"10.20.0.0/24","address":"10.20.0.1/24"}]}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("put vlan zones: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-vlans", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("apply vlans: got %d", r.StatusCode)
+	}
+	staged, err := os.ReadFile(filepath.Join(filepath.Dir(a.store.path), stagedVLANNetplanName))
+	if err != nil || !strings.Contains(string(staged), "enp2.20:") || !strings.Contains(string(staged), "id: 20") {
+		t.Fatalf("staged VLAN netplan wrong: %v %s", err, staged)
+	}
+	if len(actions) != 1 || actions[0] != "vlan-apply" {
+		t.Fatalf("adapter call wrong: %v", actions)
+	}
+}
+
 func TestFirewallApplyIncludesObjects(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string

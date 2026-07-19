@@ -254,6 +254,46 @@ func TestZones(t *testing.T) {
 	}
 }
 
+func TestZoneVLAN(t *testing.T) {
+	c := Config{
+		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
+		Zones: []Zone{
+			{Name: "lan", Kind: "lan", Interface: "enp2", Network: "10.10.10.0/24"},
+			{Name: "dmz", Kind: "dmz", Interface: "enp2", Network: "10.20.0.0/24", VLANID: 20, Address: "10.20.0.1/24"},
+		},
+	}
+	if got := (Zone{Interface: "enp2", VLANID: 20}).IfaceName(); got != "enp2.20" {
+		t.Fatalf("IfaceName = %q, want enp2.20", got)
+	}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Forward rules must target the VLAN sub-interface, not the bare parent.
+	for _, w := range []string{
+		`iifname "enp2" oifname "enp2.20" accept comment "zone lan->dmz"`, // LAN -> DMZ(vlan)
+		`iifname "enp2.20" oifname "enp1" accept comment "zone dmz->wan"`, // DMZ(vlan) -> internet
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing VLAN rule %q:\n%s", w, out)
+		}
+	}
+	// Two zones sharing a parent NIC on different VLANs is valid; same VLAN clashes.
+	dup := Config{Zones: []Zone{
+		{Name: "a", Kind: "dmz", Interface: "enp2", Network: "10.20.0.0/24", VLANID: 20, Address: "10.20.0.1/24"},
+		{Name: "b", Kind: "guest", Interface: "enp2", Network: "10.20.0.0/24", VLANID: 20, Address: "10.20.0.2/24"},
+	}}
+	if err := dup.ValidateObjects(); err == nil {
+		t.Error("expected duplicate VLAN sub-interface error")
+	}
+	// A VLAN zone with no address is rejected.
+	noaddr := Config{Zones: []Zone{{Name: "dmz", Kind: "dmz", Interface: "enp2", Network: "10.20.0.0/24", VLANID: 20}}}
+	if err := noaddr.ValidateObjects(); err == nil {
+		t.Error("expected missing VLAN address error")
+	}
+}
+
 func TestZoneEvaluateForward(t *testing.T) {
 	c := Config{
 		Zones: []Zone{
