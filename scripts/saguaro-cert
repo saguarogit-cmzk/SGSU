@@ -23,6 +23,32 @@ GUI_KEY=/etc/saguaro/bootstrap-tls.key
 
 valid_name() { echo "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'; }
 valid_san()  { echo "$1" | grep -Eq '^(\*\.)?[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; }
+# DNS-01 accepts an optional wildcard prefix.
+valid_acme_domain() { echo "$1" | grep -Eq '^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'; }
+
+SELF=/usr/sbin/saguaro-cert
+
+# pdns_zone_for prints the longest local PowerDNS zone that is a suffix of the
+# given domain, so the ACME challenge TXT lands in the right zone.
+pdns_zone_for() {
+  d="$1"; best=""
+  command -v pdnsutil >/dev/null 2>&1 || return 1
+  for z in $(pdnsutil list-all-zones 2>/dev/null); do
+    z=${z%.}
+    if [ "$d" = "$z" ] || [ "${d%.$z}" != "$d" ]; then
+      [ ${#z} -gt ${#best} ] && best="$z"
+    fi
+  done
+  [ -n "$best" ] && { echo "$best"; return 0; }
+  return 1
+}
+
+# rel_challenge prints the _acme-challenge record name relative to its zone.
+rel_challenge() {
+  d="$1"; z="$2"
+  sub=${d%.$z}
+  if [ "$sub" = "$d" ]; then echo "_acme-challenge"; else echo "_acme-challenge.$sub"; fi
+}
 
 # open80/close80 briefly allow inbound tcp/80 in the main firewall so the ACME
 # HTTP-01 challenge can reach certbot --standalone. No-op if the firewall table
@@ -125,6 +151,46 @@ case "${1:-}" in
     install -m 0600 -o root -g root "$LIVE/privkey.pem" "$CERTDIR/$NAME.key"
     logger -t saguaro-cert "issued public certificate $NAME for $DOMAIN"
     ;;
+  acme-dns)
+    NAME="${2:-}"; DOMAIN="${3:-}"; EMAIL="${4:-}"
+    valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
+    valid_acme_domain "$DOMAIN" || { echo "invalid domain" >&2; exit 1; }
+    echo "$EMAIL" | grep -Eq '^[^@ ]+@[^@ ]+\.[^@ ]+$' || { echo "invalid email" >&2; exit 1; }
+    command -v certbot >/dev/null || { echo "certbot is not installed" >&2; exit 1; }
+    command -v pdnsutil >/dev/null || { echo "pdnsutil (PowerDNS) is required for DNS-01" >&2; exit 1; }
+    # The zone must be hosted locally so the hooks can publish the TXT record.
+    ZBASE=${DOMAIN#\*.}
+    pdns_zone_for "$ZBASE" >/dev/null || { echo "no local PowerDNS zone is authoritative for $ZBASE" >&2; exit 1; }
+    install -d -m 0755 "$CERTDIR"
+    install_acme_hooks
+    ok=1
+    certbot certonly --manual --non-interactive --agree-tos --preferred-challenges dns \
+      --manual-auth-hook "$SELF acme-auth-hook" --manual-cleanup-hook "$SELF acme-cleanup-hook" \
+      --cert-name "$NAME" -m "$EMAIL" -d "$DOMAIN" >/tmp/saguaro-certbot.log 2>&1 || ok=0
+    [ "$ok" = 1 ] || { echo "certbot failed:" >&2; tail -n 15 /tmp/saguaro-certbot.log >&2; exit 1; }
+    LIVE=/etc/letsencrypt/live/$NAME
+    install -m 0644 -o root -g root "$LIVE/fullchain.pem" "$CERTDIR/$NAME.crt"
+    install -m 0600 -o root -g root "$LIVE/privkey.pem" "$CERTDIR/$NAME.key"
+    logger -t saguaro-cert "issued public certificate $NAME for $DOMAIN via DNS-01"
+    ;;
+  acme-auth-hook)
+    # Invoked by certbot (as root) during DNS-01. Publishes the challenge TXT.
+    [ -n "${CERTBOT_DOMAIN:-}" ] && [ -n "${CERTBOT_VALIDATION:-}" ] || { echo "missing CERTBOT env" >&2; exit 1; }
+    ZONE=$(pdns_zone_for "$CERTBOT_DOMAIN") || { echo "no local zone for $CERTBOT_DOMAIN" >&2; exit 1; }
+    REC=$(rel_challenge "$CERTBOT_DOMAIN" "$ZONE")
+    pdnsutil add-record "$ZONE" "$REC" TXT 60 "\"$CERTBOT_VALIDATION\"" >/dev/null 2>&1 \
+      || { echo "failed to add challenge TXT" >&2; exit 1; }
+    pdnsutil rectify-zone "$ZONE" >/dev/null 2>&1 || true
+    command -v pdns_control >/dev/null 2>&1 && pdns_control purge "$REC.$ZONE." >/dev/null 2>&1 || true
+    sleep 2
+    ;;
+  acme-cleanup-hook)
+    [ -n "${CERTBOT_DOMAIN:-}" ] || exit 0
+    ZONE=$(pdns_zone_for "$CERTBOT_DOMAIN") || exit 0
+    REC=$(rel_challenge "$CERTBOT_DOMAIN" "$ZONE")
+    pdnsutil delete-rrset "$ZONE" "$REC" TXT >/dev/null 2>&1 || true
+    pdnsutil rectify-zone "$ZONE" >/dev/null 2>&1 || true
+    ;;
   remove)
     NAME="${2:-}"
     valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
@@ -144,7 +210,7 @@ case "${1:-}" in
     logger -t saguaro-cert "deployed certificate $NAME to the GUI vhost"
     ;;
   *)
-    echo "usage: saguaro-cert issue | acme NAME DOMAIN EMAIL | renew-all | remove NAME | deploy-gui NAME" >&2
+    echo "usage: saguaro-cert issue | acme NAME DOMAIN EMAIL | acme-dns NAME DOMAIN EMAIL | renew-all | remove NAME | deploy-gui NAME" >&2
     exit 2
     ;;
 esac

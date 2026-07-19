@@ -117,8 +117,9 @@ func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 		Type      string   `json:"type"` // internal | public
 		Name      string   `json:"name"`
 		SANs      []string `json:"sans"`
-		Domain    string   `json:"domain"` // public: the FQDN to certify
-		Email     string   `json:"email"`  // public: ACME contact
+		Domain    string   `json:"domain"`    // public: the FQDN to certify
+		Email     string   `json:"email"`     // public: ACME contact
+		Challenge string   `json:"challenge"` // public: http-01 (default) | dns-01
 		DeployGUI bool     `json:"deployGui"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
@@ -137,7 +138,7 @@ func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Type == "public" {
-		a.issuePublicCert(w, r, in.Name, in.Domain, in.Email, in.DeployGUI)
+		a.issuePublicCert(w, r, in.Name, in.Domain, in.Email, in.Challenge, in.DeployGUI)
 		return
 	}
 	if len(in.SANs) == 0 {
@@ -192,20 +193,40 @@ func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 		"paths": map[string]string{"cert": certDir + "/" + in.Name + ".crt", "key": certDir + "/" + in.Name + ".key"}})
 }
 
-// issuePublicCert obtains a Let's Encrypt certificate for a public FQDN via
-// HTTP-01 (certbot standalone with a temporary firewall opening) through the
-// root adapter; renewal is handled unattended by certbot.timer.
-func (a *app) issuePublicCert(w http.ResponseWriter, r *http.Request, name, domain, email string, deployGUI bool) {
+// issuePublicCert obtains a Let's Encrypt certificate for a public domain. With
+// challenge "http-01" (default) it uses certbot --standalone with a temporary
+// firewall opening. With "dns-01" it uses certbot --manual against the local
+// PowerDNS (via the saguaro-cert hooks), which also supports wildcard domains.
+// Renewal is handled unattended by certbot.timer.
+func (a *app) issuePublicCert(w http.ResponseWriter, r *http.Request, name, domain, email, challenge string, deployGUI bool) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	if strings.HasPrefix(domain, "*.") || !sanHostRe.MatchString(domain) {
-		writeError(w, http.StatusBadRequest, "public certificate needs a valid public FQDN (wildcards need DNS-01, not yet supported)")
+	if challenge == "" {
+		challenge = "http-01"
+	}
+	if challenge != "http-01" && challenge != "dns-01" {
+		writeError(w, http.StatusBadRequest, "challenge must be http-01 or dns-01")
+		return
+	}
+	wildcard := strings.HasPrefix(domain, "*.")
+	if wildcard && challenge != "dns-01" {
+		writeError(w, http.StatusBadRequest, "wildcard certificates require the dns-01 challenge")
+		return
+	}
+	// Validate the domain (strip a leading "*." before the host check).
+	base := strings.TrimPrefix(domain, "*.")
+	if !sanHostRe.MatchString(base) {
+		writeError(w, http.StatusBadRequest, "public certificate needs a valid public domain")
 		return
 	}
 	if !emailRe.MatchString(strings.TrimSpace(email)) {
 		writeError(w, http.StatusBadRequest, "a contact email is required for Let's Encrypt")
 		return
 	}
-	if out, err := a.runCert(r.Context(), "acme", name, domain, strings.TrimSpace(email)); err != nil {
+	action := "acme"
+	if challenge == "dns-01" {
+		action = "acme-dns"
+	}
+	if out, err := a.runCert(r.Context(), action, name, domain, strings.TrimSpace(email)); err != nil {
 		a.recordSev(r, a.actor(r), "cert-issue-public", domain, "failed", "warning", map[string]any{"output": truncate(string(out), 400)})
 		writeError(w, http.StatusBadGateway, "Let's Encrypt issuance failed: "+truncate(string(out), 400))
 		return
