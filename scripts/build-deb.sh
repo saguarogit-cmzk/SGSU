@@ -79,6 +79,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-ipsec"                    "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-svc"                      "$STAGE/usr/sbin/saguaro-svc"
 install -D -m 0755 "$ROOT/scripts/saguaro-power"                    "$STAGE/usr/sbin/saguaro-power"
 install -D -m 0755 "$ROOT/scripts/saguaro-pkg"                      "$STAGE/usr/sbin/saguaro-pkg"
+install -D -m 0755 "$ROOT/scripts/saguaro-selfupdate"               "$STAGE/usr/sbin/saguaro-selfupdate"
 install -D -m 0755 "$ROOT/scripts/saguaro-logs"                     "$STAGE/usr/sbin/saguaro-logs"
 install -D -m 0755 "$ROOT/scripts/saguaro-tools"                    "$STAGE/usr/sbin/saguaro-tools"
 install -D -m 0755 "$ROOT/scripts/saguaro-webproxy"                 "$STAGE/usr/sbin/saguaro-webproxy"

@@ -1,0 +1,72 @@
+#!/bin/sh
+# saguaro-selfupdate — root adapter that updates the Saguaro control plane itself
+# from its git source checkout (/opt/SGSU): rebuild the binaries, refresh the
+# adapters and sudoers, and restart the service. This is how the whole appliance
+# software (not just the OS services) is kept in sync with the git repository.
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   check         report the current vs remote commit and whether a build is possible
+#   apply [REF]   fetch, hard-reset to REF (default origin/main), rebuild, reinstall
+#                 binaries + adapters + sudoers (validated), and restart the service
+set -eu
+
+SRCDIR=/opt/SGSU
+BINDIR=/usr/lib/saguaro
+SBIN=/usr/sbin
+SUDOERS=/etc/sudoers.d/saguaro-adapter
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+GO=$(command -v go 2>/dev/null || true)
+[ -n "$GO" ] || { [ -x /usr/local/go/bin/go ] && GO=/usr/local/go/bin/go || true; }
+
+git_ok() { [ -d "$SRCDIR/.git" ] && command -v git >/dev/null 2>&1; }
+
+case "${1:-}" in
+  check)
+    git_ok || { echo "source unknown"; echo "gitrepo no"; exit 0; }
+    git -C "$SRCDIR" fetch --quiet origin 2>/dev/null || true
+    cur=$(git -C "$SRCDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    rem=$(git -C "$SRCDIR" rev-parse --short origin/main 2>/dev/null || echo unknown)
+    behind=$(git -C "$SRCDIR" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+    printf 'gitrepo yes\ncurrent %s\nremote %s\nbehind %s\nbuildable %s\n' \
+      "$cur" "$rem" "$behind" "$([ -n "$GO" ] && echo yes || echo no)"
+    ;;
+  apply)
+    REF="${2:-origin/main}"
+    echo "$REF" | grep -Eq '^[A-Za-z0-9._/-]{1,100}$' || { echo "invalid ref" >&2; exit 1; }
+    git_ok || { echo "not a git source install; use the .deb update path instead" >&2; exit 1; }
+    [ -n "$GO" ] || { echo "Go toolchain not found; cannot build from source" >&2; exit 1; }
+    git -C "$SRCDIR" fetch --quiet origin || { echo "git fetch failed" >&2; exit 1; }
+    git -C "$SRCDIR" reset --hard "$REF" >/dev/null || { echo "git reset to $REF failed" >&2; exit 1; }
+    GOBIN_DIR=$(dirname "$GO")
+    ( cd "$SRCDIR" && PATH="$PATH:$GOBIN_DIR" "$GO" build -o /tmp/saguaro.new ./cmd/saguaro ) \
+      || { echo "build failed (control plane)" >&2; exit 1; }
+    ( cd "$SRCDIR" && PATH="$PATH:$GOBIN_DIR" "$GO" build -o /tmp/saguaro-eventd.new ./cmd/saguaro-eventd ) \
+      || { echo "build failed (event collector)" >&2; exit 1; }
+    # Refresh the root adapters (strip a trailing .sh in the installed name).
+    for a in "$SRCDIR"/scripts/saguaro-*; do
+      [ -f "$a" ] || continue
+      name=$(basename "$a"); name=${name%.sh}
+      install -m 0755 "$a" "$SBIN/$name"
+    done
+    # Refresh sudoers, but validate it before replacing so a bad file can't lock us out.
+    install -m 0440 -o root -g root "$SRCDIR/packaging/sudoers/saguaro-adapter" /tmp/saguaro-sudoers.new
+    visudo -c -f /tmp/saguaro-sudoers.new >/dev/null 2>&1 || { rm -f /tmp/saguaro-sudoers.new; echo "new sudoers is invalid; aborting update" >&2; exit 1; }
+    mv /tmp/saguaro-sudoers.new "$SUDOERS"; chmod 0440 "$SUDOERS"
+    # Swap in the new binaries last, then restart out-of-band so this process (a
+    # child of the saguaro cgroup) is not killed mid-restart.
+    install -m 0755 /tmp/saguaro.new "$BINDIR/saguaro"
+    install -m 0755 /tmp/saguaro-eventd.new "$BINDIR/saguaro-eventd"
+    rm -f /tmp/saguaro.new /tmp/saguaro-eventd.new
+    systemctl daemon-reload || true
+    logger -t saguaro-selfupdate "updated to $(git -C "$SRCDIR" rev-parse --short HEAD)"
+    systemd-run --on-active=2 --unit=saguaro-selfupdate-restart systemctl restart saguaro >/dev/null 2>&1 \
+      || systemctl restart --no-block saguaro
+    echo "updated to $(git -C "$SRCDIR" rev-parse --short HEAD); restarting"
+    ;;
+  *)
+    echo "usage: saguaro-selfupdate check | apply [REF]" >&2
+    exit 2
+    ;;
+esac

@@ -24,5 +24,6 @@ scripts/saguaro-ipsec text eol=lf
 scripts/saguaro-svc text eol=lf
 scripts/saguaro-power text eol=lf
 scripts/saguaro-pkg text eol=lf
+scripts/saguaro-selfupdate text eol=lf
 *.yml text eol=lf
 *.go text eol=lf

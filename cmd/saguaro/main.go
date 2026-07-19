@@ -131,6 +131,7 @@ type app struct {
 	runTools       func(ctx context.Context, args ...string) ([]byte, error)
 	runPkg         func(ctx context.Context, args ...string) ([]byte, error)
 	runPower       func(ctx context.Context, action string) ([]byte, error)
+	runSelfUpdate  func(ctx context.Context, args ...string) ([]byte, error)
 	runDNSZones    func(ctx context.Context, action string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
@@ -158,7 +159,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.56.0"
+const appVersion = "0.57.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -273,6 +274,7 @@ func main() {
 		runTools:       defaultRunTools,
 		runPkg:         defaultRunPkg,
 		runPower:       defaultRunPower,
+		runSelfUpdate:  defaultRunSelfUpdate,
 		runDNSZones:    defaultRunDNSZones,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
@@ -351,6 +353,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/packages/refresh", a.authz(permPackages, a.apiPkgRefresh))
 	mux.HandleFunc("POST /api/packages/upgrade/{key}", a.authz(permPackages, a.apiPkgUpgrade))
 	mux.HandleFunc("POST /api/packages/unattended", a.authz(permPackages, a.apiPkgUnattended))
+	mux.HandleFunc("GET /api/selfupdate", a.authz(permServiceCheck, a.apiSelfUpdateStatus))
+	mux.HandleFunc("POST /api/selfupdate/apply", a.authz(permPackages, a.serialized(a.apiSelfUpdateApply)))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
 	mux.HandleFunc("GET /api/events", a.auth(a.apiEvents))
 	mux.HandleFunc("GET /api/mail", a.auth(a.apiMailGet))

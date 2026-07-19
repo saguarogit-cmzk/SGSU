@@ -672,6 +672,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-svc" /usr/sbin/saguaro-svc
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-power" /usr/sbin/saguaro-power
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-pkg" /usr/sbin/saguaro-pkg
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-selfupdate" /usr/sbin/saguaro-selfupdate
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-logs" /usr/sbin/saguaro-logs
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-tools" /usr/sbin/saguaro-tools
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-webproxy" /usr/sbin/saguaro-webproxy

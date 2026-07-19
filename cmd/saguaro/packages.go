@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"saguaro.local/network-manager/internal/pkgstat"
@@ -50,6 +52,63 @@ var packageNames = func() map[string]string {
 func defaultRunPkg(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"-n", "/usr/sbin/saguaro-pkg"}, args...)
 	return exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
+}
+
+func defaultRunSelfUpdate(ctx context.Context, args ...string) ([]byte, error) {
+	full := append([]string{"-n", "/usr/sbin/saguaro-selfupdate"}, args...)
+	return exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
+}
+
+// apiSelfUpdateStatus reports the control plane's own version and, for a git
+// source install, how far behind the git remote it is.
+func (a *app) apiSelfUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	res := map[string]any{"version": appVersion, "gitRepo": false}
+	out, err := a.runSelfUpdate(ctx, "check")
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			k, v, ok := strings.Cut(strings.TrimSpace(line), " ")
+			if !ok {
+				continue
+			}
+			switch k {
+			case "gitrepo":
+				res["gitRepo"] = v == "yes"
+			case "current":
+				res["current"] = v
+			case "remote":
+				res["remote"] = v
+			case "behind":
+				if n, e := strconv.Atoi(v); e == nil {
+					res["behind"] = n
+				}
+			case "buildable":
+				res["buildable"] = v == "yes"
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// apiSelfUpdateApply rebuilds and redeploys the control plane from git, then the
+// service restarts out-of-band. Admin-only; audited as a security event before
+// the adapter runs because the restart may cut the response short.
+func (a *app) apiSelfUpdateApply(w http.ResponseWriter, r *http.Request) {
+	extendDeadline(w, 6*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	a.recordSev(r, a.actor(r), "self-update", "control-plane", "started", "security", nil)
+	out, err := a.runSelfUpdate(ctx, "apply")
+	if err != nil {
+		a.recordSev(r, a.actor(r), "self-update", "control-plane", "failed", "security",
+			map[string]any{"output": truncate(string(out), 400)})
+		writeError(w, http.StatusBadGateway, "update failed: "+truncate(string(out), 400))
+		return
+	}
+	a.recordSev(r, a.actor(r), "self-update", "control-plane", "success", "security",
+		map[string]any{"output": truncate(string(out), 200)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": truncate(string(out), 200)})
 }
 
 // extendDeadline lifts the 30 s server WriteTimeout for a single slow handler so

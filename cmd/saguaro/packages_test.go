@@ -87,6 +87,45 @@ func TestPackageUnattendedToggle(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateStatus(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	a.runSelfUpdate = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "check" {
+			return []byte("gitrepo yes\ncurrent abc1234\nremote def5678\nbehind 3\nbuildable yes\n"), nil
+		}
+		return nil, nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	resp, _ := c.Get(srv.URL + "/api/selfupdate")
+	var st struct {
+		Version         string
+		GitRepo         bool
+		Current, Remote string
+		Behind          int
+		Buildable       bool
+	}
+	json.NewDecoder(resp.Body).Decode(&st)
+	resp.Body.Close()
+	if !st.GitRepo || st.Current != "abc1234" || st.Behind != 3 || !st.Buildable || st.Version == "" {
+		t.Fatalf("self-update status wrong: %+v", st)
+	}
+}
+
+func TestSelfUpdateApplyRequiresAdmin(t *testing.T) {
+	srv, admin, a := newTestServer(t)
+	a.runSelfUpdate = func(_ context.Context, _ ...string) ([]byte, error) { return []byte("ok"), nil }
+	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("admin login: %d", r.StatusCode)
+	}
+	createUser(t, srv, admin, a, "netsu", roleNetworkOperator)
+	netop := loginAs(t, srv, "netsu", operatorPassword)
+	if r := reqJSON(t, srv, netop, http.MethodPost, "/api/selfupdate/apply", `{}`); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("network-operator self-update: got %d, want 403", r.StatusCode)
+	}
+}
+
 func TestPackagesRequireAdmin(t *testing.T) {
 	srv, admin, a := newTestServer(t)
 	a.runPkg = func(_ context.Context, _ ...string) ([]byte, error) { return []byte("ok"), nil }
