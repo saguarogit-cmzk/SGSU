@@ -1,0 +1,43 @@
+#!/bin/sh
+# saguaro-dns — root adapter for per-zone resolver access. Installs an Unbound
+# drop-in that grants firewall zones access to the resolver and reloads Unbound.
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   zone-access-apply   validate the staged drop-in, install it and reload
+#                       Unbound; on a failed check nothing is left behind
+#   zone-access-disable remove the drop-in and reload Unbound
+set -eu
+
+STAGED_CONF=/var/lib/saguaro/staged-dns-zones.conf
+CONF=/etc/unbound/unbound.conf.d/saguaro-zones.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  zone-access-apply)
+    [ -s "$STAGED_CONF" ] || { echo "no staged DNS zones drop-in at $STAGED_CONF" >&2; exit 1; }
+    # The control plane validates every value; keep the file to a safe charset.
+    if grep -qvE '^[A-Za-z0-9 ._:/#-]*$' "$STAGED_CONF"; then
+      echo "staged DNS zones drop-in contains unexpected characters; refusing" >&2
+      exit 1
+    fi
+    install -m 0644 -o root -g root "$STAGED_CONF" "$CONF"
+    rm -f "$STAGED_CONF"
+    if ! unbound-checkconf >/dev/null 2>&1; then
+      rm -f "$CONF"
+      echo "unbound-checkconf rejected the zone access configuration; change reverted" >&2
+      exit 1
+    fi
+    systemctl reload unbound || systemctl restart unbound
+    logger -t saguaro-dns "per-zone resolver access applied"
+    ;;
+  zone-access-disable)
+    rm -f "$CONF"
+    systemctl reload unbound || systemctl restart unbound
+    logger -t saguaro-dns "per-zone resolver access disabled"
+    ;;
+  *)
+    echo "usage: saguaro-dns zone-access-apply|zone-access-disable" >&2
+    exit 2
+    ;;
+esac

@@ -8,6 +8,7 @@ packaging/deb/* text eol=lf
 scripts/saguaro-firewall text eol=lf
 scripts/saguaro-ids text eol=lf
 scripts/saguaro-rpz text eol=lf
+scripts/saguaro-dns text eol=lf
 scripts/saguaro-proxy text eol=lf
 scripts/saguaro-cert text eol=lf
 scripts/saguaro-vpn text eol=lf

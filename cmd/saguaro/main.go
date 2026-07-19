@@ -131,6 +131,7 @@ type app struct {
 	runTools       func(ctx context.Context, args ...string) ([]byte, error)
 	runPkg         func(ctx context.Context, args ...string) ([]byte, error)
 	runPower       func(ctx context.Context, action string) ([]byte, error)
+	runDNSZones    func(ctx context.Context, action string) ([]byte, error)
 	runNet         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces func(ctx context.Context) ([]nicInfo, error)
 	hwMemMB        int
@@ -157,7 +158,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.53.0"
+const appVersion = "0.54.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -272,6 +273,7 @@ func main() {
 		runTools:       defaultRunTools,
 		runPkg:         defaultRunPkg,
 		runPower:       defaultRunPower,
+		runDNSZones:    defaultRunDNSZones,
 		runNet:         defaultRunNet,
 		readInterfaces: defaultReadInterfaces,
 		hwMemMB:        readMemTotalMB(),
@@ -385,6 +387,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PUT /api/firewall/rules", a.authz(permFirewall, a.serialized(a.apiFirewallRulesPut)))
 	mux.HandleFunc("PUT /api/firewall/zones", a.authz(permFirewall, a.serialized(a.apiFirewallZonesPut)))
 	mux.HandleFunc("POST /api/firewall/zones/apply-vlans", a.authz(permFirewall, a.serialized(a.apiFirewallVLANsApply)))
+	mux.HandleFunc("POST /api/firewall/zones/apply-dns", a.authz(permFirewall, a.serialized(a.apiFirewallDNSApply)))
 	mux.HandleFunc("POST /api/firewall/apply", a.authz(permFirewall, a.serialized(a.apiFirewallApply)))
 	mux.HandleFunc("POST /api/firewall/test", a.auth(a.apiFirewallTest))
 	mux.HandleFunc("GET /api/metrics", a.auth(a.apiMetrics))

@@ -78,6 +78,38 @@ func TestFirewallZones(t *testing.T) {
 	}
 }
 
+func TestFirewallDNSApply(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var actions []string
+	a.runDNSZones = func(_ context.Context, action string) ([]byte, error) {
+		actions = append(actions, action)
+		return []byte("ok"), nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// With no internal zones the drop-in is removed (disable).
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-dns", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("dns apply (empty): got %d", r.StatusCode)
+	}
+	// Define internal zones, then apply grants them resolver access.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/zones",
+		`{"zones":[{"name":"dmz","kind":"dmz","interface":"enp3","network":"10.20.0.0/24"},{"name":"guest","kind":"guest","interface":"enp4","network":"10.30.0.0/24"}]}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("put zones: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-dns", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("dns apply: got %d", r.StatusCode)
+	}
+	staged, err := os.ReadFile(filepath.Join(filepath.Dir(a.store.path), stagedDNSZonesName))
+	if err != nil || !strings.Contains(string(staged), "access-control: 10.20.0.0/24 allow") ||
+		!strings.Contains(string(staged), "access-control: 10.30.0.0/24 allow") {
+		t.Fatalf("staged DNS drop-in wrong: %v %s", err, staged)
+	}
+	if len(actions) != 2 || actions[0] != "zone-access-disable" || actions[1] != "zone-access-apply" {
+		t.Fatalf("adapter sequence wrong: %v", actions)
+	}
+}
+
 func TestFirewallVLANApply(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string

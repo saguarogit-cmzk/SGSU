@@ -659,6 +659,7 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-firewall" /usr/sbin/saguaro-firewall
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ids" /usr/sbin/saguaro-ids
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-rpz" /usr/sbin/saguaro-rpz
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-dns" /usr/sbin/saguaro-dns
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-proxy" /usr/sbin/saguaro-proxy
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-cert" /usr/sbin/saguaro-cert
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-vpn" /usr/sbin/saguaro-vpn

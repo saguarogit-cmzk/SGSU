@@ -66,6 +66,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-backup.sh"                "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-firewall"                 "$STAGE/usr/sbin/saguaro-firewall"
 install -D -m 0755 "$ROOT/scripts/saguaro-ids"                      "$STAGE/usr/sbin/saguaro-ids"
 install -D -m 0755 "$ROOT/scripts/saguaro-rpz"                      "$STAGE/usr/sbin/saguaro-rpz"
+install -D -m 0755 "$ROOT/scripts/saguaro-dns"                      "$STAGE/usr/sbin/saguaro-dns"
 install -D -m 0755 "$ROOT/scripts/saguaro-proxy"                    "$STAGE/usr/sbin/saguaro-proxy"
 install -D -m 0755 "$ROOT/scripts/saguaro-cert"                     "$STAGE/usr/sbin/saguaro-cert"
 install -D -m 0755 "$ROOT/scripts/saguaro-vpn"                      "$STAGE/usr/sbin/saguaro-vpn"
