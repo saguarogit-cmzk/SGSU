@@ -29,14 +29,22 @@ func TestSIEMForwardUDP(t *testing.T) {
 	if r := reqJSON(t, srv, c, http.MethodPost, "/api/siem/test", `{}`); r.StatusCode != http.StatusOK {
 		t.Fatalf("siem test: got %d", r.StatusCode)
 	}
+	// The PUT itself records a forwarded "siem-config" event, so read datagrams
+	// until the test probe arrives (proving the whole pipeline transmits).
 	buf := make([]byte, 4096)
 	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
-	n, _, err := pc.ReadFrom(buf)
-	if err != nil {
-		t.Fatalf("no datagram received: %v", err)
+	seen := false
+	for i := 0; i < 5 && !seen; i++ {
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			break
+		}
+		if strings.Contains(string(buf[:n]), "siem-test") {
+			seen = true
+		}
 	}
-	if got := string(buf[:n]); !strings.Contains(got, "siem-test") {
-		t.Fatalf("unexpected line: %s", got)
+	if !seen {
+		t.Fatal("did not receive the siem-test probe datagram")
 	}
 }
 
