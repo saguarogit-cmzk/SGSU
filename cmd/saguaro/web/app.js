@@ -90,6 +90,7 @@ ${help('Odaberi kako WAN (prema internetu) dobiva adresu. <b>Dinamička (DHCP)</
 <label>IP adresa (CIDR) <input id="wanAddr" value="${escapeHtml(wanCfg.address||'')}" placeholder="203.0.113.5/24"></label>
 <label>Gateway <input id="wanGw" value="${escapeHtml(wanCfg.gateway||'')}" placeholder="203.0.113.1"></label>
 <label>DNS serveri (zarezom) <input id="wanDns" value="${escapeHtml((wanCfg.dns||[]).join(', '))}" placeholder="1.1.1.1, 8.8.8.8"></label>
+<label>Dodatne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" value="${escapeHtml((wanCfg.aliases||[]).join(', '))}" placeholder="203.0.113.6/24, 203.0.113.7/24"></label>
 </div>
 <div><button type="submit">Primijeni WAN</button></div>
 <div id="wanMsg" class="muted"></div></form></div>`;
@@ -115,7 +116,7 @@ const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gw
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
 $('#wanForm').onsubmit=async e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;
-const body={interface:$('#wanIf').value.trim(),mode,address:$('#wanAddr').value.trim(),gateway:$('#wanGw').value.trim(),dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean)};
+const body={interface:$('#wanIf').value.trim(),mode,address:$('#wanAddr').value.trim(),gateway:$('#wanGw').value.trim(),dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean),aliases:$('#wanAliases').value.split(',').map(x=>x.trim()).filter(Boolean)};
 if(mode==='static'){if(!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(body.address)){m.textContent='IP adresa mora biti CIDR (npr. 203.0.113.5/24).';return}if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(body.gateway)){m.textContent='Gateway mora biti IPv4 adresa.';return}}
 if(!confirm('Primijeniti WAN adresu? Mijenja se netplan i mrežni uplink.'))return;
 m.textContent='Primjena…';try{await api('/api/wan/apply',{method:'POST',body:JSON.stringify(body)});m.textContent='WAN primijenjen.'}catch(err){m.textContent=err.message}};
@@ -166,7 +167,7 @@ async function multiwanPage(){const m=await api('/api/multiwan');let nics=[];try
 const rows=(m.uplinks||[]).map((u,i)=>`<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.interface)}</td><td>${escapeHtml(u.gateway)}</td><td>${u.weight}</td><td>${escapeHtml(u.healthCheck||'—')}</td><td><button class="wanDel" data-i="${i}">Ukloni</button></td></tr>`).join('');
 $('#content').innerHTML=`<div class="panel"><h2>Multi-WAN ${m.enabled?'<span class="badge">aktivan</span>':''}</h2><table><thead><tr><th>Naziv</th><th>Interface</th><th>Gateway</th><th>Težina</th><th>Health-check</th><th></th></tr></thead><tbody>${rows}</tbody></table>
 <div class="wizRow"><button id="wanAdd">Dodaj WAN</button> ${(m.uplinks||[]).length>=2?`<button id="wanApply">${m.enabled?'Ponovno primijeni':'Uključi failover'}</button> <button id="wanOff" class="ghost">Isključi</button>`:''}</div>
-<p class="muted">Zahtijeva Gateway mod (W8). Ponderirani multipath default route; failover check svakih ~20 s uklanja/vraća nexthop po ping health-checku. Preporuka: simulirajte ispad prije produkcijske aktivacije.</p><div id="wanMsg" class="muted"></div></div>`;
+<p class="muted">Zahtijeva Gateway mod (W8). Ponderirani multipath default route; failover check svakih ~20 s uklanja/vraća nexthop po ping health-checku. Uz to se postavlja <b>PBR</b>: po svakom uplinku zasebna routing tablica + <code>ip rule</code> (izvor + fwmark) i nft connmark oznaka, da odgovori izlaze istim WAN-om (bez asimetrije). Nakon promjene uplinka <b>ponovno primijeni firewall</b> (za nft mangle lanac). Preporuka: simulirajte ispad prije produkcije.</p><div id="wanMsg" class="muted"></div></div>`;
 const save=async(cfg)=>api('/api/multiwan/apply',{method:'POST',body:JSON.stringify(cfg)});
 $('#wanAdd').onclick=()=>{const opt=nics.map(n=>n.name).join(', ');const iface=prompt('Interface'+(opt?` (${opt})`:'')+':');if(!iface)return;const gw=prompt('Gateway IP:');if(!gw)return;const name=prompt('Naziv veze:',iface)||iface;const weight=parseInt(prompt('Težina (1-256):','1'),10)||1;const hc=prompt('Health-check IP (prazno = bez):','1.1.1.1')||'';const up=(m.uplinks||[]).concat([{name:name.trim(),interface:iface.trim(),gateway:gw.trim(),weight,healthCheck:hc.trim()}]);save({enabled:m.enabled,uplinks:up}).then(()=>multiwanPage()).catch(e=>$('#wanMsg').textContent=e.message)};
 document.querySelectorAll('.wanDel').forEach(el=>el.onclick=()=>{const up=(m.uplinks||[]).filter((_,j)=>j!==parseInt(el.dataset.i,10));save({enabled:up.length>=2&&m.enabled,uplinks:up}).then(()=>multiwanPage()).catch(e=>alert(e.message))});

@@ -42,6 +42,34 @@ func TestGenerateObjects(t *testing.T) {
 	}
 }
 
+func TestPBRMangle(t *testing.T) {
+	c := Config{
+		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2",
+		PBRUplinks: []PBRUplink{{Interface: "enp1", Mark: 1}, {Interface: "enp3", Mark: 2}},
+	}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"chain mangle_pre {",
+		"type filter hook prerouting priority mangle;",
+		`iifname "enp1" ct state new ct mark set 0x1`,
+		`iifname "enp3" ct state new ct mark set 0x2`,
+		"ct mark != 0x0 meta mark set ct mark",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("PBR mangle missing %q:\n%s", w, out)
+		}
+	}
+	bad := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		PBRUplinks: []PBRUplink{{Interface: "enp1", Mark: 0}}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected invalid PBR mark error")
+	}
+}
+
 func TestRuleCategory(t *testing.T) {
 	c := Config{
 		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",

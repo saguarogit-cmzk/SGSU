@@ -18,6 +18,9 @@ type WAN struct {
 	Address   string   `json:"address"`
 	Gateway   string   `json:"gateway"`
 	DNS       []string `json:"dns"`
+	// Aliases are extra IPv4 addresses (CIDR) bound to the same WAN interface
+	// (e.g. an ISP-provided /29 block) for 1:1 NAT / per-address SNAT.
+	Aliases []string `json:"aliases"`
 }
 
 func validIP4(s string) bool {
@@ -49,6 +52,11 @@ func (w WAN) Validate() error {
 				return fmt.Errorf("invalid DNS server %q", d)
 			}
 		}
+		for _, a := range w.Aliases {
+			if !validCIDR4(a) {
+				return fmt.Errorf("WAN alias %q must be an IPv4 CIDR", a)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("WAN mode must be dhcp or static")
@@ -69,7 +77,11 @@ func (w WAN) GenerateNetplan() (string, error) {
 		return b.String(), nil
 	}
 	b.WriteString("      dhcp4: false\n")
-	fmt.Fprintf(&b, "      addresses:\n        - %s\n", strings.TrimSpace(w.Address))
+	b.WriteString("      addresses:\n")
+	fmt.Fprintf(&b, "        - %s\n", strings.TrimSpace(w.Address))
+	for _, a := range w.Aliases {
+		fmt.Fprintf(&b, "        - %s\n", strings.TrimSpace(a))
+	}
 	b.WriteString("      routes:\n        - to: default\n")
 	fmt.Fprintf(&b, "          via: %s\n", strings.TrimSpace(w.Gateway))
 	if len(w.DNS) > 0 {

@@ -45,3 +45,21 @@ func TestGenerateNetplan(t *testing.T) {
 		}
 	}
 }
+
+func TestNetplanAliases(t *testing.T) {
+	w := WAN{Interface: "enp1s0", Mode: "static", Address: "203.0.113.5/24", Gateway: "203.0.113.1",
+		Aliases: []string{"203.0.113.6/24", "203.0.113.7/24"}}
+	out, err := w.GenerateNetplan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{"- 203.0.113.5/24", "- 203.0.113.6/24", "- 203.0.113.7/24"} {
+		if !strings.Contains(out, a) {
+			t.Errorf("alias %q missing:\n%s", a, out)
+		}
+	}
+	bad := WAN{Interface: "enp1s0", Mode: "static", Address: "203.0.113.5/24", Gateway: "203.0.113.1", Aliases: []string{"nope"}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected invalid alias error")
+	}
+}

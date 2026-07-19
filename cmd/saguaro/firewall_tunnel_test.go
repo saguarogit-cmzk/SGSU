@@ -9,9 +9,43 @@ import (
 	"testing"
 
 	"saguaro.local/network-manager/internal/adapters/ipsec"
+	"saguaro.local/network-manager/internal/adapters/multiwan"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/s2s"
 )
+
+func TestFirewallIncludesPBR(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	a.runFirewall = func(context.Context, string) ([]byte, error) { return []byte("ok"), nil }
+	if err := a.setGateway(nftgen.Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.setWAN(multiwan.Config{Enabled: true, Uplinks: []multiwan.Uplink{
+		{Name: "wan1", Interface: "enp1", Gateway: "192.0.2.1", Weight: 1},
+		{Name: "wan2", Interface: "enp3", Gateway: "198.51.100.1", Weight: 1},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if pbr := a.pbrUplinks(); len(pbr) != 2 || pbr[1].Mark != 2 || pbr[1].Interface != "enp3" {
+		t.Fatalf("pbr uplinks wrong: %+v", pbr)
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/apply", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("apply: got %d", r.StatusCode)
+	}
+	staged, err := os.ReadFile(filepath.Join(filepath.Dir(a.store.path), stagedRulesetName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"chain mangle_pre {", `iifname "enp1" ct state new ct mark set 0x1`, `iifname "enp3" ct state new ct mark set 0x2`} {
+		if !strings.Contains(string(staged), want) {
+			t.Fatalf("ruleset missing PBR %q:\n%s", want, staged)
+		}
+	}
+}
 
 func TestFirewallIncludesTunnelRules(t *testing.T) {
 	srv, c, a := newTestServer(t)

@@ -75,12 +75,22 @@ type Config struct {
 	// (WireGuard site-to-site and IPsec) so the forward chain lets that traffic
 	// through the gateway policy. Populated at generate time, not user-edited.
 	TunnelNets []TunnelNet `json:"-"`
+	// PBRUplinks marks connections per WAN for Dual-WAN policy routing.
+	PBRUplinks []PBRUplink `json:"-"`
 }
 
 // TunnelNet is one tunnel's local and remote subnets.
 type TunnelNet struct {
 	Local  []string
 	Remote []string
+}
+
+// PBRUplink marks new connections arriving on a WAN interface with a conntrack
+// mark so replies are routed back out the same uplink (Dual-WAN policy routing,
+// paired with `ip rule fwmark` tables set up by the root adapter).
+type PBRUplink struct {
+	Interface string
+	Mark      int
 }
 
 func validAliasValue(typ, v string) bool {
@@ -252,6 +262,14 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	for _, p := range c.PBRUplinks {
+		if !validIface(p.Interface) {
+			return fmt.Errorf("PBR uplink has an invalid interface %q", p.Interface)
+		}
+		if p.Mark < 1 || p.Mark > 255 {
+			return fmt.Errorf("PBR uplink %q mark out of range", p.Interface)
+		}
+	}
 	if !c.GatewayEnabled {
 		return nil
 	}
@@ -361,6 +379,18 @@ func (c Config) Generate() (string, error) {
 		b.WriteString("    counter log prefix \"SNA-FWD-DROP \" drop\n")
 	}
 	b.WriteString("  }\n")
+	// Dual-WAN policy routing: mark new connections with the uplink they arrive
+	// on, and restore the mark on established connections so `ip rule fwmark`
+	// routes replies back out the same WAN.
+	if len(c.PBRUplinks) > 0 {
+		b.WriteString("  chain mangle_pre {\n")
+		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
+		for _, p := range c.PBRUplinks {
+			fmt.Fprintf(&b, "    iifname %q ct state new ct mark set 0x%x\n", p.Interface, p.Mark)
+		}
+		b.WriteString("    ct mark != 0x0 meta mark set ct mark\n")
+		b.WriteString("  }\n")
+	}
 	b.WriteString("}\n")
 	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0) {
 		b.WriteString("\ntable ip saguaro-nat {\n")

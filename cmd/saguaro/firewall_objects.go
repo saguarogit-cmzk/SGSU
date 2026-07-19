@@ -36,11 +36,25 @@ func (a *app) tunnelNets() []nftgen.TunnelNet {
 	return out
 }
 
+// pbrUplinks derives the per-WAN conntrack marks for Dual-WAN policy routing
+// from the enabled Multi-WAN uplinks (mark = uplink index + 1).
+func (a *app) pbrUplinks() []nftgen.PBRUplink {
+	var out []nftgen.PBRUplink
+	if w := a.getWAN(); w.Enabled {
+		for i, u := range w.Uplinks {
+			out = append(out, nftgen.PBRUplink{Interface: u.Interface, Mark: i + 1})
+		}
+	}
+	return out
+}
+
 // firewallConfig returns the stored firewall config augmented with the active
-// tunnel subnets so the generated forward chain lets tunnel traffic through.
+// tunnel subnets and Dual-WAN PBR marks so the generated ruleset lets tunnel
+// traffic through and marks connections per uplink.
 func (a *app) firewallConfig() (nftgen.Config, bool) {
 	cfg, ok := a.getGateway()
 	cfg.TunnelNets = a.tunnelNets()
+	cfg.PBRUplinks = a.pbrUplinks()
 	return cfg, ok
 }
 
