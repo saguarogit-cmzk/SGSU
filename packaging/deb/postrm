@@ -2,7 +2,10 @@
 set -e
 
 if [ -d /run/systemd/system ]; then
+  # Units were stopped/disabled in prerm; reload so systemd forgets the now-removed
+  # unit files and clears any leftover state.
   systemctl daemon-reload || true
+  systemctl reset-failed 2>/dev/null || true
 fi
 
 # Per the SNA specification, removing a module never deletes its configuration:

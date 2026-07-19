@@ -1,8 +1,19 @@
 #!/bin/sh
 set -e
 
+# All systemd units shipped by the package. Stop AND disable them on remove so
+# no unit keeps running after its binary is gone and no enable-symlinks are left
+# dangling in */.wants/. Disabling happens here (in prerm) while the unit files
+# still exist on disk; dpkg removes them before postrm runs.
+UNITS="saguaro.service saguaro-eventd.service \
+saguaro-backup.timer saguaro-backup.service \
+saguaro-cert-renew.timer saguaro-cert-renew.service \
+saguaro-wan-check.timer saguaro-wan-check.service \
+saguaro-routes.service"
+
 if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
-  systemctl stop saguaro.service saguaro-backup.timer 2>/dev/null || true
+  systemctl stop $UNITS 2>/dev/null || true
+  systemctl disable $UNITS 2>/dev/null || true
 fi
 
 exit 0

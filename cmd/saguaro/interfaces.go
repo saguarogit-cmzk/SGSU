@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -62,7 +64,10 @@ func (a *app) apiInterfaceLabel(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Label string `json:"label"`
 	}
-	_ = decodeJSONOptional(r, &in)
+	if err := decodeJSONOptional(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
 	in.Label = strings.TrimSpace(in.Label)
 	if !nicLabelRe.MatchString(in.Label) {
 		writeError(w, http.StatusBadRequest, "label may be up to 24 chars (letters, digits, space . _ -)")
@@ -189,7 +194,10 @@ func (a *app) apiInterfaceIdentify(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Seconds int `json:"seconds"`
 	}
-	_ = decodeJSONOptional(r, &in)
+	if err := decodeJSONOptional(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
 	secs := in.Seconds
 	if secs < 1 || secs > 30 {
 		secs = 10
@@ -204,12 +212,18 @@ func (a *app) apiInterfaceIdentify(w http.ResponseWriter, r *http.Request) {
 }
 
 // decodeJSONOptional decodes a body if present; an empty body is not an error.
-func decodeJSONOptional(r *http.Request, dst any) error {
+// The body is capped at 1 MiB (like decodeJSON) and a malformed non-empty body
+// is a real error the caller must reject, rather than being silently treated as
+// an empty object (which would apply zero values).
+func decodeJSONOptional(w http.ResponseWriter, r *http.Request, dst any) error {
 	if r.Body == nil {
 		return nil
 	}
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		return err
 	}
 	return nil

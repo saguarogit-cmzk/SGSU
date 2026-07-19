@@ -156,7 +156,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.49.0"
+const appVersion = "0.50.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -666,6 +666,10 @@ func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current, _ := r.Context().Value(ctxKeySession{}).(string)
+	// Only an admin (permSessions) may see everyone's sessions; anyone else sees
+	// only their own, so session IDs/IPs of other users are not disclosed.
+	me, _ := currentUser(r)
+	seeAll := roleAllows(me.Role, permSessions)
 	type view struct {
 		ID        string    `json:"id"`
 		Username  string    `json:"username"`
@@ -676,6 +680,9 @@ func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]view, 0, len(recs))
 	for _, rec := range recs {
+		if !seeAll && rec.Username != me.Username {
+			continue
+		}
 		out = append(out, view{ID: rec.ID, Username: rec.Username, CreatedAt: rec.CreatedAt, ExpiresAt: rec.ExpiresAt, RemoteIP: rec.RemoteIP, Current: rec.TokenHash == current})
 	}
 	writeJSON(w, http.StatusOK, out)
