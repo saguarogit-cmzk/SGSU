@@ -42,6 +42,41 @@ func TestGenerateObjects(t *testing.T) {
 	}
 }
 
+func TestGenerateTunnels(t *testing.T) {
+	c := Config{
+		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
+		TunnelNets: []TunnelNet{{Local: []string{"192.168.10.0/24"}, Remote: []string{"192.168.20.0/24", "10.50.0.0/16"}}},
+	}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`ip saddr 192.168.10.0/24 ip daddr { 192.168.20.0/24, 10.50.0.0/16 } counter accept comment "tunnel"`,
+		`ip saddr { 192.168.20.0/24, 10.50.0.0/16 } ip daddr 192.168.10.0/24 counter accept comment "tunnel"`,
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing tunnel rule %q:\n%s", w, out)
+		}
+	}
+	// Tunnels alone (no gateway) still activate the forward chain.
+	router := Config{TunnelNets: []TunnelNet{{Local: []string{"192.168.10.0/24"}, Remote: []string{"192.168.20.0/24"}}}}
+	rout, err := router.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rout, `ip saddr 192.168.10.0/24 ip daddr 192.168.20.0/24 counter accept`) {
+		t.Errorf("tunnel rule missing without gateway:\n%s", rout)
+	}
+	// invalid tunnel CIDR is rejected
+	bad := Config{TunnelNets: []TunnelNet{{Local: []string{"nope"}, Remote: []string{"10.0.0.0/8"}}}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected invalid tunnel CIDR error")
+	}
+}
+
 func TestValidateObjectsErrors(t *testing.T) {
 	bad := []Config{
 		{Aliases: []Alias{{Name: "1bad", Type: "host", Values: []string{"1.2.3.4"}}}},     // name starts with digit

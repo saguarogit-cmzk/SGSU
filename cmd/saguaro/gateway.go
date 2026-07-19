@@ -133,7 +133,7 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) apiGatewayPreview(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := a.getGateway()
+	cfg, ok := a.firewallConfig()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "gateway is not configured yet")
 		return
@@ -149,7 +149,7 @@ func (a *app) apiGatewayPreview(w http.ResponseWriter, r *http.Request) {
 // apiGatewayApply stages the generated ruleset and calls the root adapter,
 // which loads it with a 120 s confirm-or-rollback window.
 func (a *app) apiGatewayApply(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := a.getGateway()
+	cfg, ok := a.firewallConfig()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "gateway is not configured yet")
 		return

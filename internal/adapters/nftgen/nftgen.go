@@ -63,6 +63,17 @@ type Config struct {
 	// that reference them. Both are edited in the Firewall objects/rules pages.
 	Aliases []Alias `json:"aliases,omitempty"`
 	Rules   []Rule  `json:"rules,omitempty"`
+
+	// TunnelNets carries the local/remote subnet pairs of active VPN tunnels
+	// (WireGuard site-to-site and IPsec) so the forward chain lets that traffic
+	// through the gateway policy. Populated at generate time, not user-edited.
+	TunnelNets []TunnelNet `json:"-"`
+}
+
+// TunnelNet is one tunnel's local and remote subnets.
+type TunnelNet struct {
+	Local  []string
+	Remote []string
 }
 
 func validAliasValue(typ, v string) bool {
@@ -163,6 +174,18 @@ func aliasSetType(a Alias) string {
 	return fmt.Sprintf("%s elements = { %s }", body, strings.Join(elems, ", "))
 }
 
+// nftSet renders one CIDR bare, or several as an anonymous nft set { a, b }.
+func nftSet(cidrs []string) string {
+	if len(cidrs) == 1 {
+		return strings.TrimSpace(cidrs[0])
+	}
+	parts := make([]string, len(cidrs))
+	for i, c := range cidrs {
+		parts[i] = strings.TrimSpace(c)
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
+}
+
 // ruleMatch renders the match+verdict for a custom rule (without indentation).
 func ruleMatch(r Rule) string {
 	var parts []string
@@ -211,6 +234,13 @@ func (c Config) Validate() error {
 	}
 	if err := c.validateObjects(); err != nil {
 		return err
+	}
+	for _, tn := range c.TunnelNets {
+		for _, s := range append(append([]string{}, tn.Local...), tn.Remote...) {
+			if !validCIDR4(strings.TrimSpace(s)) {
+				return fmt.Errorf("tunnel subnet %q is not an IPv4 CIDR", s)
+			}
+		}
 	}
 	if !c.GatewayEnabled {
 		return nil
@@ -280,7 +310,8 @@ func (c Config) Generate() (string, error) {
 			break
 		}
 	}
-	if c.GatewayEnabled || hasRules {
+	forwardActive := c.GatewayEnabled || hasRules || len(c.TunnelNets) > 0
+	if forwardActive {
 		b.WriteString("    ct state established,related accept\n")
 		b.WriteString("    ct state invalid drop\n")
 	}
@@ -288,12 +319,22 @@ func (c Config) Generate() (string, error) {
 		b.WriteString("    ct state new queue num 0 bypass\n")
 	}
 	// Custom rules first, so an explicit drop/reject wins over the blanket
-	// LAN→WAN accept that follows in gateway mode.
+	// LAN→WAN accept and tunnel accepts that follow.
 	for _, r := range c.Rules {
 		if !r.Enabled {
 			continue
 		}
 		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r), r.Name)
+	}
+	// VPN tunnel traffic (WireGuard site-to-site, IPsec): allow the configured
+	// local↔remote subnets through the forward policy in both directions.
+	for _, tn := range c.TunnelNets {
+		if len(tn.Local) == 0 || len(tn.Remote) == 0 {
+			continue
+		}
+		local, remote := nftSet(tn.Local), nftSet(tn.Remote)
+		fmt.Fprintf(&b, "    ip saddr %s ip daddr %s counter accept comment \"tunnel\"\n", local, remote)
+		fmt.Fprintf(&b, "    ip saddr %s ip daddr %s counter accept comment \"tunnel\"\n", remote, local)
 	}
 	if c.GatewayEnabled {
 		fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", c.LANInterface, c.WANInterface)
@@ -302,7 +343,7 @@ func (c Config) Generate() (string, error) {
 				c.WANInterface, pf.DestIP, pf.Proto, pf.DestPort)
 		}
 	}
-	if c.GatewayEnabled || hasRules {
+	if forwardActive {
 		b.WriteString("    counter log prefix \"SNA-FWD-DROP \" drop\n")
 	}
 	b.WriteString("  }\n")

@@ -13,6 +13,37 @@ import (
 // ruleset. These handlers edit just the Aliases/Rules fields; applying them
 // regenerates the whole ruleset through the same 120 s confirm/rollback path.
 
+// tunnelNets collects the local/remote subnet pairs of active VPN tunnels
+// (WireGuard site-to-site and IPsec) for the forward-chain accept rules.
+func (a *app) tunnelNets() []nftgen.TunnelNet {
+	var out []nftgen.TunnelNet
+	if s := a.getS2S(); s.Enabled {
+		for _, site := range s.Sites {
+			if len(s.LocalNetworks) == 0 || len(site.RemoteNetworks) == 0 {
+				continue
+			}
+			out = append(out, nftgen.TunnelNet{Local: s.LocalNetworks, Remote: site.RemoteNetworks})
+		}
+	}
+	if ip := a.getIPsec(); ip.Enabled {
+		for _, conn := range ip.Connections {
+			if len(conn.LocalSubnets) == 0 || len(conn.RemoteSubnets) == 0 {
+				continue
+			}
+			out = append(out, nftgen.TunnelNet{Local: conn.LocalSubnets, Remote: conn.RemoteSubnets})
+		}
+	}
+	return out
+}
+
+// firewallConfig returns the stored firewall config augmented with the active
+// tunnel subnets so the generated forward chain lets tunnel traffic through.
+func (a *app) firewallConfig() (nftgen.Config, bool) {
+	cfg, ok := a.getGateway()
+	cfg.TunnelNets = a.tunnelNets()
+	return cfg, ok
+}
+
 func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {
 	cfg, ok := a.getGateway()
 	aliases := cfg.Aliases
@@ -75,7 +106,7 @@ func (a *app) apiFirewallRulesPut(w http.ResponseWriter, r *http.Request) {
 // apiFirewallApply regenerates the full ruleset (base + aliases + rules) and
 // applies it with the confirm-or-rollback window, like the gateway apply.
 func (a *app) apiFirewallApply(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := a.getGateway()
+	cfg, ok := a.firewallConfig()
 	if !ok || cfg.AdminNetwork == "" {
 		writeError(w, http.StatusConflict, "configure the Gateway (management/client networks) before applying firewall rules")
 		return
