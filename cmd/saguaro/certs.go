@@ -26,11 +26,13 @@ type certRecord struct {
 	Name     string    `json:"name"`
 	SANs     []string  `json:"sans"`
 	IssuedAt time.Time `json:"issuedAt"`
+	Public   bool      `json:"public,omitempty"` // Let's Encrypt (vs internal step-ca)
 }
 
 var (
 	certNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 	sanHostRe  = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
+	emailRe    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 )
 
 // validateSAN accepts hostnames (wildcard allowed), single-label internal
@@ -112,9 +114,11 @@ func (a *app) apiCertsList(w http.ResponseWriter, _ *http.Request) {
 // policy already forbids public certificates for private names.
 func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Type      string   `json:"type"` // internal (public: planned)
+		Type      string   `json:"type"` // internal | public
 		Name      string   `json:"name"`
 		SANs      []string `json:"sans"`
+		Domain    string   `json:"domain"` // public: the FQDN to certify
+		Email     string   `json:"email"`  // public: ACME contact
 		DeployGUI bool     `json:"deployGui"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
@@ -123,13 +127,17 @@ func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 	if in.Type == "" {
 		in.Type = "internal"
 	}
-	if in.Type != "internal" {
-		writeError(w, http.StatusNotImplemented, "public (ACME/Let's Encrypt) certificates arrive in a later version; internal step-ca certificates are available now")
+	if in.Type != "internal" && in.Type != "public" {
+		writeError(w, http.StatusBadRequest, "type must be internal or public")
 		return
 	}
 	in.Name = strings.ToLower(strings.TrimSpace(in.Name))
 	if !certNameRe.MatchString(in.Name) {
 		writeError(w, http.StatusBadRequest, "invalid certificate name (lowercase, digits, dashes)")
+		return
+	}
+	if in.Type == "public" {
+		a.issuePublicCert(w, r, in.Name, in.Domain, in.Email, in.DeployGUI)
 		return
 	}
 	if len(in.SANs) == 0 {
@@ -182,6 +190,53 @@ func (a *app) apiCertIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": in.Name, "note": note,
 		"paths": map[string]string{"cert": certDir + "/" + in.Name + ".crt", "key": certDir + "/" + in.Name + ".key"}})
+}
+
+// issuePublicCert obtains a Let's Encrypt certificate for a public FQDN via
+// HTTP-01 (certbot standalone with a temporary firewall opening) through the
+// root adapter; renewal is handled unattended by certbot.timer.
+func (a *app) issuePublicCert(w http.ResponseWriter, r *http.Request, name, domain, email string, deployGUI bool) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if strings.HasPrefix(domain, "*.") || !sanHostRe.MatchString(domain) {
+		writeError(w, http.StatusBadRequest, "public certificate needs a valid public FQDN (wildcards need DNS-01, not yet supported)")
+		return
+	}
+	if !emailRe.MatchString(strings.TrimSpace(email)) {
+		writeError(w, http.StatusBadRequest, "a contact email is required for Let's Encrypt")
+		return
+	}
+	if out, err := a.runCert(r.Context(), "acme", name, domain, strings.TrimSpace(email)); err != nil {
+		a.recordSev(r, a.actor(r), "cert-issue-public", domain, "failed", "warning", map[string]any{"output": truncate(string(out), 400)})
+		writeError(w, http.StatusBadGateway, "Let's Encrypt issuance failed: "+truncate(string(out), 400))
+		return
+	}
+	certs := a.getCerts()
+	rec := certRecord{Name: name, SANs: []string{domain}, IssuedAt: time.Now().UTC(), Public: true}
+	replaced := false
+	for i := range certs {
+		if certs[i].Name == name {
+			certs[i] = rec
+			replaced = true
+		}
+	}
+	if !replaced {
+		certs = append(certs, rec)
+	}
+	if err := a.setCerts(certs); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist certificate list")
+		return
+	}
+	a.record(r, a.actor(r), "cert-issue-public", domain, "success", map[string]any{"name": name})
+	note := "Let's Encrypt certifikat izdan; automatska obnova preko certbot.timer."
+	if deployGUI {
+		if out, err := a.runCert(r.Context(), "deploy-gui", name); err != nil {
+			note = "certificate issued but GUI deploy failed: " + truncate(string(out), 200)
+		} else {
+			a.record(r, a.actor(r), "cert-deploy-gui", name, "success", nil)
+			note = "deployed to the GUI vhost"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": name, "domain": domain, "note": note})
 }
 
 func (a *app) apiCertDeployGUI(w http.ResponseWriter, r *http.Request) {

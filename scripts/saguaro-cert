@@ -24,6 +24,47 @@ GUI_KEY=/etc/saguaro/bootstrap-tls.key
 valid_name() { echo "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'; }
 valid_san()  { echo "$1" | grep -Eq '^(\*\.)?[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; }
 
+# open80/close80 briefly allow inbound tcp/80 in the main firewall so the ACME
+# HTTP-01 challenge can reach certbot --standalone. No-op if the firewall table
+# is absent (permissive setup).
+open80() {
+  nft list chain inet saguaro input >/dev/null 2>&1 || return 0
+  nft insert rule inet saguaro input tcp dport 80 accept comment "saguaro-acme" 2>/dev/null || true
+}
+close80() {
+  nft list chain inet saguaro input >/dev/null 2>&1 || return 0
+  h=$(nft -a list chain inet saguaro input 2>/dev/null | awk '/saguaro-acme/{print $NF}')
+  [ -n "$h" ] && nft delete rule inet saguaro input handle "$h" 2>/dev/null || true
+}
+
+# install_acme_hooks wires unattended renewal (certbot.timer): pre/post open and
+# close tcp/80, and a per-lineage deploy hook that copies the renewed cert into
+# our store and reloads nginx. Uses $NAME/$DOMAIN from the acme case.
+install_acme_hooks() {
+  install -d -m 0755 /etc/letsencrypt/renewal-hooks/pre /etc/letsencrypt/renewal-hooks/post /etc/letsencrypt/renewal-hooks/deploy
+  cat >/etc/letsencrypt/renewal-hooks/pre/saguaro-open80.sh <<'HOOK'
+#!/bin/sh
+nft list chain inet saguaro input >/dev/null 2>&1 || exit 0
+nft insert rule inet saguaro input tcp dport 80 accept comment "saguaro-acme" 2>/dev/null || true
+HOOK
+  cat >/etc/letsencrypt/renewal-hooks/post/saguaro-close80.sh <<'HOOK'
+#!/bin/sh
+nft list chain inet saguaro input >/dev/null 2>&1 || exit 0
+h=$(nft -a list chain inet saguaro input 2>/dev/null | awk '/saguaro-acme/{print $NF}')
+[ -n "$h" ] && nft delete rule inet saguaro input handle "$h" 2>/dev/null || true
+HOOK
+  cat >"/etc/letsencrypt/renewal-hooks/deploy/saguaro-$NAME.sh" <<HOOK
+#!/bin/sh
+[ "\$RENEWED_LINEAGE" = "/etc/letsencrypt/live/$NAME" ] || exit 0
+install -m 0644 "\$RENEWED_LINEAGE/fullchain.pem" "$CERTDIR/$NAME.crt"
+install -m 0600 "\$RENEWED_LINEAGE/privkey.pem" "$CERTDIR/$NAME.key"
+nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+HOOK
+  chmod 0755 /etc/letsencrypt/renewal-hooks/pre/saguaro-open80.sh \
+    /etc/letsencrypt/renewal-hooks/post/saguaro-close80.sh \
+    "/etc/letsencrypt/renewal-hooks/deploy/saguaro-$NAME.sh"
+}
+
 case "${1:-}" in
   issue)
     [ -s "$STAGED" ] || { echo "no staged request at $STAGED" >&2; exit 1; }
@@ -65,10 +106,30 @@ case "${1:-}" in
     [ "$renewed" -gt 0 ] && { nginx -t >/dev/null 2>&1 && systemctl reload nginx || true; }
     logger -t saguaro-cert "renewed $renewed certificate(s)"
     ;;
+  acme)
+    NAME="${2:-}"; DOMAIN="${3:-}"; EMAIL="${4:-}"
+    valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
+    echo "$DOMAIN" | grep -Eq '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$' || { echo "invalid domain" >&2; exit 1; }
+    echo "$EMAIL" | grep -Eq '^[^@ ]+@[^@ ]+\.[^@ ]+$' || { echo "invalid email" >&2; exit 1; }
+    command -v certbot >/dev/null || { echo "certbot is not installed" >&2; exit 1; }
+    install -d -m 0755 "$CERTDIR"
+    install_acme_hooks
+    open80
+    ok=1
+    certbot certonly --standalone --non-interactive --agree-tos --preferred-challenges http \
+      --http-01-port 80 --cert-name "$NAME" -m "$EMAIL" -d "$DOMAIN" >/tmp/saguaro-certbot.log 2>&1 || ok=0
+    close80
+    [ "$ok" = 1 ] || { echo "certbot failed:" >&2; tail -n 15 /tmp/saguaro-certbot.log >&2; exit 1; }
+    LIVE=/etc/letsencrypt/live/$NAME
+    install -m 0644 -o root -g root "$LIVE/fullchain.pem" "$CERTDIR/$NAME.crt"
+    install -m 0600 -o root -g root "$LIVE/privkey.pem" "$CERTDIR/$NAME.key"
+    logger -t saguaro-cert "issued public certificate $NAME for $DOMAIN"
+    ;;
   remove)
     NAME="${2:-}"
     valid_name "$NAME" || { echo "invalid certificate name" >&2; exit 1; }
-    rm -f "$CERTDIR/$NAME.crt" "$CERTDIR/$NAME.key"
+    rm -f "$CERTDIR/$NAME.crt" "$CERTDIR/$NAME.key" "/etc/letsencrypt/renewal-hooks/deploy/saguaro-$NAME.sh"
+    command -v certbot >/dev/null 2>&1 && certbot delete --cert-name "$NAME" --non-interactive >/dev/null 2>&1 || true
     nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
     logger -t saguaro-cert "removed certificate $NAME"
     ;;
@@ -83,7 +144,7 @@ case "${1:-}" in
     logger -t saguaro-cert "deployed certificate $NAME to the GUI vhost"
     ;;
   *)
-    echo "usage: saguaro-cert issue | renew-all | remove NAME | deploy-gui NAME" >&2
+    echo "usage: saguaro-cert issue | acme NAME DOMAIN EMAIL | renew-all | remove NAME | deploy-gui NAME" >&2
     exit 2
     ;;
 esac
