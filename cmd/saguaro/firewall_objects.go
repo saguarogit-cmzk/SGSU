@@ -79,11 +79,39 @@ func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {
 	if rules == nil {
 		rules = []nftgen.Rule{}
 	}
+	zones := cfg.Zones
+	if zones == nil {
+		zones = []nftgen.Zone{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"aliases": aliases, "rules": rules,
+		"aliases": aliases, "rules": rules, "zones": zones,
 		"configured": ok && cfg.AdminNetwork != "", "gatewayEnabled": cfg.GatewayEnabled,
 		"pending": firewallPending(),
 	})
+}
+
+// apiFirewallZonesPut replaces the zone definitions. Zones drive the inter-zone
+// forward policy (DMZ/guest isolation); applying the firewall regenerates the
+// whole ruleset.
+func (a *app) apiFirewallZonesPut(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Zones []nftgen.Zone `json:"zones"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	cfg, _ := a.getGateway()
+	cfg.Zones = in.Zones
+	if err := cfg.ValidateObjects(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.setGateway(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist firewall zones")
+		return
+	}
+	a.record(r, a.actor(r), "firewall-zones", "objects", "success", map[string]any{"count": len(in.Zones)})
+	writeJSON(w, http.StatusOK, map[string]any{"zones": cfg.Zones})
 }
 
 func (a *app) apiFirewallAliasesPut(w http.ResponseWriter, r *http.Request) {

@@ -123,7 +123,7 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 	// wipes them. Losing IPSEnabled here would silently drop the NFQUEUE rule and
 	// disable inline IPS on the next apply while the IDS page still reads "ips".
 	if cur, ok := a.getGateway(); ok {
-		in.Aliases, in.Rules, in.IPSEnabled = cur.Aliases, cur.Rules, cur.IPSEnabled
+		in.Aliases, in.Rules, in.Zones, in.IPSEnabled = cur.Aliases, cur.Rules, cur.Zones, cur.IPSEnabled
 	}
 	if err := a.setGateway(in); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist gateway configuration")

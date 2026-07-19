@@ -26,6 +26,11 @@ func TestGeneratedRulesetParses(t *testing.T) {
 		SNATRules:    []SNATRule{{Source: "10.10.10.0/28", ToAddress: "203.0.113.7"}},
 		PBRUplinks:   []PBRUplink{{Interface: "enp1", Mark: 1}, {Interface: "enp3", Mark: 2}},
 		TunnelNets:   []TunnelNet{{Local: []string{"10.10.10.0/24"}, Remote: []string{"192.168.20.0/24", "10.50.0.0/16"}}},
+		Zones: []Zone{
+			{Name: "lan", Kind: "lan", Interface: "enp2", Network: "10.10.10.0/24"},
+			{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "10.20.0.0/24"},
+			{Name: "guest", Kind: "guest", Interface: "enp4", Network: "10.30.0.0/24"},
+		},
 		Aliases: []Alias{
 			{Name: "servers", Type: "host", Values: []string{"10.10.10.5", "10.10.10.6"}},
 			{Name: "guests", Type: "network", Values: []string{"192.168.30.0/24"}},

@@ -47,8 +47,27 @@ type Rule struct {
 	DstAlias string `json:"dstAlias"`
 	DstPort  int    `json:"dstPort"`  // 0 = any (requires tcp/udp when set)
 	Category string `json:"category"` // traffic group: lan2wan|wan2lan|wan2dmz|vpn|local|other
+	FromZone string `json:"fromZone"` // optional: match traffic entering from this zone
+	ToZone   string `json:"toZone"`   // optional: match traffic leaving to this zone
 	Enabled  bool   `json:"enabled"`
 }
+
+// Zone is a named network segment bound to an interface with a trust kind. The
+// forward policy is derived from trust: a higher-trust zone may initiate to a
+// lower-trust one, never the reverse — so a DMZ can reach the internet but not
+// the LAN, and a guest network is isolated from both. Everything not explicitly
+// allowed falls through to the drop policy.
+type Zone struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`      // wan | lan | dmz | guest
+	Interface string `json:"interface"` // bound NIC
+	Network   string `json:"network"`   // CIDR (optional for wan)
+}
+
+// zoneTrust ranks zone kinds; a zone may initiate to any strictly lower rank.
+var zoneTrust = map[string]int{"wan": 0, "guest": 1, "dmz": 2, "lan": 3}
+
+var zoneNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,20}$`)
 
 // RuleCategories are the allowed traffic groupings for organising/filtering
 // rules (Sophos/OPNsense-style). An empty category means "uncategorised".
@@ -83,6 +102,10 @@ type Config struct {
 	// that reference them. Both are edited in the Firewall objects/rules pages.
 	Aliases []Alias `json:"aliases,omitempty"`
 	Rules   []Rule  `json:"rules,omitempty"`
+	// Zones are named network segments (LAN/DMZ/GUEST/WAN) whose trust ranks
+	// drive the default inter-zone forward policy. Edited in the Firewall zones
+	// page; rules may additionally scope by from/to zone.
+	Zones []Zone `json:"zones,omitempty"`
 
 	// TunnelNets carries the local/remote subnet pairs of active VPN tunnels
 	// (WireGuard site-to-site and IPsec) so the forward chain lets that traffic
@@ -152,6 +175,32 @@ func (c Config) validateObjects() error {
 			}
 		}
 	}
+	// Zones: unique names and interfaces, valid kind and (for internal zones) a
+	// CIDR network so the rule tester can place traffic.
+	zoneNames := map[string]bool{}
+	zoneIfaces := map[string]bool{}
+	for _, z := range c.Zones {
+		if !zoneNameRe.MatchString(z.Name) {
+			return fmt.Errorf("invalid zone name %q (start with a letter; a-z 0-9 _ -)", z.Name)
+		}
+		if zoneNames[z.Name] {
+			return fmt.Errorf("duplicate zone %q", z.Name)
+		}
+		zoneNames[z.Name] = true
+		if _, ok := zoneTrust[z.Kind]; !ok {
+			return fmt.Errorf("zone %q kind must be wan, lan, dmz or guest", z.Name)
+		}
+		if !validIface(z.Interface) {
+			return fmt.Errorf("zone %q has an invalid interface %q", z.Name, z.Interface)
+		}
+		if zoneIfaces[z.Interface] {
+			return fmt.Errorf("interface %q is already assigned to another zone", z.Interface)
+		}
+		zoneIfaces[z.Interface] = true
+		if z.Kind != "wan" && !validCIDR4(z.Network) {
+			return fmt.Errorf("zone %q needs an IPv4 CIDR network", z.Name)
+		}
+	}
 	ruleNames := map[string]bool{}
 	for _, r := range c.Rules {
 		if !ruleNameRe.MatchString(r.Name) {
@@ -184,8 +233,23 @@ func (c Config) validateObjects() error {
 		if r.DstAlias != "" && !names[r.DstAlias] {
 			return fmt.Errorf("rule %q references unknown destination alias %q", r.Name, r.DstAlias)
 		}
+		if r.FromZone != "" && !zoneNames[r.FromZone] {
+			return fmt.Errorf("rule %q references unknown source zone %q", r.Name, r.FromZone)
+		}
+		if r.ToZone != "" && !zoneNames[r.ToZone] {
+			return fmt.Errorf("rule %q references unknown destination zone %q", r.Name, r.ToZone)
+		}
 	}
 	return nil
+}
+
+// zoneIfaceMap maps zone name to its interface for rule rendering.
+func (c Config) zoneIfaceMap() map[string]string {
+	m := map[string]string{}
+	for _, z := range c.Zones {
+		m[z.Name] = z.Interface
+	}
+	return m
 }
 
 // aliasSetType returns the nft set declaration body for an alias.
@@ -267,6 +331,22 @@ func aliasContains(a Alias, ip net.IP) bool {
 // the first one that matches the packet (and its verdict), or that the default
 // gateway policy applies. It mirrors the generated rule matching but does not
 // touch the kernel.
+// zoneOf returns the name of the first zone whose network contains ip, or "".
+func (c Config) zoneOf(ip net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	for _, z := range c.Zones {
+		if z.Network == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(z.Network); err == nil && n.Contains(ip) {
+			return z.Name
+		}
+	}
+	return ""
+}
+
 func (c Config) EvaluateForward(p Packet) RuleEval {
 	aliases := map[string]Alias{}
 	for _, a := range c.Aliases {
@@ -274,12 +354,19 @@ func (c Config) EvaluateForward(p Packet) RuleEval {
 	}
 	src := net.ParseIP(strings.TrimSpace(p.Src))
 	dst := net.ParseIP(strings.TrimSpace(p.Dst))
+	srcZone, dstZone := c.zoneOf(src), c.zoneOf(dst)
 	idx := 0
 	for _, r := range c.Rules {
 		if !r.Enabled {
 			continue
 		}
 		idx++
+		if r.FromZone != "" && r.FromZone != srcZone {
+			continue
+		}
+		if r.ToZone != "" && r.ToZone != dstZone {
+			continue
+		}
 		if r.SrcAlias != "" {
 			a, ok := aliases[r.SrcAlias]
 			if !ok || src == nil || !aliasContains(a, src) {
@@ -318,8 +405,20 @@ func nftSet(cidrs []string) string {
 }
 
 // ruleMatch renders the match+verdict for a custom rule (without indentation).
-func ruleMatch(r Rule) string {
+// zoneIface maps a zone name to its interface so from/to-zone rules match on
+// iifname/oifname.
+func ruleMatch(r Rule, zoneIface map[string]string) string {
 	var parts []string
+	if r.FromZone != "" {
+		if ifn := zoneIface[r.FromZone]; ifn != "" {
+			parts = append(parts, fmt.Sprintf("iifname %q", ifn))
+		}
+	}
+	if r.ToZone != "" {
+		if ifn := zoneIface[r.ToZone]; ifn != "" {
+			parts = append(parts, fmt.Sprintf("oifname %q", ifn))
+		}
+	}
 	if r.SrcAlias != "" {
 		parts = append(parts, "ip saddr @alias_"+r.SrcAlias)
 	}
@@ -459,6 +558,7 @@ func (c Config) Generate() (string, error) {
 			break
 		}
 	}
+	zoneIface := c.zoneIfaceMap()
 	forwardActive := c.GatewayEnabled || hasRules || len(c.TunnelNets) > 0
 	if forwardActive {
 		b.WriteString("    ct state established,related accept\n")
@@ -477,7 +577,33 @@ func (c Config) Generate() (string, error) {
 		if r.Category != "" {
 			label += " [" + r.Category + "]"
 		}
-		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r), label)
+		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r, zoneIface), label)
+	}
+	// Inter-zone default policy: a zone may initiate to any strictly lower-trust
+	// zone (LAN→DMZ, DMZ→internet, LAN→GUEST…), never the reverse. Internal zones
+	// also egress to the WAN interface. Everything else falls through to drop, so
+	// a DMZ cannot reach the LAN and guests are isolated.
+	if c.GatewayEnabled && len(c.Zones) > 0 {
+		for _, z := range c.Zones {
+			if z.Kind != "wan" && c.WANInterface != "" && z.Interface != c.WANInterface {
+				fmt.Fprintf(&b, "    iifname %q oifname %q accept comment \"zone %s->wan\"\n",
+					z.Interface, c.WANInterface, z.Name)
+			}
+		}
+		for _, sz := range c.Zones {
+			if sz.Kind == "wan" {
+				continue
+			}
+			for _, dz := range c.Zones {
+				if dz.Kind == "wan" || sz.Name == dz.Name {
+					continue
+				}
+				if zoneTrust[sz.Kind] > zoneTrust[dz.Kind] {
+					fmt.Fprintf(&b, "    iifname %q oifname %q accept comment \"zone %s->%s\"\n",
+						sz.Interface, dz.Interface, sz.Name, dz.Name)
+				}
+			}
+		}
 	}
 	// VPN tunnel traffic (WireGuard site-to-site, IPsec): allow the configured
 	// local↔remote subnets through the forward policy in both directions.

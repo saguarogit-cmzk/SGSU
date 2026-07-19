@@ -211,6 +211,84 @@ func TestGenerateTunnels(t *testing.T) {
 	}
 }
 
+func TestZones(t *testing.T) {
+	c := Config{
+		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
+		Zones: []Zone{
+			{Name: "lan", Kind: "lan", Interface: "enp2", Network: "10.10.10.0/24"},
+			{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "10.20.0.0/24"},
+			{Name: "guest", Kind: "guest", Interface: "enp4", Network: "10.30.0.0/24"},
+		},
+		Rules: []Rule{{Name: "dmz web from lan", Action: "accept", Proto: "tcp", DstPort: 443,
+			FromZone: "lan", ToZone: "dmz", Enabled: true}},
+	}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Higher trust may initiate to lower; internal zones egress to WAN.
+	want := []string{
+		`iifname "enp2" oifname "enp3" accept comment "zone lan->dmz"`,   // LAN -> DMZ
+		`iifname "enp2" oifname "enp4" accept comment "zone lan->guest"`, // LAN -> GUEST
+		`iifname "enp3" oifname "enp4" accept comment "zone dmz->guest"`, // DMZ -> GUEST
+		`iifname "enp3" oifname "enp1" accept comment "zone dmz->wan"`,   // DMZ -> internet
+		`iifname "enp4" oifname "enp1" accept comment "zone guest->wan"`, // GUEST -> internet
+		`iifname "enp2" oifname "enp3" tcp dport 443 counter accept`,     // zone-scoped rule
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q:\n%s", w, out)
+		}
+	}
+	// DMZ and guest must NOT be able to initiate to the LAN (isolation): no accept
+	// rule from their interface to the LAN interface.
+	for _, forbidden := range []string{
+		`iifname "enp3" oifname "enp2" accept`, // DMZ -> LAN
+		`iifname "enp4" oifname "enp2" accept`, // GUEST -> LAN
+		`iifname "enp4" oifname "enp3" accept`, // GUEST -> DMZ
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("zone isolation broken, found %q:\n%s", forbidden, out)
+		}
+	}
+}
+
+func TestZoneEvaluateForward(t *testing.T) {
+	c := Config{
+		Zones: []Zone{
+			{Name: "lan", Kind: "lan", Interface: "enp2", Network: "10.10.10.0/24"},
+			{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "10.20.0.0/24"},
+		},
+		Rules: []Rule{
+			{Name: "lan to dmz", Action: "accept", Proto: "any", FromZone: "lan", ToZone: "dmz", Enabled: true},
+		},
+	}
+	// LAN host -> DMZ host matches the zone-scoped rule.
+	if r := c.EvaluateForward(Packet{Src: "10.10.10.5", Dst: "10.20.0.5", Proto: "tcp", DstPort: 80}); !r.Matched || r.Action != "accept" {
+		t.Fatalf("lan->dmz should match: %+v", r)
+	}
+	// DMZ host -> LAN host does NOT match (wrong direction) -> default.
+	if r := c.EvaluateForward(Packet{Src: "10.20.0.5", Dst: "10.10.10.5", Proto: "tcp", DstPort: 80}); r.Matched {
+		t.Fatalf("dmz->lan must not match the lan->dmz rule: %+v", r)
+	}
+}
+
+func TestZoneValidationErrors(t *testing.T) {
+	bad := []Config{
+		{Zones: []Zone{{Name: "dmz", Kind: "bogus", Interface: "enp3", Network: "10.20.0.0/24"}}}, // bad kind
+		{Zones: []Zone{{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "nope"}}},           // bad CIDR
+		{Zones: []Zone{{Name: "a", Kind: "lan", Interface: "enp2", Network: "10.0.0.0/24"}, // dup interface
+			{Name: "b", Kind: "dmz", Interface: "enp2", Network: "10.1.0.0/24"}}},
+		{Rules: []Rule{{Name: "r", Action: "accept", Proto: "any", FromZone: "ghost", Enabled: true}}}, // unknown zone ref
+	}
+	for i, c := range bad {
+		if err := c.ValidateObjects(); err == nil {
+			t.Errorf("zone case %d expected invalid", i)
+		}
+	}
+}
+
 func TestValidateObjectsErrors(t *testing.T) {
 	bad := []Config{
 		{Aliases: []Alias{{Name: "1bad", Type: "host", Values: []string{"1.2.3.4"}}}},     // name starts with digit

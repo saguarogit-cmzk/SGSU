@@ -492,9 +492,15 @@ $('#pkgRefresh').onclick=async()=>{const btn=$('#pkgRefresh'),msg=$('#pkgMsg');b
 document.querySelectorAll('.pkgUp').forEach(el=>el.onclick=async()=>{const k=el.dataset.k;if(!confirm(`Ažurirati paket ${k}? Servis se može nakratko restartati.`))return;const msg=$('#pkgMsg');document.querySelectorAll('.pkgUp').forEach(b=>b.disabled=true);msg.textContent=`Ažuriram ${k}… (može potrajati)`;try{const r=await api(`/api/packages/upgrade/${encodeURIComponent(k)}`,{method:'POST',body:'{}'});msg.textContent=`${k} ažuriran.`;packagesPage()}catch(err){msg.textContent=err.message;document.querySelectorAll('.pkgUp').forEach(b=>b.disabled=false)}});
 const un2=$('#pkgUnat');if(un2)un2.onchange=async()=>{const msg=$('#pkgUnMsg');un2.disabled=true;msg.textContent='Mijenjam…';try{await api('/api/packages/unattended',{method:'POST',body:JSON.stringify({enabled:un2.checked})});msg.textContent=un2.checked?'Automatska sigurnosna ažuriranja uključena.':'Isključeno.';un2.disabled=false}catch(err){msg.textContent=err.message;un2.disabled=false;un2.checked=!un2.checked}}}
 function isRange(s){const p=s.split('-');return p.length===2&&isIPv4(p[0].trim())&&isIPv4(p[1].trim())}
-async function fwRulesPage(){const f=await api('/api/firewall');const aliases=f.aliases||[],rules=f.rules||[];const e=escapeHtml;
+async function fwRulesPage(){const f=await api('/api/firewall');const aliases=f.aliases||[],rules=f.rules||[],zones=f.zones||[];const e=escapeHtml;
+const nics=await api('/api/interfaces').catch(()=>[]);
 const putAliases=list=>api('/api/firewall/aliases',{method:'PUT',body:JSON.stringify({aliases:list})});
 const putRules=list=>api('/api/firewall/rules',{method:'PUT',body:JSON.stringify({rules:list})});
+const putZones=list=>api('/api/firewall/zones',{method:'PUT',body:JSON.stringify({zones:list})});
+const ZKINDS=[['lan','LAN (povjerljivo)'],['dmz','DMZ (poluizolirano)'],['guest','Gost (izolirano)'],['wan','WAN (nepovjerljivo)']];
+const zkindLabel=k=>{const z=ZKINDS.find(x=>x[0]===k);return z?z[1]:k};
+const zoneOpt=sel=>['<option value="">(bilo koja)</option>'].concat(zones.map(z=>`<option ${z.name===sel?'selected':''}>${e(z.name)}</option>`)).join('');
+const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><td><span class="badge">${e(zkindLabel(z.kind))}</span></td><td>${e(nlabel(z.interface))}</td><td class="muted">${e(z.network||'—')}</td><td><div class="rowacts">${iconBtn('del','Obriši zonu','danger',`data-i="${i}"`).replace('iconbtn','iconbtn znDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema definiranih zona (vrijedi osnovna LAN↔WAN politika).</td></tr>';
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
 const aliasVals=n=>{const a=aliases.find(x=>x.name===n);return a?(a.values||[]).join(', '):''};
@@ -507,7 +513,7 @@ const actClass=a=>a==='accept'?'st-healthy':(a==='drop'||a==='reject')?'st-error
 const ruleRows=rules.length?rules.map((r,i)=>{const acts=`<div class="rowacts">${iconBtn('up','Pomakni gore','',`data-i="${i}"${i===0?' disabled':''}`).replace('iconbtn','iconbtn ruUp')}${iconBtn('down','Pomakni dolje','',`data-i="${i}"${i===rules.length-1?' disabled':''}`).replace('iconbtn','iconbtn ruDown')}${iconBtn('test','Testiraj ovo pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruTestBtn')}${iconBtn('del','Obriši pravilo','danger',`data-i="${i}"`).replace('iconbtn','iconbtn ruDel')}</div>`;
 const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td>${acts}</td></tr>`;
 const dl=(t,d)=>`<dl><dt>${t}</dt><dd>${d}</dd></dl>`;
-const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="7"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}</div></td></tr>`;
+const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="7"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}${(r.fromZone||r.toZone)?dl('Zona',e(r.fromZone||'bilo koja')+' → '+e(r.toZone||'bilo koja')):''}</div></td></tr>`;
 return main+detail}).join(''):'<tr><td colspan="7" class="muted">Nema pravila.</td></tr>';
 $('#content').innerHTML=`${pend}
 <div class="panel"><h2>Firewall aliasi i pravila</h2>
@@ -515,7 +521,7 @@ $('#content').innerHTML=`${pend}
 ${help('<b>1.</b> Napravi <b>alias</b>: ime (počinje slovom, a-z 0-9 _), tip <code>host</code> (jedan/više IP-a), <code>network</code> (CIDR) ili <code>range</code> (<code>192.168.1.10-192.168.1.20</code>), i vrijednosti odvojene zarezom. <b>2.</b> Napravi <b>pravilo</b> koje povuče alias po imenu: akcija (accept/drop/reject), protokol, izvorni i odredišni alias (prazno = bilo koji) i opcionalno port. <b>3.</b> Klikni <b>Primijeni</b> — ruleset se učita s 120 s prozorom za potvrdu (ako izgubiš pristup, vraća se stara konfiguracija). Redoslijed pravila mijenjaj strelicama ↑↓. Pravila rade u <b>Gateway</b> modu.')}
 ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgmt/klijentska mreža) da bi mogao primijeniti pravila.</div>'}
 <div class="wizRow"><button id="fwApply">Primijeni firewall (120 s potvrda)</button></div><div id="fwMsg" class="muted"></div></div>
-${tabBar('fwTabs',[['pravila','Pravila',rules.length],['aliasi','Aliasi',aliases.length],['test','Test pravila']])}
+${tabBar('fwTabs',[['pravila','Pravila',rules.length],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['test','Test pravila']])}
 <div class="tabpane active" data-pane="fwTabs" data-tabkey="pravila">
 <div class="panel"><h3>Pravila (${rules.length})</h3>
 <label style="max-width:280px">Filtriraj po kategoriji <select id="ruFilter"><option value="__all">Sve kategorije</option>${catOpts('')}</select></label>
@@ -528,6 +534,8 @@ ${tabBar('fwTabs',[['pravila','Pravila',rules.length],['aliasi','Aliasi',aliases
 <label>Izvor (alias) <select id="ruSrc">${aliasOpt('')}</select></label>
 <label>Odredište (alias) <select id="ruDst">${aliasOpt('')}</select></label>
 <label>Odredišni port (0 = svi) <input id="ruPort" type="number" min="0" max="65535" value="0"></label>
+<label>Iz zone <select id="ruFromZone">${zoneOpt('')}</select></label>
+<label>U zonu <select id="ruToZone">${zoneOpt('')}</select></label>
 <label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
 ${toggle('ruEnabled',true,'Omogućeno')}
 <div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div></div>
@@ -539,6 +547,17 @@ ${toggle('ruEnabled',true,'Omogućeno')}
 <label>Tip <select id="alType"><option value="host">host (IP adrese)</option><option value="network">network (CIDR)</option><option value="range">range (IP-IP)</option></select></label>
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="192.168.10.5, 192.168.10.6" required></label>
 <div><button type="submit">Dodaj alias</button></div><div id="alMsg" class="muted"></div></form></div></div>
+<div class="tabpane" data-pane="fwTabs" data-tabkey="zone">
+<div class="panel"><h3>Zone (${zones.length})</h3>
+<p class="muted">Segmentiraj mrežu po povjerenju. Zadana politika: zona veće razine povjerenja može otvarati promet prema nižoj (LAN→DMZ, DMZ→internet), nikad obrnuto — pa <b>DMZ ne doseže LAN</b>, a <b>Gost je izoliran</b> od svih. Sve što nije eksplicitno dopušteno (ili port-forward/pravilo) se odbacuje.</p>
+${help('Svaka zona veže <b>sučelje</b> (fizički NIC) i <b>mrežu</b> (CIDR) uz <b>tip</b>: <code>lan</code> (povjerljivo), <code>dmz</code> (poluizolirano — serveri dostupni izvana), <code>guest</code> (izolirano) ili <code>wan</code> (nepovjerljivo, internet). Iz tipova se izvodi automatska međuzonska politika. Za iznimke (npr. propusti samo tcp/443 iz LAN u DMZ) dodaj <b>pravilo</b> s poljima <i>Iz zone / U zonu</i>. Nakon promjene zona klikni <b>Primijeni firewall</b>.')}
+<table><thead><tr><th>Naziv</th><th>Tip</th><th>Sučelje</th><th>Mreža</th><th>Akcije</th></tr></thead><tbody>${zoneRows}</tbody></table>
+<form id="znAdd" class="stack">
+<label>Naziv <input id="znName" placeholder="dmz" required></label>
+<label>Tip <select id="znKind">${ZKINDS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label>
+<label>Sučelje <select id="znIf">${nics.length?nics.map(n=>`<option value="${e(n.name)}">${e(nlabel(n.name))}</option>`).join(''):'<option value="">(nema NIC-eva)</option>'}</select></label>
+<label>Mreža (CIDR, prazno za WAN) <input id="znNet" placeholder="10.20.0.0/24"></label>
+<div><button type="submit">Dodaj zonu</button></div><div id="znMsg" class="muted"></div></form></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="test">
 <div class="panel"><h3>Test pravila</h3>
 <p class="muted">Upiši promet pa provjeri <b>koje pravilo</b> ga hvata i <b>prolazi li</b> (simulacija nad tvojim pravilima, ne dira kernel). Primijeni pravila da test odgovara živom stanju. Savjet: ikona ⚗ na retku pravila prednapuni ovaj obrazac.</p>
@@ -570,8 +589,16 @@ $('#ruAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ruMsg');m.textCo
 if(!/^[A-Za-z0-9 ._-]{1,40}$/.test(name)){m.textContent='Naziv pravila: 1-40 znakova (slova, brojke, razmak . _ -).';return}
 if(port&&proto==='any'){m.textContent='Za odredišni port odaberi tcp ili udp.';return}
 if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoji.';return}
-const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
+const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
 try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
+document.querySelectorAll('.znDel').forEach(el=>el.onclick=async()=>{const list=zones.filter((_,j)=>j!==+el.dataset.i);try{await putZones(list);fwRulesPage()}catch(err){alert(err.message)}});
+$('#znAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#znMsg');m.textContent='';const name=$('#znName').value.trim(),kind=$('#znKind').value,iface=$('#znIf').value,net=$('#znNet').value.trim();
+if(!/^[a-z][a-z0-9_-]{0,20}$/.test(name)){m.textContent='Naziv zone: počni slovom (a-z 0-9 _ -).';return}
+if(!iface){m.textContent='Odaberi sučelje.';return}
+if(kind!=='wan'&&!isCIDR(net)){m.textContent='Mreža mora biti CIDR (npr. 10.20.0.0/24).';return}
+if(zones.some(z=>z.name===name)){m.textContent='Zona s tim imenom već postoji.';return}
+if(zones.some(z=>z.interface===iface)){m.textContent='To je sučelje već dodijeljeno drugoj zoni.';return}
+try{await putZones(zones.concat([{name,kind,interface:iface,network:kind==='wan'?net:net}]));fwRulesPage()}catch(err){m.textContent=err.message}};
 $('#ruTest').onsubmit=async ev=>{ev.preventDefault();const o=$('#tsOut');const src=$('#tsSrc').value.trim(),dst=$('#tsDst').value.trim();
 if(src&&!isIPv4(src)){o.innerHTML='<span class="error">Izvor mora biti IPv4 adresa.</span>';return}
 if(dst&&!isIPv4(dst)){o.innerHTML='<span class="error">Odredište mora biti IPv4 adresa.</span>';return}

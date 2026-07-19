@@ -45,6 +45,39 @@ func TestFirewallAliasesAndRules(t *testing.T) {
 	}
 }
 
+func TestFirewallZones(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// Define zones; a bad kind is rejected.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/zones",
+		`{"zones":[{"name":"dmz","kind":"nope","interface":"enp3","network":"10.20.0.0/24"}]}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad zone kind: got %d, want 400", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/zones",
+		`{"zones":[{"name":"lan","kind":"lan","interface":"enp2","network":"10.10.10.0/24"},{"name":"dmz","kind":"dmz","interface":"enp3","network":"10.20.0.0/24"}]}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("put zones: got %d", r.StatusCode)
+	}
+	// A rule may reference a zone; an unknown zone is rejected.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/rules",
+		`{"rules":[{"name":"lan-to-dmz","action":"accept","proto":"tcp","dstPort":443,"fromZone":"lan","toZone":"dmz","enabled":true}]}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("zone-scoped rule: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/rules",
+		`{"rules":[{"name":"bad","action":"accept","proto":"any","fromZone":"ghost","enabled":true}]}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown zone ref: got %d, want 400", r.StatusCode)
+	}
+	// Saving the gateway (whose form omits zones) must preserve them.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/gateway",
+		`{"adminNetwork":"192.168.50.0/24","clientNetwork":"10.10.10.0/24","gatewayEnabled":false}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("put gateway: got %d", r.StatusCode)
+	}
+	if cfg, _ := a.getGateway(); len(cfg.Zones) != 2 {
+		t.Fatalf("gateway save wiped zones: %+v", cfg.Zones)
+	}
+}
+
 func TestFirewallApplyIncludesObjects(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string
