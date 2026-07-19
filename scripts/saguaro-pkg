@@ -18,7 +18,7 @@ pkg_for() {
     postgresql)     echo postgresql ;;
     unbound)        echo unbound ;;
     pdns)           echo pdns-server ;;
-    kea)            echo kea ;;
+    kea)            echo kea-dhcp4-server ;;
     nginx)          echo nginx ;;
     nftables)       echo nftables ;;
     suricata)       echo suricata ;;

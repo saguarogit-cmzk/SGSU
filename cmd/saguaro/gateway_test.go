@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"saguaro.local/network-manager/internal/adapters/nftgen"
 )
 
 const gwBody = `{"adminNetwork":"192.168.10.0/24","clientNetwork":"192.168.10.0/24","dhcpInterface":"","gatewayEnabled":true,"wanInterface":"enp1s0","lanInterface":"enp2s0","natEnabled":true,"portForwards":[{"proto":"tcp","extPort":8443,"destIp":"192.168.10.5","destPort":443}]}`
@@ -66,6 +68,28 @@ func TestGatewayConfigureAndApply(t *testing.T) {
 	}
 	if strings.Join(actions, ",") != "apply,confirm,rollback" {
 		t.Fatalf("adapter call sequence wrong: %v", actions)
+	}
+}
+
+// TestGatewayPutPreservesIPS guards against the regression where saving the
+// gateway form (which omits the IPS toggle) silently cleared IPSEnabled and
+// dropped the inline-IPS NFQUEUE rule on the next apply.
+func TestGatewayPutPreservesIPS(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// Simulate IPS having been enabled by the IDS module.
+	if err := a.setGateway(nftgen.Config{AdminNetwork: "192.168.10.0/24", ClientNetwork: "192.168.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1s0", LANInterface: "enp2s0", NATEnabled: true, IPSEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Saving the gateway (whose form carries no ipsEnabled) must not disable IPS.
+	if r := reqJSON(t, srv, c, http.MethodPut, "/api/gateway", gwBody); r.StatusCode != http.StatusOK {
+		t.Fatalf("put gateway: got %d", r.StatusCode)
+	}
+	if cfg, _ := a.getGateway(); !cfg.IPSEnabled {
+		t.Fatal("gateway save cleared IPSEnabled (inline IPS would be silently disabled)")
 	}
 }
 

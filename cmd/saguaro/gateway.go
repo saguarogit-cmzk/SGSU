@@ -118,10 +118,12 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 			"deployment mode is 'router'; switch System profile to Gateway to enable WAN/NAT")
 		return
 	}
-	// The gateway form does not carry firewall aliases/rules; keep the ones the
-	// Firewall pages own so saving the gateway never wipes them.
+	// The gateway form does not carry firewall aliases/rules or the IPS toggle;
+	// keep the fields the Firewall and IDS pages own so saving the gateway never
+	// wipes them. Losing IPSEnabled here would silently drop the NFQUEUE rule and
+	// disable inline IPS on the next apply while the IDS page still reads "ips".
 	if cur, ok := a.getGateway(); ok {
-		in.Aliases, in.Rules = cur.Aliases, cur.Rules
+		in.Aliases, in.Rules, in.IPSEnabled = cur.Aliases, cur.Rules, cur.IPSEnabled
 	}
 	if err := a.setGateway(in); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist gateway configuration")
