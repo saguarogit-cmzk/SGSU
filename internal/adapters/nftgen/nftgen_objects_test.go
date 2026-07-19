@@ -62,7 +62,8 @@ func TestGenerateTunnels(t *testing.T) {
 		}
 	}
 	// Tunnels alone (no gateway) still activate the forward chain.
-	router := Config{TunnelNets: []TunnelNet{{Local: []string{"192.168.10.0/24"}, Remote: []string{"192.168.20.0/24"}}}}
+	router := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		TunnelNets: []TunnelNet{{Local: []string{"192.168.10.0/24"}, Remote: []string{"192.168.20.0/24"}}}}
 	rout, err := router.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -70,10 +71,11 @@ func TestGenerateTunnels(t *testing.T) {
 	if !strings.Contains(rout, `ip saddr 192.168.10.0/24 ip daddr 192.168.20.0/24 counter accept`) {
 		t.Errorf("tunnel rule missing without gateway:\n%s", rout)
 	}
-	// invalid tunnel CIDR is rejected
-	bad := Config{TunnelNets: []TunnelNet{{Local: []string{"nope"}, Remote: []string{"10.0.0.0/8"}}}}
-	if err := bad.Validate(); err == nil {
-		t.Error("expected invalid tunnel CIDR error")
+	// invalid tunnel CIDR is rejected (base config valid so we hit the tunnel check)
+	bad := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		TunnelNets: []TunnelNet{{Local: []string{"nope"}, Remote: []string{"10.0.0.0/8"}}}}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "tunnel subnet") {
+		t.Errorf("expected tunnel CIDR error, got %v", err)
 	}
 }
 
