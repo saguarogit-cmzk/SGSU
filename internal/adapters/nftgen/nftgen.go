@@ -19,6 +19,14 @@ type PortForward struct {
 	DestPort int    `json:"destPort"`
 }
 
+// SNATRule pins outbound traffic from a specific internal source (IP or CIDR)
+// to a specific WAN address (typically one of the WAN aliases) instead of the
+// default masquerade — per-WAN / 1:1 source NAT.
+type SNATRule struct {
+	Source    string `json:"source"`    // IPv4 or CIDR
+	ToAddress string `json:"toAddress"` // WAN (alias) IPv4
+}
+
 // Alias is a named host/network/range object (like a Sophos/pfSense alias) so
 // firewall rules can reference addresses by name. It renders to an nft set
 // "alias_<name>"; the name is constrained to a valid nft identifier.
@@ -64,6 +72,8 @@ type Config struct {
 	// HairpinNAT lets LAN clients reach a port-forwarded service via the WAN
 	// (public) address — NAT reflection.
 	HairpinNAT bool `json:"hairpinNat"`
+	// SNATRules pin specific sources to specific WAN addresses on egress.
+	SNATRules []SNATRule `json:"snatRules"`
 	// IPSEnabled queues new forwarded connections to NFQUEUE 0 for Suricata
 	// inline inspection; `bypass` keeps traffic flowing if Suricata dies
 	// (fail-open by design — W9).
@@ -298,6 +308,16 @@ func (c Config) Validate() error {
 			return fmt.Errorf("refusing to forward the appliance management port %d", pf.ExtPort)
 		}
 	}
+	for _, s := range c.SNATRules {
+		if !validCIDR4(strings.TrimSpace(s.Source)) {
+			if ip := net.ParseIP(strings.TrimSpace(s.Source)); ip == nil || ip.To4() == nil {
+				return fmt.Errorf("SNAT source %q must be an IPv4 address or CIDR", s.Source)
+			}
+		}
+		if ip := net.ParseIP(strings.TrimSpace(s.ToAddress)); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("SNAT target %q must be an IPv4 address", s.ToAddress)
+		}
+	}
 	return nil
 }
 
@@ -396,7 +416,7 @@ func (c Config) Generate() (string, error) {
 	}
 	b.WriteString("}\n")
 	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
-	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0) {
+	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0) {
 		b.WriteString("\ntable ip saguaro-nat {\n")
 		if len(c.PortForwards) > 0 {
 			b.WriteString("  chain prerouting {\n")
@@ -415,9 +435,15 @@ func (c Config) Generate() (string, error) {
 			}
 			b.WriteString("  }\n")
 		}
-		if c.NATEnabled || hairpin {
+		if c.NATEnabled || hairpin || len(c.SNATRules) > 0 {
 			b.WriteString("  chain postrouting {\n")
 			b.WriteString("    type nat hook postrouting priority srcnat;\n")
+			// Per-WAN / 1:1 SNAT first, so specific sources get their fixed WAN
+			// address before the catch-all masquerade.
+			for _, s := range c.SNATRules {
+				fmt.Fprintf(&b, "    oifname %q ip saddr %s snat to %s\n",
+					c.WANInterface, strings.TrimSpace(s.Source), strings.TrimSpace(s.ToAddress))
+			}
 			if c.NATEnabled {
 				fmt.Fprintf(&b, "    oifname %q masquerade\n", c.WANInterface)
 			}

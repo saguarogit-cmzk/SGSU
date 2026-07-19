@@ -33,6 +33,7 @@ func (a *app) getGateway() (nftgen.Config, bool) {
 	cfg.PortForwards = append([]nftgen.PortForward(nil), cfg.PortForwards...)
 	cfg.Aliases = append([]nftgen.Alias(nil), cfg.Aliases...)
 	cfg.Rules = append([]nftgen.Rule(nil), cfg.Rules...)
+	cfg.SNATRules = append([]nftgen.SNATRule(nil), cfg.SNATRules...)
 	return cfg, true
 }
 

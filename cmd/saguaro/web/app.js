@@ -81,6 +81,8 @@ async function monitoring(){const rows=await api('/api/events?limit=100');$('#co
 const ROLES=['admin','network-operator','dns-operator','auditor','read-only'];
 const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split(':');return{proto:p[0],extPort:parseInt(p[1],10),destIp:p[2],destPort:parseInt(p[3],10)}});
 const pfFormat=l=>(l||[]).map(p=>`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
+const snatParse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{source:(p[0]||'').trim(),toAddress:(p[1]||'').trim()}}).filter(r=>r.source&&r.toAddress);
+const snatFormat=l=>(l||[]).map(r=>`${r.source} -> ${r.toAddress}`).join('\n');
 async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};const wanCfg=(await api('/api/wan').catch(()=>({config:{mode:'dhcp'}}))).config||{mode:'dhcp'};
 const wanPanel=`<div class="panel"><h2>WAN adresa</h2>
 ${help('Odaberi kako WAN (prema internetu) dobiva adresu. <b>Dinamička (DHCP)</b> — adresu daje provajder/ruter. <b>Statička</b> — upiši <b>IP/CIDR</b> (npr. <code>203.0.113.5/24</code>), <b>gateway</b> provajdera i <b>DNS</b>. Primjena piše netplan i radi <code>netplan apply</code> na WAN sučelju — pazi da mijenjaš pravi NIC (provjeri u Interfaces). Upravljački pristup ide preko mgmt sučelja pa promjena WAN-a ne prekida GUI.')}
@@ -112,9 +114,10 @@ ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-
 <label><input id="gwNat" type="checkbox" ${c.natEnabled!==false?'checked':''}> NAT (masquerade) na WAN</label>
 <label><input id="gwHairpin" type="checkbox" ${c.hairpinNat?'checked':''}> Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)</label>
 <label>Port forwardi (redak: proto:vanjski:IP:unutarnji) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${escapeHtml(pfFormat(c.portForwards))}</textarea></label>
+<label>Per-WAN SNAT (redak: izvor -&gt; WAN alias IP) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${escapeHtml(snatFormat(c.snatRules))}</textarea></label>
 <div><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
-const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value)});
+const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
 $('#wanForm').onsubmit=async e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;

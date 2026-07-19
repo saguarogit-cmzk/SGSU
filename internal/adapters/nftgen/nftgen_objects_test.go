@@ -42,6 +42,32 @@ func TestGenerateObjects(t *testing.T) {
 	}
 }
 
+func TestSNATRules(t *testing.T) {
+	c := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "192.168.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
+		SNATRules: []SNATRule{
+			{Source: "192.168.10.5", ToAddress: "203.0.113.6"},
+			{Source: "192.168.10.0/28", ToAddress: "203.0.113.7"},
+		}}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snat := `oifname "enp1" ip saddr 192.168.10.5 snat to 203.0.113.6`
+	if !strings.Contains(out, snat) || !strings.Contains(out, `oifname "enp1" ip saddr 192.168.10.0/28 snat to 203.0.113.7`) {
+		t.Fatalf("SNAT rules missing:\n%s", out)
+	}
+	// specific SNAT must precede the catch-all masquerade
+	if strings.Index(out, snat) > strings.Index(out, `oifname "enp1" masquerade`) {
+		t.Errorf("SNAT rule must come before masquerade:\n%s", out)
+	}
+	bad := c
+	bad.SNATRules = []SNATRule{{Source: "192.168.10.5", ToAddress: "not-an-ip"}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected invalid SNAT target error")
+	}
+}
+
 func TestHairpinNAT(t *testing.T) {
 	base := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "192.168.10.0/24",
 		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
