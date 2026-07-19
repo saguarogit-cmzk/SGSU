@@ -10,57 +10,62 @@ import (
 
 const stagedWANNetplanName = "staged-wan-netplan.yaml"
 
-func (a *app) getWANCfg() (wancfg.WAN, bool) {
-	a.store.mu.RLock()
-	defer a.store.mu.RUnlock()
-	if a.store.data.WANConfig == nil {
-		return wancfg.WAN{}, false
-	}
-	cfg := *a.store.data.WANConfig
-	cfg.DNS = append([]string(nil), cfg.DNS...)
-	return cfg, true
-}
-
-func (a *app) setWANCfg(cfg wancfg.WAN) error {
+// getWANs returns the configured WAN interfaces, migrating the legacy single
+// WANConfig into the list on first read.
+func (a *app) getWANs() []wancfg.WAN {
 	a.store.mu.Lock()
 	defer a.store.mu.Unlock()
-	a.store.data.WANConfig = &cfg
+	if len(a.store.data.WANConfigs) == 0 && a.store.data.WANConfig != nil {
+		a.store.data.WANConfigs = []wancfg.WAN{*a.store.data.WANConfig}
+		a.store.data.WANConfig = nil
+		_ = a.store.saveLocked()
+	}
+	return append([]wancfg.WAN(nil), a.store.data.WANConfigs...)
+}
+
+func (a *app) setWANs(wans []wancfg.WAN) error {
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+	a.store.data.WANConfigs = wans
+	a.store.data.WANConfig = nil
 	return a.store.saveLocked()
 }
 
 func (a *app) apiWANConfigGet(w http.ResponseWriter, _ *http.Request) {
-	cfg, ok := a.getWANCfg()
-	if cfg.Interface == "" {
-		if gw, gok := a.getGateway(); gok {
-			cfg.Interface = gw.WANInterface
+	wans := a.getWANs()
+	// Seed a first WAN from the gateway's WAN interface if nothing is configured.
+	if len(wans) == 0 {
+		iface := ""
+		if gw, ok := a.getGateway(); ok {
+			iface = gw.WANInterface
+		}
+		wans = []wancfg.WAN{{Interface: iface, Mode: "dhcp", Metric: 100, DNS: []string{}, Aliases: []string{}}}
+	}
+	for i := range wans {
+		if wans[i].DNS == nil {
+			wans[i].DNS = []string{}
+		}
+		if wans[i].Aliases == nil {
+			wans[i].Aliases = []string{}
 		}
 	}
-	if cfg.Mode == "" {
-		cfg.Mode = "dhcp"
-	}
-	if cfg.DNS == nil {
-		cfg.DNS = []string{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"config": cfg, "configured": ok})
+	writeJSON(w, http.StatusOK, map[string]any{"wans": wans})
 }
 
-// apiWANConfigApply validates the addressing, renders and stages the netplan,
-// then applies it through the root adapter.
+// apiWANConfigApply validates the WAN list, renders one combined netplan and
+// applies it through the root adapter.
 func (a *app) apiWANConfigApply(w http.ResponseWriter, r *http.Request) {
-	var in wancfg.WAN
+	var in struct {
+		WANs []wancfg.WAN `json:"wans"`
+	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
 	}
-	if in.Interface == "" {
-		if gw, ok := a.getGateway(); ok {
-			in.Interface = gw.WANInterface
-		}
-	}
-	if err := in.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if len(in.WANs) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one WAN interface is required")
 		return
 	}
-	yaml, err := in.GenerateNetplan()
+	yaml, err := wancfg.GenerateNetplanMulti(in.WANs)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -71,16 +76,16 @@ func (a *app) apiWANConfigApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if out, err := a.runNet(r.Context(), "wan-apply"); err != nil {
-		a.recordSev(r, a.actor(r), "wan-config", in.Interface, "failed", "security",
+		a.recordSev(r, a.actor(r), "wan-config", "netplan", "failed", "security",
 			map[string]any{"error": err.Error(), "output": truncate(string(out), 300)})
 		writeError(w, http.StatusBadGateway, "apply failed: "+truncate(string(out), 300))
 		return
 	}
-	if err := a.setWANCfg(in); err != nil {
+	if err := a.setWANs(in.WANs); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist WAN configuration")
 		return
 	}
-	a.recordSev(r, a.actor(r), "wan-config", in.Interface, "success", "security",
-		map[string]any{"mode": in.Mode, "address": in.Address})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": in})
+	a.recordSev(r, a.actor(r), "wan-config", "netplan", "success", "security",
+		map[string]any{"interfaces": len(in.WANs)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wans": in.WANs})
 }

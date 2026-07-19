@@ -80,8 +80,10 @@ type state struct {
 	SystemProfile string `json:"systemProfile,omitempty"`
 	// BlockedMACs are DHCP clients refused a lease via Kea's DROP class.
 	BlockedMACs []string `json:"blockedMacs,omitempty"`
-	// WANConfig is the WAN uplink addressing (DHCP or static).
+	// WANConfig is the legacy single WAN (migrated into WANConfigs on load).
 	WANConfig *wancfg.WAN `json:"wanConfig,omitempty"`
+	// WANConfigs is the WAN uplink addressing for one or more WAN interfaces.
+	WANConfigs []wancfg.WAN `json:"wanConfigs,omitempty"`
 	// SIEM is the external log-forwarding configuration.
 	SIEM *siemConfig `json:"siem,omitempty"`
 }
@@ -137,7 +139,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.38.1"
+const appVersion = "0.39.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}

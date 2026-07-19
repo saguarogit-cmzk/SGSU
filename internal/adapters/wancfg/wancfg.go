@@ -1,6 +1,7 @@
-// Package wancfg models the WAN uplink addressing (DHCP or static) and renders
-// the netplan the root adapter (/usr/sbin/saguaro-net wan-apply) installs.
-// Generation is pure; every value is charset-validated before it reaches YAML.
+// Package wancfg models WAN uplink addressing (DHCP or static) for one or more
+// WAN interfaces and renders the netplan the root adapter (saguaro-net
+// wan-apply) installs. Generation is pure; every value is charset-validated
+// before it reaches YAML.
 package wancfg
 
 import (
@@ -21,6 +22,8 @@ type WAN struct {
 	// Aliases are extra IPv4 addresses (CIDR) bound to the same WAN interface
 	// (e.g. an ISP-provided /29 block) for 1:1 NAT / per-address SNAT.
 	Aliases []string `json:"aliases"`
+	// Metric orders default routes across WANs (lower = preferred). 0 -> 100.
+	Metric int `json:"metric"`
 }
 
 func validIP4(s string) bool {
@@ -33,9 +36,19 @@ func validCIDR4(s string) bool {
 	return err == nil && ip.To4() != nil
 }
 
+func (w WAN) metric() int {
+	if w.Metric <= 0 {
+		return 100
+	}
+	return w.Metric
+}
+
 func (w WAN) Validate() error {
 	if !ifaceRe.MatchString(w.Interface) {
 		return fmt.Errorf("invalid WAN interface name")
+	}
+	if w.Metric < 0 || w.Metric > 4000 {
+		return fmt.Errorf("WAN metric out of range")
 	}
 	switch w.Mode {
 	case "dhcp":
@@ -63,18 +76,15 @@ func (w WAN) Validate() error {
 	}
 }
 
-// GenerateNetplan renders /etc/netplan/60-saguaro-wan.yaml for this uplink.
-func (w WAN) GenerateNetplan() (string, error) {
-	if err := w.Validate(); err != nil {
-		return "", err
-	}
+// ethernetBlock renders this WAN's `<iface>: ...` block (indented under
+// network.ethernets).
+func (w WAN) ethernetBlock() string {
 	var b strings.Builder
-	b.WriteString("# Managed by Saguaro (generated). Manual edits are overwritten on apply.\n")
-	b.WriteString("network:\n  version: 2\n  ethernets:\n")
 	fmt.Fprintf(&b, "    %s:\n", w.Interface)
 	if w.Mode == "dhcp" {
 		b.WriteString("      dhcp4: true\n")
-		return b.String(), nil
+		fmt.Fprintf(&b, "      dhcp4-overrides:\n        route-metric: %d\n", w.metric())
+		return b.String()
 	}
 	b.WriteString("      dhcp4: false\n")
 	b.WriteString("      addresses:\n")
@@ -82,13 +92,39 @@ func (w WAN) GenerateNetplan() (string, error) {
 	for _, a := range w.Aliases {
 		fmt.Fprintf(&b, "        - %s\n", strings.TrimSpace(a))
 	}
-	b.WriteString("      routes:\n        - to: default\n")
-	fmt.Fprintf(&b, "          via: %s\n", strings.TrimSpace(w.Gateway))
+	fmt.Fprintf(&b, "      routes:\n        - to: default\n          via: %s\n          metric: %d\n",
+		strings.TrimSpace(w.Gateway), w.metric())
 	if len(w.DNS) > 0 {
 		b.WriteString("      nameservers:\n        addresses:\n")
 		for _, d := range w.DNS {
 			fmt.Fprintf(&b, "          - %s\n", strings.TrimSpace(d))
 		}
 	}
+	return b.String()
+}
+
+// GenerateNetplan renders the netplan for a single WAN (kept for compatibility).
+func (w WAN) GenerateNetplan() (string, error) {
+	return GenerateNetplanMulti([]WAN{w})
+}
+
+// GenerateNetplanMulti renders one netplan covering every WAN interface.
+func GenerateNetplanMulti(wans []WAN) (string, error) {
+	seen := map[string]bool{}
+	var body strings.Builder
+	for _, w := range wans {
+		if err := w.Validate(); err != nil {
+			return "", err
+		}
+		if seen[w.Interface] {
+			return "", fmt.Errorf("duplicate WAN interface %q", w.Interface)
+		}
+		seen[w.Interface] = true
+		body.WriteString(w.ethernetBlock())
+	}
+	var b strings.Builder
+	b.WriteString("# Managed by Saguaro (generated). Manual edits are overwritten on apply.\n")
+	b.WriteString("network:\n  version: 2\n  ethernets:\n")
+	b.WriteString(body.String())
 	return b.String(), nil
 }

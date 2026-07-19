@@ -90,19 +90,22 @@ const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const
 const pfFormat=l=>(l||[]).map(p=>`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
 const snatParse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{source:(p[0]||'').trim(),toAddress:(p[1]||'').trim()}}).filter(r=>r.source&&r.toAddress);
 const snatFormat=l=>(l||[]).map(r=>`${r.source} -> ${r.toAddress}`).join('\n');
-async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};const wanCfg=(await api('/api/wan').catch(()=>({config:{mode:'dhcp'}}))).config||{mode:'dhcp'};
-const wanPanel=`<div class="panel"><h2>WAN adresa</h2>
-${help('Odaberi kako WAN (prema internetu) dobiva adresu. <b>Dinamička (DHCP)</b> — adresu daje provajder/ruter. <b>Statička</b> — upiši <b>IP/CIDR</b> (npr. <code>203.0.113.5/24</code>), <b>gateway</b> provajdera i <b>DNS</b>. Primjena piše netplan i radi <code>netplan apply</code> na WAN sučelju — pazi da mijenjaš pravi NIC (provjeri u Interfaces). Upravljački pristup ide preko mgmt sučelja pa promjena WAN-a ne prekida GUI.')}
+async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};let wans=((await api('/api/wan').catch(()=>({wans:[]}))).wans)||[];const ew=escapeHtml;
+const wanPanel=`<div class="panel"><h2>WAN sučelja</h2>
+${help('Postavi JEDNO ili VIŠE WAN sučelja (npr. WAN1 + GSM WAN2). Svako je <b>DHCP</b> ili <b>statičko</b> (IP/CIDR + gateway + DNS + aliasi). <b>Metrika</b> je prioritet default rute — manja = primarni WAN. Za balans/failover preko oba uključi modul <b>Multi-WAN</b> (weighted + PBR). Promjena piše netplan i radi <code>netplan apply</code>; mgmt pristup ide preko svog sučelja pa GUI ne puca.')}
+<div id="wanList"></div>
+<h3>Dodaj / uredi WAN sučelje</h3>
 <form id="wanForm" class="stack">
-<label>WAN sučelje <input id="wanIf" value="${escapeHtml(wanCfg.interface||c.wanInterface||'')}" placeholder="enp1s0"></label>
-<label>Način adrese <select id="wanMode"><option value="dhcp" ${wanCfg.mode!=='static'?'selected':''}>Dinamička (DHCP)</option><option value="static" ${wanCfg.mode==='static'?'selected':''}>Statička</option></select></label>
-<div id="wanStatic" style="${wanCfg.mode==='static'?'':'display:none'}">
-<label>IP adresa (CIDR) <input id="wanAddr" value="${escapeHtml(wanCfg.address||'')}" placeholder="203.0.113.5/24"></label>
-<label>Gateway <input id="wanGw" value="${escapeHtml(wanCfg.gateway||'')}" placeholder="203.0.113.1"></label>
-<label>DNS serveri (zarezom) <input id="wanDns" value="${escapeHtml((wanCfg.dns||[]).join(', '))}" placeholder="1.1.1.1, 8.8.8.8"></label>
-<label>Dodatne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" value="${escapeHtml((wanCfg.aliases||[]).join(', '))}" placeholder="203.0.113.6/24, 203.0.113.7/24"></label>
+<label>WAN sučelje <input id="wanIf" placeholder="enp2s0"></label>
+<label>Način adrese <select id="wanMode"><option value="dhcp">Dinamička (DHCP)</option><option value="static">Statička</option></select></label>
+<label>Metrika (manja = primarni) <input id="wanMetric" type="number" min="1" max="4000" value="100"></label>
+<div id="wanStatic" style="display:none">
+<label>IP adresa (CIDR) <input id="wanAddr" placeholder="203.0.113.5/24"></label>
+<label>Gateway <input id="wanGw" placeholder="203.0.113.1"></label>
+<label>DNS serveri (zarezom) <input id="wanDns" placeholder="1.1.1.1, 8.8.8.8"></label>
+<label>Dodatne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" placeholder="203.0.113.6/24"></label>
 </div>
-<div><button type="submit">Primijeni WAN</button></div>
+<div><button type="submit" class="ghost">Dodaj u listu</button> <button type="button" id="wanApplyBtn">Primijeni sva WAN sučelja</button></div>
 <div id="wanMsg" class="muted"></div></form></div>`;
 const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const nics=`<table><thead><tr><th>Interface</th><th>Stanje</th><th>IPv4</th></tr></thead><tbody>${(g.nics||[]).map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${escapeHtml(n.state)}</td><td>${escapeHtml((n.addresses||[]).join(', '))}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nedostupno (razvojno okruženje)</td></tr>'}</tbody></table>`;
@@ -126,12 +129,18 @@ ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
 const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
+const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>Sučelje</th><th>Način</th><th>Adresa</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(x.interface)}</b></td><td>${x.mode}</td><td class="muted">${ew(x.mode==='static'?(x.address||''):'—')}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||''):'—')}</td><td class="muted">${x.metric||100}</td><td><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN sučelja.</p>';
+document.querySelectorAll('.wanRm').forEach(el=>el.onclick=()=>{wans.splice(+el.dataset.i,1);renderWanList()});
+document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+el.dataset.i];$('#wanIf').value=x.interface;$('#wanMode').value=x.mode;$('#wanMetric').value=x.metric||100;$('#wanAddr').value=x.address||'';$('#wanGw').value=x.gateway||'';$('#wanDns').value=(x.dns||[]).join(', ');$('#wanAliases').value=(x.aliases||[]).join(', ');$('#wanStatic').style.display=x.mode==='static'?'':'none';wans.splice(+el.dataset.i,1);renderWanList()});};
+renderWanList();
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
-$('#wanForm').onsubmit=async e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;
-const body={interface:$('#wanIf').value.trim(),mode,address:$('#wanAddr').value.trim(),gateway:$('#wanGw').value.trim(),dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean),aliases:$('#wanAliases').value.split(',').map(x=>x.trim()).filter(Boolean)};
-if(mode==='static'){if(!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(body.address)){m.textContent='IP adresa mora biti CIDR (npr. 203.0.113.5/24).';return}if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(body.gateway)){m.textContent='Gateway mora biti IPv4 adresa.';return}}
-if(!confirm('Primijeniti WAN adresu? Mijenja se netplan i mrežni uplink.'))return;
-m.textContent='Primjena…';try{await api('/api/wan/apply',{method:'POST',body:JSON.stringify(body)});m.textContent='WAN primijenjen.'}catch(err){m.textContent=err.message}};
+$('#wanForm').onsubmit=e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;const iface=$('#wanIf').value.trim();
+if(!/^[a-zA-Z0-9._-]{1,15}$/.test(iface)){m.textContent='Upiši ispravno ime sučelja.';return}
+const wn={interface:iface,mode,metric:parseInt($('#wanMetric').value,10)||100,dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean),aliases:$('#wanAliases').value.split(',').map(x=>x.trim()).filter(Boolean)};
+if(mode==='static'){wn.address=$('#wanAddr').value.trim();wn.gateway=$('#wanGw').value.trim();if(!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(wn.address)){m.textContent='IP adresa mora biti CIDR (npr. 203.0.113.5/24).';return}if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(wn.gateway)){m.textContent='Gateway mora biti IPv4 adresa.';return}}
+if(wans.some(x=>x.interface===iface)){m.textContent='To sučelje je već u listi (ukloni pa dodaj).';return}
+wans.push(wn);renderWanList();['wanIf','wanAddr','wanGw','wanDns','wanAliases'].forEach(id=>$('#'+id).value='');$('#wanMetric').value=100;$('#wanMode').value='dhcp';$('#wanStatic').style.display='none';m.textContent='Dodano u listu — klikni „Primijeni sva WAN sučelja".'};
+$('#wanApplyBtn').onclick=async()=>{const m=$('#wanMsg');if(!wans.length){m.textContent='Dodaj barem jedno WAN sučelje.';return}if(!confirm('Primijeniti sva WAN sučelja? Piše netplan i radi netplan apply.'))return;m.textContent='Primjena…';try{await api('/api/wan/apply',{method:'POST',body:JSON.stringify({wans})});m.textContent='WAN sučelja primijenjena.'}catch(err){m.textContent=err.message}};
 $('#gwForm').onsubmit=async e=>{e.preventDefault();$('#gwMsg').textContent='';try{await save();$('#gwMsg').textContent='Spremljeno (još nije primijenjeno).'}catch(err){$('#gwMsg').textContent=err.message}};
 $('#gwPreview').onclick=async()=>{try{await save();const p=await api('/api/gateway/preview');$('#gwRules').textContent=p.ruleset}catch(err){$('#gwMsg').textContent=err.message}};
 $('#gwApply').onclick=async()=>{if(!confirm('Primijeniti novi firewall? Ako izgubite pristup, za 120 sekundi vraća se stara konfiguracija.'))return;$('#gwMsg').textContent='Primjena…';try{await save();await api('/api/gateway/apply',{method:'POST',body:'{}'});gatewayPage()}catch(err){$('#gwMsg').textContent=err.message}};
