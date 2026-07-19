@@ -42,6 +42,32 @@ func TestGenerateObjects(t *testing.T) {
 	}
 }
 
+func TestHairpinNAT(t *testing.T) {
+	base := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "192.168.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true,
+		PortForwards: []PortForward{{Proto: "tcp", ExtPort: 8443, DestIP: "192.168.10.5", DestPort: 443}}}
+	off, err := base.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "fib daddr type local") {
+		t.Errorf("hairpin rules present while disabled:\n%s", off)
+	}
+	base.HairpinNAT = true
+	on, err := base.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		`iifname "enp2" fib daddr type local tcp dport 8443 dnat to 192.168.10.5:443`,
+		`ip saddr 192.168.10.0/24 ip daddr 192.168.10.5 tcp dport 443 masquerade`,
+	} {
+		if !strings.Contains(on, w) {
+			t.Errorf("hairpin ruleset missing %q:\n%s", w, on)
+		}
+	}
+}
+
 func TestPBRMangle(t *testing.T) {
 	c := Config{
 		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",

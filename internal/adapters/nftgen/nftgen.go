@@ -61,6 +61,9 @@ type Config struct {
 	LANInterface   string        `json:"lanInterface"`
 	NATEnabled     bool          `json:"natEnabled"`
 	PortForwards   []PortForward `json:"portForwards"`
+	// HairpinNAT lets LAN clients reach a port-forwarded service via the WAN
+	// (public) address — NAT reflection.
+	HairpinNAT bool `json:"hairpinNat"`
 	// IPSEnabled queues new forwarded connections to NFQUEUE 0 for Suricata
 	// inline inspection; `bypass` keeps traffic flowing if Suricata dies
 	// (fail-open by design — W9).
@@ -392,6 +395,7 @@ func (c Config) Generate() (string, error) {
 		b.WriteString("  }\n")
 	}
 	b.WriteString("}\n")
+	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
 	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0) {
 		b.WriteString("\ntable ip saguaro-nat {\n")
 		if len(c.PortForwards) > 0 {
@@ -401,12 +405,30 @@ func (c Config) Generate() (string, error) {
 				fmt.Fprintf(&b, "    iifname %q %s dport %d dnat to %s:%d\n",
 					c.WANInterface, pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
 			}
+			// Hairpin: LAN clients hitting the appliance's own (public/local)
+			// address on the forwarded port get DNAT'd to the internal host too.
+			if hairpin {
+				for _, pf := range c.PortForwards {
+					fmt.Fprintf(&b, "    iifname %q fib daddr type local %s dport %d dnat to %s:%d\n",
+						c.LANInterface, pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
+				}
+			}
 			b.WriteString("  }\n")
 		}
-		if c.NATEnabled {
+		if c.NATEnabled || hairpin {
 			b.WriteString("  chain postrouting {\n")
 			b.WriteString("    type nat hook postrouting priority srcnat;\n")
-			fmt.Fprintf(&b, "    oifname %q masquerade\n", c.WANInterface)
+			if c.NATEnabled {
+				fmt.Fprintf(&b, "    oifname %q masquerade\n", c.WANInterface)
+			}
+			// Hairpin: masquerade the reflected flows so the internal host
+			// replies via the appliance (source becomes the appliance LAN IP).
+			if hairpin {
+				for _, pf := range c.PortForwards {
+					fmt.Fprintf(&b, "    ip saddr %s ip daddr %s %s dport %d masquerade\n",
+						c.ClientNetwork, pf.DestIP, pf.Proto, pf.DestPort)
+				}
+			}
 			b.WriteString("  }\n")
 		}
 		b.WriteString("}\n")

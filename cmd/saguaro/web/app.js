@@ -110,10 +110,11 @@ ${help('<b>Mgmt mreža</b> je administratorska podmreža (odakle pristupaš GUI-
 <label>WAN interface <select id="gwWan">${nicOpt(c.wanInterface)}</select></label>
 <label>LAN interface <select id="gwLan">${nicOpt(c.lanInterface)}</select></label>
 <label><input id="gwNat" type="checkbox" ${c.natEnabled!==false?'checked':''}> NAT (masquerade) na WAN</label>
+<label><input id="gwHairpin" type="checkbox" ${c.hairpinNat?'checked':''}> Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)</label>
 <label>Port forwardi (redak: proto:vanjski:IP:unutarnji) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${escapeHtml(pfFormat(c.portForwards))}</textarea></label>
 <div><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
-const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,portForwards:pfParse($('#gwPf').value)});
+const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
 $('#wanForm').onsubmit=async e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;
