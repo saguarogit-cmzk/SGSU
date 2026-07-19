@@ -122,6 +122,38 @@ func TestPBRMangle(t *testing.T) {
 	}
 }
 
+func TestEvaluateForward(t *testing.T) {
+	c := Config{
+		Aliases: []Alias{
+			{Name: "guests", Type: "network", Values: []string{"192.168.30.0/24"}},
+			{Name: "servers", Type: "host", Values: []string{"192.168.10.5"}},
+			{Name: "pool", Type: "range", Values: []string{"10.0.0.10-10.0.0.20"}},
+		},
+		Rules: []Rule{
+			{Name: "block guests", Action: "drop", Proto: "any", SrcAlias: "guests", DstAlias: "servers", Enabled: true},
+			{Name: "allow web", Action: "accept", Proto: "tcp", DstAlias: "servers", DstPort: 443, Enabled: true},
+			{Name: "pool ssh", Action: "reject", Proto: "tcp", SrcAlias: "pool", DstPort: 22, Enabled: true},
+			{Name: "disabled", Action: "accept", Proto: "any", Enabled: false},
+		},
+	}
+	// guest -> server:443 hits the first (drop) rule
+	if r := c.EvaluateForward(Packet{Src: "192.168.30.10", Dst: "192.168.10.5", Proto: "tcp", DstPort: 443}); !r.Matched || r.Action != "drop" || r.RuleIndex != 1 {
+		t.Fatalf("guest->server: %+v", r)
+	}
+	// other src -> server:443 tcp hits allow web
+	if r := c.EvaluateForward(Packet{Src: "192.168.40.10", Dst: "192.168.10.5", Proto: "tcp", DstPort: 443}); !r.Matched || r.Action != "accept" || r.RuleName != "allow web" {
+		t.Fatalf("other->server:443: %+v", r)
+	}
+	// range alias member on tcp/22 -> reject
+	if r := c.EvaluateForward(Packet{Src: "10.0.0.15", Dst: "8.8.8.8", Proto: "tcp", DstPort: 22}); !r.Matched || r.Action != "reject" {
+		t.Fatalf("pool->:22: %+v", r)
+	}
+	// no rule matches -> default policy
+	if r := c.EvaluateForward(Packet{Src: "192.168.40.10", Dst: "192.168.10.5", Proto: "tcp", DstPort: 8080}); r.Matched || r.Action != "default" {
+		t.Fatalf("expected default: %+v", r)
+	}
+}
+
 func TestRuleCategory(t *testing.T) {
 	c := Config{
 		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",

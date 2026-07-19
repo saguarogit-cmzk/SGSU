@@ -490,7 +490,16 @@ ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgm
 <label>Odredišni port (0 = svi) <input id="ruPort" type="number" min="0" max="65535" value="0"></label>
 <label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
 <label><input id="ruEnabled" type="checkbox" checked> Omogućeno</label>
-<div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div>`;
+<div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div>
+<div class="panel"><h3>Test pravila</h3>
+<p class="muted">Upiši promet pa provjeri <b>koje pravilo</b> ga hvata i <b>prolazi li</b> (simulacija nad tvojim pravilima, ne dira kernel). Primijeni pravila da test odgovara živom stanju.</p>
+<form id="ruTest" class="stack">
+<label>Izvor (IP) <input id="tsSrc" placeholder="192.168.30.10"></label>
+<label>Odredište (IP) <input id="tsDst" placeholder="192.168.10.5"></label>
+<label>Protokol <select id="tsProto"><option value="any">any</option><option value="tcp">tcp</option><option value="udp">udp</option></select></label>
+<label>Odredišni port (0 = bilo koji) <input id="tsPort" type="number" min="0" max="65535" value="0"></label>
+<div><button type="submit">Testiraj</button></div></form>
+<div id="tsOut" style="margin-top:10px"></div></div>`;
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
 $('#fwApply').onclick=async()=>{if(!confirm('Primijeniti firewall? Bez potvrde u 120 s vraća se stara konfiguracija.'))return;const m=$('#fwMsg');m.textContent='Primjena…';try{await api('/api/firewall/apply',{method:'POST',body:'{}'});fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);fwRulesPage()}catch(err){alert(err.message)}});
@@ -510,7 +519,11 @@ if(!/^[A-Za-z0-9 ._-]{1,40}$/.test(name)){m.textContent='Naziv pravila: 1-40 zna
 if(port&&proto==='any'){m.textContent='Za odredišni port odaberi tcp ili udp.';return}
 if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoji.';return}
 const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
-try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}}}
+try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
+$('#ruTest').onsubmit=async ev=>{ev.preventDefault();const o=$('#tsOut');const src=$('#tsSrc').value.trim(),dst=$('#tsDst').value.trim();
+if(src&&!isIPv4(src)){o.innerHTML='<span class="error">Izvor mora biti IPv4 adresa.</span>';return}
+if(dst&&!isIPv4(dst)){o.innerHTML='<span class="error">Odredište mora biti IPv4 adresa.</span>';return}
+o.textContent='Testiram…';try{const rr=await api('/api/firewall/test',{method:'POST',body:JSON.stringify({src,dst,proto:$('#tsProto').value,dstPort:parseInt($('#tsPort').value,10)||0})});const act=rr.action;const cls=act==='accept'?'st-healthy':(act==='drop'||act==='reject')?'st-error':'st-unknown';o.innerHTML=`<span class="status ${cls}">${escapeHtml(act)}</span> ${rr.matched?'— odgovara pravilo <b>#'+rr.ruleIndex+' '+escapeHtml(rr.ruleName)+'</b>':'— nijedno custom pravilo, vrijedi zadana politika'}<p class="muted" style="margin:8px 0 0">${escapeHtml(rr.reason)}</p>`}catch(err){o.innerHTML='<span class="error">'+escapeHtml(err.message)+'</span>'}}}
 function sevClass(s){return({critical:'st-error',warning:'st-unknown',info:'st-muted'})[s]||''}
 async function conflictsPage(){const d=await api('/api/conflicts');const list=d.conflicts||[];const e=escapeHtml;const ch=d.checked||{};
 const rows=list.length?list.map(c=>`<tr><td><span class="status ${sevClass(c.severity)}">${e(c.severity)}</span></td><td class="muted">${e(c.kind)}</td><td>${e(c.message)}</td></tr>`).join(''):'<tr><td colspan="3" class="st-healthy">Nema konflikata. ✓</td></tr>';

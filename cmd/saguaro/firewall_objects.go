@@ -58,6 +58,17 @@ func (a *app) firewallConfig() (nftgen.Config, bool) {
 	return cfg, ok
 }
 
+// apiFirewallTest simulates a packet against the custom rules and reports which
+// rule matches and whether it passes — no kernel involvement.
+func (a *app) apiFirewallTest(w http.ResponseWriter, r *http.Request) {
+	var in nftgen.Packet
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	cfg, _ := a.getGateway()
+	writeJSON(w, http.StatusOK, cfg.EvaluateForward(in))
+}
+
 func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {
 	cfg, ok := a.getGateway()
 	aliases := cfg.Aliases

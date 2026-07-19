@@ -207,6 +207,104 @@ func aliasSetType(a Alias) string {
 	return fmt.Sprintf("%s elements = { %s }", body, strings.Join(elems, ", "))
 }
 
+// Packet is a synthetic packet for the rule tester.
+type Packet struct {
+	Src     string `json:"src"`
+	Dst     string `json:"dst"`
+	Proto   string `json:"proto"` // any | tcp | udp
+	DstPort int    `json:"dstPort"`
+}
+
+// RuleEval is the tester's verdict for a Packet.
+type RuleEval struct {
+	Matched   bool   `json:"matched"`
+	RuleName  string `json:"ruleName"`
+	RuleIndex int    `json:"ruleIndex"` // 1-based position among enabled rules
+	Action    string `json:"action"`    // accept | drop | reject | default
+	Reason    string `json:"reason"`
+}
+
+func ip4ToU32(ip net.IP) (uint32, bool) {
+	v4 := ip.To4()
+	if v4 == nil {
+		return 0, false
+	}
+	return uint32(v4[0])<<24 | uint32(v4[1])<<16 | uint32(v4[2])<<8 | uint32(v4[3]), true
+}
+
+// aliasContains reports whether ip is a member of the alias.
+func aliasContains(a Alias, ip net.IP) bool {
+	for _, v := range a.Values {
+		v = strings.TrimSpace(v)
+		switch a.Type {
+		case "host":
+			if p := net.ParseIP(v); p != nil && p.Equal(ip) {
+				return true
+			}
+		case "network":
+			if _, n, err := net.ParseCIDR(v); err == nil && n.Contains(ip) {
+				return true
+			}
+		case "range":
+			parts := strings.SplitN(v, "-", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			lo := net.ParseIP(strings.TrimSpace(parts[0]))
+			hi := net.ParseIP(strings.TrimSpace(parts[1]))
+			li, ok1 := ip4ToU32(lo)
+			hiu, ok2 := ip4ToU32(hi)
+			ci, ok3 := ip4ToU32(ip)
+			if ok1 && ok2 && ok3 && ci >= li && ci <= hiu {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// EvaluateForward walks the enabled custom forward rules in order and reports
+// the first one that matches the packet (and its verdict), or that the default
+// gateway policy applies. It mirrors the generated rule matching but does not
+// touch the kernel.
+func (c Config) EvaluateForward(p Packet) RuleEval {
+	aliases := map[string]Alias{}
+	for _, a := range c.Aliases {
+		aliases[a.Name] = a
+	}
+	src := net.ParseIP(strings.TrimSpace(p.Src))
+	dst := net.ParseIP(strings.TrimSpace(p.Dst))
+	idx := 0
+	for _, r := range c.Rules {
+		if !r.Enabled {
+			continue
+		}
+		idx++
+		if r.SrcAlias != "" {
+			a, ok := aliases[r.SrcAlias]
+			if !ok || src == nil || !aliasContains(a, src) {
+				continue
+			}
+		}
+		if r.DstAlias != "" {
+			a, ok := aliases[r.DstAlias]
+			if !ok || dst == nil || !aliasContains(a, dst) {
+				continue
+			}
+		}
+		if r.Proto != "any" && p.Proto != "any" && r.Proto != p.Proto {
+			continue
+		}
+		if r.DstPort != 0 && p.DstPort != 0 && r.DstPort != p.DstPort {
+			continue
+		}
+		return RuleEval{Matched: true, RuleName: r.Name, RuleIndex: idx, Action: r.Action,
+			Reason: fmt.Sprintf("prvo pravilo koje odgovara je #%d %q → %s", idx, r.Name, r.Action)}
+	}
+	return RuleEval{Matched: false, Action: "default",
+		Reason: "nijedno custom pravilo ne odgovara — vrijedi zadana politika (u gateway modu: LAN→WAN se propušta, ostalo se odbacuje)"}
+}
+
 // nftSet renders one CIDR bare, or several as an anonymous nft set { a, b }.
 func nftSet(cidrs []string) string {
 	if len(cidrs) == 1 {

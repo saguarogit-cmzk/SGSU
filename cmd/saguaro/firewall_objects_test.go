@@ -95,6 +95,32 @@ func TestGatewayPutPreservesAliases(t *testing.T) {
 	}
 }
 
+func TestFirewallTestEndpoint(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	if err := a.setGateway(nftgen.Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "192.168.10.0/24",
+		Aliases: []nftgen.Alias{
+			{Name: "guests", Type: "network", Values: []string{"192.168.30.0/24"}},
+			{Name: "servers", Type: "host", Values: []string{"192.168.10.5"}},
+		},
+		Rules: []nftgen.Rule{{Name: "block", Action: "drop", Proto: "any", SrcAlias: "guests", DstAlias: "servers", Enabled: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/test", `{"src":"192.168.30.10","dst":"192.168.10.5","proto":"tcp","dstPort":443}`)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("test: got %d", r.StatusCode)
+	}
+	var res nftgen.RuleEval
+	json.NewDecoder(r.Body).Decode(&res)
+	r.Body.Close()
+	if !res.Matched || res.Action != "drop" || res.RuleName != "block" {
+		t.Fatalf("evaluation wrong: %+v", res)
+	}
+}
+
 func TestFirewallRequiresRole(t *testing.T) {
 	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
