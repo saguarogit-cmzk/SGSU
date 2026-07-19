@@ -22,9 +22,15 @@ GO=$(command -v go 2>/dev/null || true)
 
 git_ok() { [ -d "$SRCDIR/.git" ] && command -v git >/dev/null 2>&1; }
 
+# git refuses to operate on a repo owned by another user ("dubious ownership");
+# the checkout is root-owned and we run as root, but mark it safe explicitly so
+# self-update works regardless of how the checkout was created.
+mark_safe() { git config --global --add safe.directory "$SRCDIR" >/dev/null 2>&1 || true; }
+
 case "${1:-}" in
   check)
     git_ok || { echo "source unknown"; echo "gitrepo no"; exit 0; }
+    mark_safe
     git -C "$SRCDIR" fetch --quiet origin 2>/dev/null || true
     cur=$(git -C "$SRCDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
     rem=$(git -C "$SRCDIR" rev-parse --short origin/main 2>/dev/null || echo unknown)
@@ -37,6 +43,7 @@ case "${1:-}" in
     echo "$REF" | grep -Eq '^[A-Za-z0-9._/-]{1,100}$' || { echo "invalid ref" >&2; exit 1; }
     git_ok || { echo "not a git source install; use the .deb update path instead" >&2; exit 1; }
     [ -n "$GO" ] || { echo "Go toolchain not found; cannot build from source" >&2; exit 1; }
+    mark_safe
     git -C "$SRCDIR" fetch --quiet origin || { echo "git fetch failed" >&2; exit 1; }
     git -C "$SRCDIR" reset --hard "$REF" >/dev/null || { echo "git reset to $REF failed" >&2; exit 1; }
     GOBIN_DIR=$(dirname "$GO")
