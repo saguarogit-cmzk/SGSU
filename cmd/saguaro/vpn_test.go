@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -97,6 +99,59 @@ func TestVPNApplyAndPeers(t *testing.T) {
 	// apply sequence: settings + 3 successful mutations that re-apply.
 	if strings.Join(actions, ",") != "apply,apply,apply,apply" {
 		t.Fatalf("adapter sequence wrong: %v", actions)
+	}
+}
+
+// TestVPNPeerAddConcurrent fires many peer-add requests at once. Without the
+// mutateMu serialization the read-modify-apply-persist sequence interleaves: two
+// adds read the same peer list, allocate the SAME address and one overwrites the
+// other (lost update). With it, every peer gets a distinct address and none is
+// dropped. Run with -race to also catch the underlying data race.
+func TestVPNPeerAddConcurrent(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	a.runVPN = func(_ context.Context, _ string) ([]byte, error) { return []byte("ok"), nil }
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/vpn/apply", vpnSettings); r.StatusCode != http.StatusOK {
+		t.Fatalf("vpn apply: got %d", r.StatusCode)
+	}
+	token := csrfCookie(t, srv, c)
+	const n = 8
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/vpn/peers",
+				strings.NewReader(fmt.Sprintf(`{"name":"peer-%d","fullTunnel":false,"expireDays":0}`, i)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-CSRF-Token", token)
+			res, err := c.Do(req)
+			if err != nil {
+				return
+			}
+			codes[i] = res.StatusCode
+			res.Body.Close()
+		}(i)
+	}
+	wg.Wait()
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("peer %d add: got %d, want 200", i, code)
+		}
+	}
+	cfg := a.getVPN()
+	if len(cfg.Peers) != n {
+		t.Fatalf("lost update: want %d peers, got %d", n, len(cfg.Peers))
+	}
+	seen := map[string]bool{}
+	for _, p := range cfg.Peers {
+		if seen[p.Address] {
+			t.Fatalf("duplicate address allocated: %s (%+v)", p.Address, cfg.Peers)
+		}
+		seen[p.Address] = true
 	}
 }
 

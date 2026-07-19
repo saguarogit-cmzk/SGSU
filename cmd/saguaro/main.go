@@ -138,6 +138,15 @@ type app struct {
 	cpuPrev        *cpuStat
 	siem           *siemForwarder
 
+	// mutateMu serializes config mutations that read the stored config, act on
+	// the system (kernel/service), then persist. The store's RWMutex only makes
+	// each getX/setX atomic individually; without this outer lock two concurrent
+	// mutations interleave (read the same base, both persist) and one update is
+	// lost — e.g. two VPN peer adds allocating the same address. Held across the
+	// whole read-modify-persist so those sequences are atomic. It does NOT wrap
+	// long-running independent ops (package upgrade, ACME issuance).
+	mutateMu sync.Mutex
+
 	// component endpoints used by health checks
 	resolverAddr string
 	pdnsURL      string
@@ -147,7 +156,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.48.0"
+const appVersion = "0.49.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -326,8 +335,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/services", a.auth(a.services))
 	mux.HandleFunc("POST /api/services/{id}/actions/{action}", a.authz(permServiceCheck, a.serviceAction))
 	mux.HandleFunc("GET /api/dhcp/blocklist", a.auth(a.apiDHCPBlockList))
-	mux.HandleFunc("POST /api/dhcp/blocklist", a.authz(permDHCPWrite, a.apiDHCPBlockAdd))
-	mux.HandleFunc("DELETE /api/dhcp/blocklist/{mac}", a.authz(permDHCPWrite, a.apiDHCPBlockDelete))
+	mux.HandleFunc("POST /api/dhcp/blocklist", a.authz(permDHCPWrite, a.serialized(a.apiDHCPBlockAdd)))
+	mux.HandleFunc("DELETE /api/dhcp/blocklist/{mac}", a.authz(permDHCPWrite, a.serialized(a.apiDHCPBlockDelete)))
 	mux.HandleFunc("GET /api/conflicts", a.auth(a.apiConflicts))
 	mux.HandleFunc("GET /api/siem", a.auth(a.apiSIEMGet))
 	mux.HandleFunc("PUT /api/siem", a.authz(permMailWrite, a.apiSIEMPut))
@@ -364,15 +373,15 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PATCH /api/users/{name}", a.authz(permUsersWrite, a.apiUserUpdate))
 	mux.HandleFunc("DELETE /api/users/{name}", a.authz(permUsersWrite, a.apiUserDelete))
 	mux.HandleFunc("GET /api/gateway", a.auth(a.apiGatewayGet))
-	mux.HandleFunc("PUT /api/gateway", a.authz(permFirewall, a.apiGatewayPut))
+	mux.HandleFunc("PUT /api/gateway", a.authz(permFirewall, a.serialized(a.apiGatewayPut)))
 	mux.HandleFunc("GET /api/gateway/preview", a.auth(a.apiGatewayPreview))
-	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.apiGatewayApply))
-	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.apiGatewayConfirm))
-	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.apiGatewayRollback))
+	mux.HandleFunc("POST /api/gateway/apply", a.authz(permFirewall, a.serialized(a.apiGatewayApply)))
+	mux.HandleFunc("POST /api/gateway/confirm", a.authz(permFirewall, a.serialized(a.apiGatewayConfirm)))
+	mux.HandleFunc("POST /api/gateway/rollback", a.authz(permFirewall, a.serialized(a.apiGatewayRollback)))
 	mux.HandleFunc("GET /api/firewall", a.auth(a.apiFirewallGet))
-	mux.HandleFunc("PUT /api/firewall/aliases", a.authz(permFirewall, a.apiFirewallAliasesPut))
-	mux.HandleFunc("PUT /api/firewall/rules", a.authz(permFirewall, a.apiFirewallRulesPut))
-	mux.HandleFunc("POST /api/firewall/apply", a.authz(permFirewall, a.apiFirewallApply))
+	mux.HandleFunc("PUT /api/firewall/aliases", a.authz(permFirewall, a.serialized(a.apiFirewallAliasesPut)))
+	mux.HandleFunc("PUT /api/firewall/rules", a.authz(permFirewall, a.serialized(a.apiFirewallRulesPut)))
+	mux.HandleFunc("POST /api/firewall/apply", a.authz(permFirewall, a.serialized(a.apiFirewallApply)))
 	mux.HandleFunc("POST /api/firewall/test", a.auth(a.apiFirewallTest))
 	mux.HandleFunc("GET /api/metrics", a.auth(a.apiMetrics))
 	mux.HandleFunc("GET /api/logs/unbound", a.auth(a.apiUnboundStats))
@@ -394,17 +403,17 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/routes", a.auth(a.apiRoutesGet))
 	mux.HandleFunc("PUT /api/routes", a.authz(permFirewall, a.apiRoutesPut))
 	mux.HandleFunc("GET /api/s2s", a.auth(a.apiS2SGet))
-	mux.HandleFunc("POST /api/s2s/apply", a.authz(permFirewall, a.apiS2SApply))
-	mux.HandleFunc("POST /api/s2s/sites", a.authz(permFirewall, a.apiS2SSiteAdd))
-	mux.HandleFunc("DELETE /api/s2s/sites/{name}", a.authz(permFirewall, a.apiS2SSiteDelete))
+	mux.HandleFunc("POST /api/s2s/apply", a.authz(permFirewall, a.serialized(a.apiS2SApply)))
+	mux.HandleFunc("POST /api/s2s/sites", a.authz(permFirewall, a.serialized(a.apiS2SSiteAdd)))
+	mux.HandleFunc("DELETE /api/s2s/sites/{name}", a.authz(permFirewall, a.serialized(a.apiS2SSiteDelete)))
 	mux.HandleFunc("GET /api/ipsec", a.auth(a.apiIPsecGet))
-	mux.HandleFunc("POST /api/ipsec/apply", a.authz(permFirewall, a.apiIPsecApply))
-	mux.HandleFunc("POST /api/ipsec/connections", a.authz(permFirewall, a.apiIPsecConnAdd))
-	mux.HandleFunc("DELETE /api/ipsec/connections/{name}", a.authz(permFirewall, a.apiIPsecConnDelete))
+	mux.HandleFunc("POST /api/ipsec/apply", a.authz(permFirewall, a.serialized(a.apiIPsecApply)))
+	mux.HandleFunc("POST /api/ipsec/connections", a.authz(permFirewall, a.serialized(a.apiIPsecConnAdd)))
+	mux.HandleFunc("DELETE /api/ipsec/connections/{name}", a.authz(permFirewall, a.serialized(a.apiIPsecConnDelete)))
 	mux.HandleFunc("GET /api/vpn", a.auth(a.apiVPNGet))
-	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.apiVPNApply))
-	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.apiVPNPeerAdd))
-	mux.HandleFunc("DELETE /api/vpn/peers/{name}", a.authz(permFirewall, a.apiVPNPeerDelete))
+	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.serialized(a.apiVPNApply)))
+	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.serialized(a.apiVPNPeerAdd)))
+	mux.HandleFunc("DELETE /api/vpn/peers/{name}", a.authz(permFirewall, a.serialized(a.apiVPNPeerDelete)))
 	mux.HandleFunc("GET /api/certs", a.auth(a.apiCertsList))
 	mux.HandleFunc("POST /api/certs/issue", a.authz(permCerts, a.apiCertIssue))
 	mux.HandleFunc("POST /api/certs/{name}/deploy-gui", a.authz(permCerts, a.apiCertDeployGUI))
@@ -414,8 +423,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/rpz", a.auth(a.apiRPZGet))
 	mux.HandleFunc("POST /api/rpz/apply", a.authz(permDNSWrite, a.apiRPZApply))
 	mux.HandleFunc("GET /api/ids", a.auth(a.apiIDSGet))
-	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.apiIDSEnable))
-	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.apiIDSDisable))
+	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.serialized(a.apiIDSEnable)))
+	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.serialized(a.apiIDSDisable)))
 	mux.HandleFunc("GET /api/system", a.auth(a.apiSystemGet))
 	mux.HandleFunc("PUT /api/system/profile", a.authz(permFirewall, a.apiSystemProfilePut))
 	mux.HandleFunc("GET /api/profile", a.auth(a.apiProfile))
@@ -863,6 +872,19 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	}
 	return nil
 }
+
+// serialized wraps a mutating handler so the whole read-config → act-on-system →
+// persist-config sequence runs under mutateMu, making concurrent config
+// mutations atomic (no interleaving / lost updates). Reserve it for fast
+// mutations; do not wrap long-running independent ops (package upgrade, ACME).
+func (a *app) serialized(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		a.mutateMu.Lock()
+		defer a.mutateMu.Unlock()
+		h(w, r)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
