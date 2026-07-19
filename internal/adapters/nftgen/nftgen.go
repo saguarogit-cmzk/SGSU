@@ -37,8 +37,15 @@ type Rule struct {
 	Proto    string `json:"proto"`  // any | tcp | udp
 	SrcAlias string `json:"srcAlias"`
 	DstAlias string `json:"dstAlias"`
-	DstPort  int    `json:"dstPort"` // 0 = any (requires tcp/udp when set)
+	DstPort  int    `json:"dstPort"`  // 0 = any (requires tcp/udp when set)
+	Category string `json:"category"` // traffic group: lan2wan|wan2lan|wan2dmz|vpn|local|other
 	Enabled  bool   `json:"enabled"`
+}
+
+// RuleCategories are the allowed traffic groupings for organising/filtering
+// rules (Sophos/OPNsense-style). An empty category means "uncategorised".
+var RuleCategories = map[string]bool{
+	"": true, "lan2wan": true, "wan2lan": true, "wan2dmz": true, "vpn": true, "local": true, "other": true,
 }
 
 var aliasNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
@@ -144,6 +151,9 @@ func (c Config) validateObjects() error {
 			if r.DstPort < 1 || r.DstPort > 65535 {
 				return fmt.Errorf("rule %q port out of range", r.Name)
 			}
+		}
+		if !RuleCategories[r.Category] {
+			return fmt.Errorf("rule %q has an invalid category %q", r.Name, r.Category)
 		}
 		if r.SrcAlias != "" && !names[r.SrcAlias] {
 			return fmt.Errorf("rule %q references unknown source alias %q", r.Name, r.SrcAlias)
@@ -324,7 +334,11 @@ func (c Config) Generate() (string, error) {
 		if !r.Enabled {
 			continue
 		}
-		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r), r.Name)
+		label := r.Name
+		if r.Category != "" {
+			label += " [" + r.Category + "]"
+		}
+		fmt.Fprintf(&b, "    %s comment %q\n", ruleMatch(r), label)
 	}
 	// VPN tunnel traffic (WireGuard site-to-site, IPsec): allow the configured
 	// local↔remote subnets through the forward policy in both directions.

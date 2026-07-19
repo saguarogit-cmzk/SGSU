@@ -42,6 +42,26 @@ func TestGenerateObjects(t *testing.T) {
 	}
 }
 
+func TestRuleCategory(t *testing.T) {
+	c := Config{
+		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2",
+		Aliases: []Alias{{Name: "web", Type: "host", Values: []string{"192.168.10.5"}}},
+		Rules:   []Rule{{Name: "allow web", Action: "accept", Proto: "tcp", DstAlias: "web", DstPort: 443, Category: "wan2lan", Enabled: true}},
+	}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `comment "allow web [wan2lan]"`) {
+		t.Errorf("category not in rule comment:\n%s", out)
+	}
+	bad := Config{Rules: []Rule{{Name: "x", Action: "accept", Proto: "any", Category: "bogus"}}}
+	if err := bad.ValidateObjects(); err == nil {
+		t.Error("expected invalid category error")
+	}
+}
+
 func TestGenerateTunnels(t *testing.T) {
 	c := Config{
 		AdminNetwork: "192.168.50.0/24", ClientNetwork: "10.10.10.0/24",

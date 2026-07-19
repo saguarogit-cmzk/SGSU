@@ -430,7 +430,10 @@ const putRules=list=>api('/api/firewall/rules',{method:'PUT',body:JSON.stringify
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><button class="alDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
 const aliasOpt=sel=>['<option value="">(bilo koji)</option>'].concat(aliases.map(a=>`<option ${a.name===sel?'selected':''}>${e(a.name)}</option>`)).join('');
-const ruleRows=rules.length?rules.map((r,i)=>`<tr><td class="muted">${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td><span class="badge">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td><button class="ruUp ghost" data-i="${i}" ${i===0?'disabled':''}>↑</button> <button class="ruDown ghost" data-i="${i}" ${i===rules.length-1?'disabled':''}>↓</button> <button class="ruDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="6" class="muted">Nema pravila.</td></tr>';
+const CATS=[['','(bez)'],['lan2wan','LAN → WAN'],['wan2lan','WAN → LAN'],['wan2dmz','WAN → DMZ'],['vpn','VPN'],['local','Local (firewall)'],['other','Ostalo']];
+const catLabel=c=>{const f=CATS.find(x=>x[0]===c);return f?f[1]:c};
+const catOpts=sel=>CATS.map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');
+const ruleRows=rules.length?rules.map((r,i)=>`<tr data-cat="${e(r.category||'')}"><td class="muted">${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="badge">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td><button class="ruUp ghost" data-i="${i}" ${i===0?'disabled':''}>↑</button> <button class="ruDown ghost" data-i="${i}" ${i===rules.length-1?'disabled':''}>↓</button> <button class="ruDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Nema pravila.</td></tr>';
 $('#content').innerHTML=`${pend}
 <div class="panel"><h2>Firewall aliasi i pravila</h2>
 <p class="muted">Imenovani objekti (host / mreža / raspon) i custom pravila koja ih koriste po imenu. Pravila se primjenjuju u forward lancu, po redoslijedu odozgo, prije općeg LAN→WAN propuštanja — drop/reject ima prednost. Aktivni VPN tuneli (WireGuard site-to-site, IPsec) automatski se propuštaju kroz forward policy pri primjeni — nakon dodavanja tunela ponovno primijeni firewall.</p>
@@ -445,8 +448,9 @@ ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgm
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="192.168.10.5, 192.168.10.6" required></label>
 <div><button type="submit">Dodaj alias</button></div><div id="alMsg" class="muted"></div></form></div>
 <div class="panel"><h3>Pravila (${rules.length})</h3>
-<table><thead><tr><th>#</th><th>Naziv</th><th>Akcija</th><th>Proto</th><th>Izvor → Odredište</th><th></th></tr></thead><tbody>${ruleRows}</tbody></table>
-<p class="muted">Redoslijed određuje prioritet — pravila se primjenjuju odozgo. Pomiči strelicama ↑↓.</p>
+<label style="max-width:280px">Filtriraj po kategoriji <select id="ruFilter"><option value="__all">Sve kategorije</option>${catOpts('')}</select></label>
+<table><thead><tr><th>#</th><th>Naziv</th><th>Kategorija</th><th>Akcija</th><th>Proto</th><th>Izvor → Odredište</th><th></th></tr></thead><tbody id="ruTbody">${ruleRows}</tbody></table>
+<p class="muted">Redoslijed određuje prioritet — pravila se primjenjuju odozgo. Pomiči strelicama ↑↓. Kategorija je za grupiranje/filtriranje (LAN→WAN, WAN→LAN, VPN, Local…).</p>
 <form id="ruAdd" class="stack">
 <label>Naziv <input id="ruName" placeholder="blokiraj-goste" required></label>
 <label>Akcija <select id="ruAction"><option value="accept">accept</option><option value="drop">drop</option><option value="reject">reject</option></select></label>
@@ -454,6 +458,7 @@ ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgm
 <label>Izvor (alias) <select id="ruSrc">${aliasOpt('')}</select></label>
 <label>Odredište (alias) <select id="ruDst">${aliasOpt('')}</select></label>
 <label>Odredišni port (0 = svi) <input id="ruPort" type="number" min="0" max="65535" value="0"></label>
+<label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
 <label><input id="ruEnabled" type="checkbox" checked> Omogućeno</label>
 <div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div>`;
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
@@ -469,11 +474,12 @@ document.querySelectorAll('.ruDel').forEach(el=>el.onclick=async()=>{const list=
 const move=async(i,d)=>{const j=i+d;if(j<0||j>=rules.length)return;const list=rules.slice();const t=list[i];list[i]=list[j];list[j]=t;try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}};
 document.querySelectorAll('.ruUp').forEach(el=>el.onclick=()=>move(+el.dataset.i,-1));
 document.querySelectorAll('.ruDown').forEach(el=>el.onclick=()=>move(+el.dataset.i,1));
+$('#ruFilter').onchange=()=>{const v=$('#ruFilter').value;document.querySelectorAll('#ruTbody tr').forEach(tr=>{tr.style.display=(v==='__all'||(tr.dataset.cat||'')===v)?'':'none'})};
 $('#ruAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ruMsg');m.textContent='';const name=$('#ruName').value.trim(),proto=$('#ruProto').value,port=parseInt($('#ruPort').value,10)||0;
 if(!/^[A-Za-z0-9 ._-]{1,40}$/.test(name)){m.textContent='Naziv pravila: 1-40 znakova (slova, brojke, razmak . _ -).';return}
 if(port&&proto==='any'){m.textContent='Za odredišni port odaberi tcp ili udp.';return}
 if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoji.';return}
-const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,enabled:$('#ruEnabled').checked};
+const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
 try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}}}
 function sevClass(s){return({critical:'st-error',warning:'st-unknown',info:'st-muted'})[s]||''}
 async function conflictsPage(){const d=await api('/api/conflicts');const list=d.conflicts||[];const e=escapeHtml;const ch=d.checked||{};
