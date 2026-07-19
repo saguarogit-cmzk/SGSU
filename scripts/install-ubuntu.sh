@@ -165,7 +165,7 @@ base_packages=(ca-certificates curl gpg openssl jq age dnsutils
   postgresql postgresql-client
   kea-dhcp4-server kea-dhcp-ddns-server kea-admin kea-ctrl-agent
   unbound dns-root-data pdns-server pdns-backend-pgsql
-  nginx nftables certbot wireguard-tools ethtool
+  nginx nftables certbot wireguard-tools ethtool iputils-ping
   strongswan strongswan-swanctl)
 # Without a prebuilt package we must build on the host (needs Ubuntu's Go 1.22;
 # go.mod dependencies are pinned to stay compatible with it).

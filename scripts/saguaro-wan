@@ -58,7 +58,9 @@ build_route() {
   while read -r name iface gw weight hc; do
     case "$name" in ''|\#*) continue ;; esac
     healthy=1
-    if [ "$hc" != "-" ]; then
+    # Skip the probe when ping is unavailable (minimized images) so the uplink
+    # is assumed up and the multipath route is still built.
+    if [ "$hc" != "-" ] && command -v ping >/dev/null 2>&1; then
       ping -c1 -W2 -I "$iface" "$hc" >/dev/null 2>&1 || healthy=0
     fi
     if [ "$healthy" = 1 ]; then
