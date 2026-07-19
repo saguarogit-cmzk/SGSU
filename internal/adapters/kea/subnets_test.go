@@ -55,6 +55,56 @@ func TestAddSubnetAssignsNextID(t *testing.T) {
 	}
 }
 
+func TestAddSubnetBindsInterface(t *testing.T) {
+	d := dhcp4Fixture()
+	s := specOK()
+	s.Interface = "enp2.20"
+	if _, err := AddSubnet(d, s); err != nil {
+		t.Fatalf("add with interface: %v", err)
+	}
+	// The subnet entry carries the interface binding.
+	var found bool
+	for _, e := range subnetSlice(d) {
+		m := e.(map[string]any)
+		if m["subnet"] == s.Subnet {
+			if m["interface"] != "enp2.20" {
+				t.Fatalf("subnet interface not set: %+v", m)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("new subnet not found")
+	}
+	// Kea now listens on that interface.
+	ic := d["interfaces-config"].(map[string]any)
+	list := ic["interfaces"].([]any)
+	if len(list) != 1 || list[0] != "enp2.20" {
+		t.Fatalf("interfaces-config not updated: %+v", list)
+	}
+	// A bad interface name is rejected.
+	bad := specOK()
+	bad.Subnet = "192.168.30.0/24"
+	bad.PoolStart = "192.168.30.100"
+	bad.PoolEnd = "192.168.30.200"
+	bad.Router = "192.168.30.1"
+	bad.DNSServers = []string{"192.168.30.1"}
+	bad.Interface = "bad iface!"
+	if _, err := AddSubnet(d, bad); err == nil {
+		t.Fatal("invalid interface name must be refused")
+	}
+}
+
+func TestEnsureInterfaceWildcard(t *testing.T) {
+	// When Kea already listens on "*", a specific interface is not appended.
+	d := map[string]any{"interfaces-config": map[string]any{"interfaces": []any{"*"}}}
+	EnsureInterface(d, "enp2.20")
+	list := d["interfaces-config"].(map[string]any)["interfaces"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("wildcard listen should be left alone: %+v", list)
+	}
+}
+
 func TestAddSubnetRefusesOverlap(t *testing.T) {
 	d := dhcp4Fixture()
 	overlap := SubnetSpec{Subnet: "192.168.10.128/25", PoolStart: "192.168.10.130", PoolEnd: "192.168.10.140"}

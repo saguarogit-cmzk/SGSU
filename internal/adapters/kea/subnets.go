@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -52,7 +53,13 @@ type SubnetSpec struct {
 	Router     string   `json:"router"`
 	Domain     string   `json:"domain"`
 	DNSServers []string `json:"dnsServers"`
+	// Interface optionally binds this subnet to a specific NIC (or VLAN
+	// sub-interface), so a per-zone/per-VLAN segment gets its own DHCP scope.
+	// Empty means Kea selects the interface by the subnet's address range.
+	Interface string `json:"interface"`
 }
+
+var ifaceRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,15}$`)
 
 // Validate checks CIDR syntax, pool membership and ordering, and that the
 // optional router lives inside the subnet.
@@ -85,7 +92,31 @@ func (s SubnetSpec) Validate() error {
 			return fmt.Errorf("invalid DNS server address %q", d)
 		}
 	}
+	if s.Interface != "" && !ifaceRe.MatchString(s.Interface) {
+		return fmt.Errorf("invalid interface name %q", s.Interface)
+	}
 	return nil
+}
+
+// EnsureInterface adds iface to Kea's interfaces-config listen list (unless it
+// already listens on that interface or on "*"), so a subnet bound to a per-zone
+// NIC/VLAN actually receives DHCP there.
+func EnsureInterface(dhcp4 map[string]any, iface string) {
+	if iface == "" {
+		return
+	}
+	ic, _ := dhcp4["interfaces-config"].(map[string]any)
+	if ic == nil {
+		ic = map[string]any{}
+		dhcp4["interfaces-config"] = ic
+	}
+	list, _ := ic["interfaces"].([]any)
+	for _, v := range list {
+		if s, _ := v.(string); s == iface || s == "*" {
+			return
+		}
+	}
+	ic["interfaces"] = append(list, iface)
 }
 
 func subnetSlice(dhcp4 map[string]any) []any {
@@ -162,6 +193,10 @@ func AddSubnet(dhcp4 map[string]any, s SubnetSpec) (int64, error) {
 		"pools":       s.pools(),
 		"option-data": s.optionData(),
 	}
+	if s.Interface != "" {
+		entry["interface"] = s.Interface
+		EnsureInterface(dhcp4, s.Interface)
+	}
 	dhcp4["subnet4"] = append(list, entry)
 	return id, nil
 }
@@ -182,6 +217,12 @@ func UpdateSubnet(dhcp4 map[string]any, id int64, s SubnetSpec) error {
 		}
 		m["pools"] = s.pools()
 		m["option-data"] = s.optionData()
+		if s.Interface != "" {
+			m["interface"] = s.Interface
+			EnsureInterface(dhcp4, s.Interface)
+		} else {
+			delete(m, "interface")
+		}
 		return nil
 	}
 	return fmt.Errorf("subnet id %d not found", id)

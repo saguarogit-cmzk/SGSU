@@ -1,0 +1,22 @@
+#!/bin/sh
+# saguaro-power — root adapter for device power control from the GUI. Only the
+# two fixed subcommands are allowed; the saguaro user runs these via sudoers.
+# The control plane gates this on an admin-only permission and audits it.
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+  reboot)
+    logger -t saguaro-power "reboot requested via GUI"
+    systemctl reboot
+    ;;
+  poweroff)
+    logger -t saguaro-power "poweroff requested via GUI"
+    systemctl poweroff
+    ;;
+  *)
+    echo "usage: saguaro-power reboot|poweroff" >&2
+    exit 2
+    ;;
+esac

@@ -4,10 +4,15 @@ function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)saguaro_csrf=([^;]
 async function api(path,options={}){const headers={'Content-Type':'application/json'};const method=(options.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD'){headers['X-CSRF-Token']=csrfToken()}const r=await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});if(r.status===401){showLogin();throw Error('Prijava je istekla.')}const body=await r.json();if(!r.ok)throw Error(body.error||'Greška zahtjeva');return body}
 function showLogin(){$('#login').classList.remove('hidden');$('#shell').classList.add('hidden')}
 let sysProfile={profile:'gateway',gateway:true,utm:true};
+let meRole='';
 let nicLabels={};
 function nlabel(n){return nicLabels[n]?nicLabels[n]+' ('+n+')':n}
 async function loadNicLabels(){try{const ni=await api('/api/interfaces');nicLabels={};ni.forEach(n=>{if(n.label)nicLabels[n.name]=n.label})}catch(e){}}
-async function showShell(){$('#login').classList.add('hidden');$('#shell').classList.remove('hidden');try{sysProfile=await api('/api/system')}catch(e){}await loadNicLabels();renderNav();openModule(current)}
+async function showShell(){$('#login').classList.add('hidden');$('#shell').classList.remove('hidden');try{sysProfile=await api('/api/system')}catch(e){}try{meRole=(await api('/api/profile')).role||''}catch(e){}
+// Reboot/poweroff are admin-only; reveal them only for admins.
+if(meRole==='admin'){$('#mReboot').classList.remove('hidden');$('#mPoweroff').classList.remove('hidden')}else{$('#mReboot').classList.add('hidden');$('#mPoweroff').classList.add('hidden')}
+await loadNicLabels();renderNav();openModule(current)}
+async function devPower(action){const label=action==='reboot'?'restartati':'isključiti';if(!confirm(`Sigurno želiš ${label} uređaj? Veza s GUI-jem će se prekinuti.`))return;$('#devMenu').classList.add('hidden');try{const r=await api(`/api/system/power/${action}`,{method:'POST',body:'{}'});alert(r.message||'OK')}catch(e){alert(e.message)}}
 function help(html){return `<details class="help"><summary>Kako ovo postaviti?</summary><div>${html}</div></details>`}
 const svg=p=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const ICONS={
@@ -501,7 +506,7 @@ const ZKINDS=[['lan','LAN (povjerljivo)'],['dmz','DMZ (poluizolirano)'],['guest'
 const zkindLabel=k=>{const z=ZKINDS.find(x=>x[0]===k);return z?z[1]:k};
 const zoneOpt=sel=>['<option value="">(bilo koja)</option>'].concat(zones.map(z=>`<option ${z.name===sel?'selected':''}>${e(z.name)}</option>`)).join('');
 const zoneIfLabel=z=>e(nlabel(z.interface))+(z.vlanId?` <span class="badge">VLAN ${z.vlanId}</span> <span class="muted">${e(z.interface)}.${z.vlanId}</span>`:'');
-const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><td><span class="badge">${e(zkindLabel(z.kind))}</span></td><td>${zoneIfLabel(z)}</td><td class="muted">${e(z.network||'—')}${z.vlanId&&z.address?' · '+e(z.address):''}</td><td><div class="rowacts">${iconBtn('del','Obriši zonu','danger',`data-i="${i}"`).replace('iconbtn','iconbtn znDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema definiranih zona (vrijedi osnovna LAN↔WAN politika).</td></tr>';
+const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><td><span class="badge">${e(zkindLabel(z.kind))}</span></td><td>${zoneIfLabel(z)}</td><td class="muted">${e(z.network||'—')}${z.vlanId&&z.address?' · '+e(z.address):''}</td><td><div class="rowacts">${z.kind!=='wan'&&z.network?`<button type="button" class="ghost znDhcp" data-i="${i}" title="Napravi DHCP subnet za ovu zonu">DHCP</button>`:''}${iconBtn('del','Obriši zonu','danger',`data-i="${i}"`).replace('iconbtn','iconbtn znDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema definiranih zona (vrijedi osnovna LAN↔WAN politika).</td></tr>';
 const hasVlan=zones.some(z=>z.vlanId);
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
 const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
@@ -597,6 +602,7 @@ if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoj
 const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
 try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.znDel').forEach(el=>el.onclick=async()=>{const list=zones.filter((_,j)=>j!==+el.dataset.i);try{await putZones(list);fwRulesPage()}catch(err){alert(err.message)}});
+document.querySelectorAll('.znDhcp').forEach(el=>el.onclick=()=>{const z=zones[+el.dataset.i];const ifn=z.vlanId?z.interface+'.'+z.vlanId:z.interface;const router=z.address?z.address.split('/')[0]:'';window.__zoneDhcp={name:z.name,subnet:z.network,iface:ifn,router};openModule('dhcp')});
 const znVlanBtn=$('#znVlanApply');if(znVlanBtn)znVlanBtn.onclick=async()=>{if(!confirm('Primijeniti VLAN sučelja? Ovo piše netplan i radi netplan apply (kreira/mijenja VLAN pod-sučelja).'))return;const m=$('#znVlanMsg');znVlanBtn.disabled=true;m.textContent='Primjena netplana…';try{const r=await api('/api/firewall/zones/apply-vlans',{method:'POST',body:'{}'});m.textContent=`VLAN sučelja primijenjena (${r.vlans}).`}catch(err){m.textContent=err.message}finally{znVlanBtn.disabled=false}};
 $('#znAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#znMsg');m.textContent='';const name=$('#znName').value.trim(),kind=$('#znKind').value,iface=$('#znIf').value,vlan=parseInt($('#znVlan').value,10)||0,net=$('#znNet').value.trim(),addr=$('#znAddr').value.trim();
 if(!/^[a-z][a-z0-9_-]{0,20}$/.test(name)){m.textContent='Naziv zone: počni slovom (a-z 0-9 _ -).';return}
@@ -693,6 +699,7 @@ const subForm=`<form id="subForm" class="stack"><h3 id="subFormTitle">Novi subne
 <label>Router (gateway) <input id="subRouter" placeholder="192.168.20.1"></label>
 <label>DNS serveri (zarezom) <input id="subDns" placeholder="192.168.20.1"></label>
 <label>Domena <input id="subDomain" placeholder="example.internal"></label>
+<label>Sučelje (opcionalno — veže DHCP na zonu/VLAN, npr. enp2.20) <input id="subIface" placeholder=""></label>
 <div><button type="submit">Spremi subnet</button> <button type="button" id="subReset">Poništi</button></div>
 <p class="muted">Promjena ide kroz transakciju: config-test → config-set → provjera → config-write (uz automatski rollback na grešku).</p>
 <div id="subMsg" class="muted"></div></form>`;
@@ -708,9 +715,11 @@ ${help('<b>Subnet</b> = mreža koju poslužuje DHCP (CIDR) + <b>pool</b> raspon 
 <p class="muted">Blokiran MAC ne dobiva DHCP lease — Kea odbacuje njegov zahtjev (DROP klasa). Postojeći lease vrijedi do isteka; za trenutni prekid mreže koristi i firewall pravilo.</p>
 ${blk}
 <form id="blkAdd" class="stack"><label>MAC za blokiranje <input id="blkMac" placeholder="aa:bb:cc:dd:ee:ff" required></label><div><button type="submit" class="danger">Blokiraj MAC</button></div><div id="blkMsg" class="muted"></div></form></div>`;
-const subPayload=()=>({subnet:$('#subCidr').value.trim(),poolStart:$('#subPoolStart').value.trim(),poolEnd:$('#subPoolEnd').value.trim(),router:$('#subRouter').value.trim(),domain:$('#subDomain').value.trim(),dnsServers:$('#subDns').value.split(',').map(s=>s.trim()).filter(Boolean)});
+const subPayload=()=>({subnet:$('#subCidr').value.trim(),poolStart:$('#subPoolStart').value.trim(),poolEnd:$('#subPoolEnd').value.trim(),router:$('#subRouter').value.trim(),domain:$('#subDomain').value.trim(),dnsServers:$('#subDns').value.split(',').map(s=>s.trim()).filter(Boolean),interface:$('#subIface').value.trim()});
+// Prefill the subnet form from a zone (per-zone DHCP shortcut from the Firewall page).
+if(window.__zoneDhcp){const z=window.__zoneDhcp;window.__zoneDhcp=null;$('#subCidr').value=z.subnet||'';$('#subRouter').value=z.router||'';$('#subIface').value=z.iface||'';if(z.router)$('#subDns').value=z.router;$('#subFormTitle').textContent='DHCP za zonu'+(z.name?' “'+z.name+'”':'');$('#subMsg').textContent='Provjeri/dopuni pool raspon pa spremi.';$('#subPoolStart').focus()}
 $('#subForm').onsubmit=async e=>{e.preventDefault();$('#subMsg').textContent='Primjena…';const id=$('#subId').value;try{if(id){await api(`/api/dhcp/subnets/${id}`,{method:'PUT',body:JSON.stringify(subPayload())})}else{await api('/api/dhcp/subnets',{method:'POST',body:JSON.stringify(subPayload())})}dhcpPage()}catch(err){$('#subMsg').textContent=err.message}};
-$('#subReset').onclick=()=>{$('#subId').value='';$('#subFormTitle').textContent='Novi subnet';['subCidr','subPoolStart','subPoolEnd','subRouter','subDns','subDomain'].forEach(i=>$('#'+i).value='');$('#subCidr').disabled=false};
+$('#subReset').onclick=()=>{$('#subId').value='';$('#subFormTitle').textContent='Novi subnet';['subCidr','subPoolStart','subPoolEnd','subRouter','subDns','subDomain','subIface'].forEach(i=>$('#'+i).value='');$('#subCidr').disabled=false};
 document.querySelectorAll('.subEdit').forEach(el=>el.onclick=()=>{$('#subId').value=el.dataset.id;$('#subFormTitle').textContent=`Uredi subnet ${el.dataset.subnet} (ID ${el.dataset.id})`;$('#subCidr').value=el.dataset.subnet;$('#subCidr').disabled=true;const p=(el.dataset.pool||'').split('-').map(s=>s.trim());$('#subPoolStart').value=p[0]||'';$('#subPoolEnd').value=p[1]||'';$('#subMsg').textContent='CIDR se ne mijenja — za promjenu CIDR-a obrišite pa dodajte subnet.'});
 document.querySelectorAll('.subDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati subnet ID ${el.dataset.id}? DHCP za taj segment prestaje raditi.`))return;try{await api(`/api/dhcp/subnets/${el.dataset.id}`,{method:'DELETE'});dhcpPage()}catch(err){if(err.message.includes('force=true')&&confirm(err.message+'\n\nObrisati zajedno s rezervacijama?')){try{await api(`/api/dhcp/subnets/${el.dataset.id}?force=true`,{method:'DELETE'});dhcpPage()}catch(e2){alert(e2.message)}}else{alert(err.message)}}});
 document.querySelectorAll('.resDel').forEach(el=>el.onclick=async()=>{if(!confirm('Obrisati rezervaciju?'))return;try{await api(`/api/dhcp/reservations/${el.dataset.id}`,{method:'DELETE'});dhcpPage()}catch(err){alert(err.message)}});
@@ -766,5 +775,11 @@ function wizDnsZone(){runWizard('Čarobnjak: DNS zona (W4)',[
 {title:'Ime i nameserveri',render:s=>`<label>Ime zone <input id="w2name" value="${escapeHtml(s.name||'')}" placeholder="example.internal" ${s.type==='reverse'?'readonly':''}></label><label>Nameserveri (zarezom) <input id="w2ns" value="${escapeHtml(s.ns||('ns1.'+(s.type==='reverse'?'':(s.name||''))))}" placeholder="ns1.example.internal"></label>`,collect:s=>{s.name=$('#w2name').value.trim();s.ns=$('#w2ns').value.trim();return(s.name&&s.ns)?null:'Unesite ime zone i barem jedan nameserver.'}},
 {title:'Pregled',render:s=>`<p>Zona: <b>${escapeHtml(s.name)}</b> (${escapeHtml(s.type)})<br>Nameserveri: <b>${escapeHtml(s.ns)}</b></p><p class="muted">PowerDNS automatski kreira SOA i NS zapise. Kolizija s postojećom zonom bit će odbijena.</p>`}],
 async s=>{await api('/api/dns/zones',{method:'POST',body:JSON.stringify({name:s.name,nameservers:s.ns.split(',').map(x=>x.trim()).filter(Boolean)})});openModule('dns')})}
-$('#logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',body:'{}'})}finally{showLogin()}}
+const doLogout=async()=>{try{await api('/api/logout',{method:'POST',body:'{}'})}finally{showLogin()}};
+$('#logout').onclick=doLogout;
+$('#devBtn').onclick=e=>{e.stopPropagation();$('#devMenu').classList.toggle('hidden')};
+document.addEventListener('click',e=>{if(!e.target.closest('.devmenu'))$('#devMenu').classList.add('hidden')});
+$('#mLogout').onclick=doLogout;
+$('#mReboot').onclick=()=>devPower('reboot');
+$('#mPoweroff').onclick=()=>devPower('poweroff');
 api('/api/dashboard').then(showShell).catch(showLogin);

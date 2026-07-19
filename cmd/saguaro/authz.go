@@ -21,11 +21,12 @@ const (
 	permCerts          = "certs:write"
 	permBackup         = "backup:write"
 	permPackages       = "packages:write"
+	permPower          = "power:control"
 )
 
 var rolePermissions = map[string]map[string]bool{
 	roleAdmin: {permDNSWrite: true, permDHCPWrite: true, permServiceCheck: true, permServiceControl: true,
-		permMailWrite: true, permUsersWrite: true, permSessions: true, permFirewall: true, permProxy: true, permCerts: true, permBackup: true, permPackages: true},
+		permMailWrite: true, permUsersWrite: true, permSessions: true, permFirewall: true, permProxy: true, permCerts: true, permBackup: true, permPackages: true, permPower: true},
 	roleNetworkOperator: {permDHCPWrite: true, permServiceCheck: true, permServiceControl: true, permFirewall: true, permProxy: true},
 	roleDNSOperator:     {permDNSWrite: true, permServiceCheck: true},
 	roleAuditor:         {},
