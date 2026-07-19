@@ -82,6 +82,8 @@ type state struct {
 	BlockedMACs []string `json:"blockedMacs,omitempty"`
 	// WANConfig is the WAN uplink addressing (DHCP or static).
 	WANConfig *wancfg.WAN `json:"wanConfig,omitempty"`
+	// SIEM is the external log-forwarding configuration.
+	SIEM *siemConfig `json:"siem,omitempty"`
 }
 
 type store struct {
@@ -123,6 +125,7 @@ type app struct {
 	hwCores        int
 	cpuMu          sync.Mutex
 	cpuPrev        *cpuStat
+	siem           *siemForwarder
 
 	// component endpoints used by health checks
 	resolverAddr string
@@ -133,7 +136,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.34.0"
+const appVersion = "0.35.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -255,6 +258,11 @@ func main() {
 		keaUser:      os.Getenv("SAGUARO_KEA_API_USER"),
 		keaPass:      os.Getenv("SAGUARO_KEA_API_PASSWORD"),
 	}
+	hostname, _ := os.Hostname()
+	a.siem = newSIEMForwarder(hostname, appVersion, logger)
+	if s.data.SIEM != nil {
+		a.siem.setConfig(*s.data.SIEM)
+	}
 	if err := a.sessions.PruneExpired(time.Now()); err != nil {
 		a.log.Error("session prune failed", "error", err)
 	}
@@ -306,6 +314,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/dhcp/blocklist", a.authz(permDHCPWrite, a.apiDHCPBlockAdd))
 	mux.HandleFunc("DELETE /api/dhcp/blocklist/{mac}", a.authz(permDHCPWrite, a.apiDHCPBlockDelete))
 	mux.HandleFunc("GET /api/conflicts", a.auth(a.apiConflicts))
+	mux.HandleFunc("GET /api/siem", a.auth(a.apiSIEMGet))
+	mux.HandleFunc("PUT /api/siem", a.authz(permMailWrite, a.apiSIEMPut))
+	mux.HandleFunc("POST /api/siem/test", a.authz(permMailWrite, a.apiSIEMTest))
 	mux.HandleFunc("GET /api/svcctl", a.authz(permServiceCheck, a.apiSvcCtlList))
 	mux.HandleFunc("POST /api/svcctl/{key}/{action}", a.authz(permServiceControl, a.apiSvcCtlAction))
 	mux.HandleFunc("GET /api/audit", a.auth(a.audit))
@@ -718,6 +729,7 @@ func (a *app) recordSev(r *http.Request, actor, action, target, result, severity
 	if err := a.store.addAudit(e); err != nil {
 		a.log.Error("audit persistence failed", "error", err)
 	}
+	a.siemForward(e)
 	if severity == "security" {
 		a.log.Warn("security event", "action", action, "actor", actor, "target", target, "remote", remoteIP(r))
 	}
