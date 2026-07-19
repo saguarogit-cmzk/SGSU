@@ -109,13 +109,17 @@ func TestFirewallTestEndpoint(t *testing.T) {
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", r.StatusCode)
 	}
-	r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/test", `{"src":"192.168.30.10","dst":"192.168.10.5","proto":"tcp","dstPort":443}`)
-	if r.StatusCode != http.StatusOK {
-		t.Fatalf("test: got %d", r.StatusCode)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/firewall/test",
+		strings.NewReader(`{"src":"192.168.30.10","dst":"192.168.10.5","proto":"tcp","dstPort":443}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrfCookie(t, srv, c))
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
 	}
 	var res nftgen.RuleEval
-	json.NewDecoder(r.Body).Decode(&res)
-	r.Body.Close()
+	json.NewDecoder(resp.Body).Decode(&res)
+	resp.Body.Close()
 	if !res.Matched || res.Action != "drop" || res.RuleName != "block" {
 		t.Fatalf("evaluation wrong: %+v", res)
 	}
