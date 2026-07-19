@@ -78,6 +78,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-ipsec"                    "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-svc"                      "$STAGE/usr/sbin/saguaro-svc"
 install -D -m 0755 "$ROOT/scripts/saguaro-logs"                     "$STAGE/usr/sbin/saguaro-logs"
 install -D -m 0755 "$ROOT/scripts/saguaro-tools"                    "$STAGE/usr/sbin/saguaro-tools"
+install -D -m 0755 "$ROOT/scripts/saguaro-webproxy"                 "$STAGE/usr/sbin/saguaro-webproxy"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-routes.service" "$STAGE/usr/lib/systemd/system/saguaro-routes.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.service" "$STAGE/usr/lib/systemd/system/saguaro-wan-check.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.timer"   "$STAGE/usr/lib/systemd/system/saguaro-wan-check.timer"

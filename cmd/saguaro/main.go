@@ -30,6 +30,7 @@ import (
 	routesmod "saguaro.local/network-manager/internal/adapters/routes"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
 	"saguaro.local/network-manager/internal/adapters/s2s"
+	"saguaro.local/network-manager/internal/adapters/squidcfg"
 	"saguaro.local/network-manager/internal/adapters/wancfg"
 	"saguaro.local/network-manager/internal/adapters/wireguard"
 	evstore "saguaro.local/network-manager/internal/events"
@@ -86,6 +87,8 @@ type state struct {
 	WANConfigs []wancfg.WAN `json:"wanConfigs,omitempty"`
 	// SIEM is the external log-forwarding configuration.
 	SIEM *siemConfig `json:"siem,omitempty"`
+	// WebProxy is the Squid/e2guardian caching+filtering proxy configuration.
+	WebProxy *squidcfg.Config `json:"webProxy,omitempty"`
 }
 
 type store struct {
@@ -112,6 +115,7 @@ type app struct {
 	runIDS         func(ctx context.Context, args ...string) ([]byte, error)
 	runRPZ         func(ctx context.Context, action string) ([]byte, error)
 	runProxy       func(ctx context.Context, action string) ([]byte, error)
+	runWebProxy    func(ctx context.Context, args ...string) ([]byte, error)
 	probeUpstream  func(ctx context.Context, addr string) error
 	runCert        func(ctx context.Context, args ...string) ([]byte, error)
 	runVPN         func(ctx context.Context, action string) ([]byte, error)
@@ -140,7 +144,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.41.0"
+const appVersion = "0.42.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -241,6 +245,7 @@ func main() {
 		runIDS:         defaultRunIDS,
 		runRPZ:         defaultRunRPZ,
 		runProxy:       defaultRunProxy,
+		runWebProxy:    defaultRunWebProxy,
 		probeUpstream:  defaultProbeUpstream,
 		runCert:        defaultRunCert,
 		runVPN:         defaultRunVPN,
@@ -364,6 +369,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/logs/unbound", a.auth(a.apiUnboundStats))
 	mux.HandleFunc("GET /api/logs/suricata", a.auth(a.apiSuricataAlerts))
 	mux.HandleFunc("POST /api/tools", a.authz(permServiceCheck, a.apiToolRun))
+	mux.HandleFunc("GET /api/webproxy", a.auth(a.apiWebProxyGet))
+	mux.HandleFunc("PUT /api/webproxy", a.authz(permProxy, a.apiWebProxyPut))
 	mux.HandleFunc("GET /api/wan", a.auth(a.apiWANConfigGet))
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.apiWANConfigApply))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))

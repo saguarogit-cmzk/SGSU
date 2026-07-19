@@ -1,0 +1,69 @@
+#!/bin/sh
+# saguaro-webproxy — root adapter for the caching/filtering web proxy: Squid
+# (cache + LAN access) with optional e2guardian URL filtering chained in front.
+# Allow-listed subcommands only.
+#
+#   apply PORT FILTER   install the staged Squid drop-in and (when FILTER=1)
+#                       the e2guardian banned/exception lists, then (re)start
+#   disable             stop and disable Squid and e2guardian
+set -eu
+
+STAGED_SQUID=/var/lib/saguaro/staged-squid.conf
+STAGED_BANNED=/var/lib/saguaro/staged-e2g-banned
+STAGED_EXC=/var/lib/saguaro/staged-e2g-exceptions
+SQUID_DROPIN=/etc/squid/conf.d/saguaro.conf
+E2G_DIR=/etc/e2guardian
+E2G_LISTS="$E2G_DIR/lists"
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+ensure_include() { # file marker-line
+  grep -qF "$2" "$1" 2>/dev/null || printf '%s\n' "$2" >>"$1"
+}
+
+case "${1:-}" in
+  apply)
+    PORT="${2:-8080}"
+    FILTER="${3:-0}"
+    echo "$PORT" | grep -Eq '^[0-9]{1,5}$' || { echo "invalid port" >&2; exit 1; }
+    [ "$FILTER" = 0 ] || [ "$FILTER" = 1 ] || { echo "invalid filter flag" >&2; exit 1; }
+    command -v squid >/dev/null || { echo "squid is not installed" >&2; exit 1; }
+    [ -s "$STAGED_SQUID" ] || { echo "no staged squid config" >&2; exit 1; }
+    install -d -m 0755 /etc/squid/conf.d
+    install -m 0644 -o root -g root "$STAGED_SQUID" "$SQUID_DROPIN"
+    rm -f "$STAGED_SQUID"
+    if ! squid -k parse >/dev/null 2>&1; then
+      rm -f "$SQUID_DROPIN"
+      echo "squid rejected the generated config; not applied" >&2
+      exit 1
+    fi
+    systemctl enable squid >/dev/null 2>&1 || true
+    systemctl restart squid
+    if [ "$FILTER" = 1 ] && command -v e2guardian >/dev/null; then
+      install -d -m 0755 "$E2G_LISTS"
+      install -m 0644 -o root -g root "$STAGED_BANNED" "$E2G_LISTS/saguaro-banned" 2>/dev/null || : >"$E2G_LISTS/saguaro-banned"
+      install -m 0644 -o root -g root "$STAGED_EXC" "$E2G_LISTS/saguaro-exceptions" 2>/dev/null || : >"$E2G_LISTS/saguaro-exceptions"
+      ensure_include "$E2G_LISTS/bannedsitelist" ".Include<$E2G_LISTS/saguaro-banned>"
+      ensure_include "$E2G_LISTS/exceptionsitelist" ".Include<$E2G_LISTS/saguaro-exceptions>"
+      # point e2guardian at the client port and the Squid parent
+      sed -i "s/^filterport = .*/filterport = $PORT/" "$E2G_DIR/e2guardian.conf" 2>/dev/null || true
+      sed -i "s/^proxyport = .*/proxyport = 3128/" "$E2G_DIR/e2guardian.conf" 2>/dev/null || true
+      systemctl enable e2guardian >/dev/null 2>&1 || true
+      systemctl restart e2guardian || echo "e2guardian restart failed; check config" >&2
+    else
+      systemctl disable --now e2guardian 2>/dev/null || true
+    fi
+    rm -f "$STAGED_BANNED" "$STAGED_EXC"
+    logger -t saguaro-webproxy "web proxy applied (port $PORT, filter $FILTER)"
+    ;;
+  disable)
+    systemctl disable --now e2guardian 2>/dev/null || true
+    systemctl disable --now squid 2>/dev/null || true
+    rm -f "$SQUID_DROPIN"
+    logger -t saguaro-webproxy "web proxy disabled"
+    ;;
+  *)
+    echo "usage: saguaro-webproxy apply PORT FILTER | disable" >&2
+    exit 2
+    ;;
+esac

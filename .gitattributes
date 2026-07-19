@@ -17,6 +17,7 @@ scripts/saguaro-net text eol=lf
 scripts/saguaro-route text eol=lf
 scripts/saguaro-logs text eol=lf
 scripts/saguaro-tools text eol=lf
+scripts/saguaro-webproxy text eol=lf
 scripts/saguaro-s2s text eol=lf
 scripts/saguaro-ipsec text eol=lf
 scripts/saguaro-svc text eol=lf
