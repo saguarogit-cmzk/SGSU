@@ -158,7 +158,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.55.0"
+const appVersion = "0.56.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -395,7 +395,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/logs/suricata", a.auth(a.apiSuricataAlerts))
 	mux.HandleFunc("POST /api/tools", a.authz(permServiceCheck, a.apiToolRun))
 	mux.HandleFunc("GET /api/webproxy", a.auth(a.apiWebProxyGet))
-	mux.HandleFunc("PUT /api/webproxy", a.authz(permProxy, a.apiWebProxyPut))
+	mux.HandleFunc("GET /api/webproxy/ca", a.auth(a.apiWebProxyCA))
+	mux.HandleFunc("PUT /api/webproxy", a.authz(permProxy, a.serialized(a.apiWebProxyPut)))
 	mux.HandleFunc("GET /api/wan", a.auth(a.apiWANConfigGet))
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.apiWANConfigApply))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))

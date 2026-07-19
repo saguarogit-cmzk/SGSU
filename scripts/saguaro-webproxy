@@ -14,6 +14,11 @@ STAGED_EXC=/var/lib/saguaro/staged-e2g-exceptions
 SQUID_DROPIN=/etc/squid/conf.d/saguaro.conf
 E2G_DIR=/etc/e2guardian
 E2G_LISTS="$E2G_DIR/lists"
+BUMP_DIR=/etc/squid/ssl_cert
+BUMP_CERT="$BUMP_DIR/saguaro-bump-ca.pem"
+BUMP_KEY="$BUMP_DIR/saguaro-bump-ca.key"
+SSL_DB=/var/lib/squid/ssl_db
+CA_PUBLISH=/var/lib/saguaro/webproxy-bump-ca.crt
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -22,6 +27,32 @@ ensure_include() { # file marker-line
 }
 
 case "${1:-}" in
+  bump-ca)
+    # Generate the SSL-bump CA (once) and initialise Squid's cert-generator DB,
+    # then publish the PUBLIC CA cert where the control plane can serve it for
+    # download. The private key never leaves the box.
+    command -v squid >/dev/null || { echo "squid is not installed" >&2; exit 1; }
+    command -v openssl >/dev/null || { echo "openssl is not installed" >&2; exit 1; }
+    install -d -m 0755 -o root -g proxy "$BUMP_DIR" 2>/dev/null || install -d -m 0755 "$BUMP_DIR"
+    if [ ! -s "$BUMP_KEY" ] || [ ! -s "$BUMP_CERT" ]; then
+      openssl req -new -newkey rsa:2048 -sha256 -days 3650 -nodes -x509 \
+        -keyout "$BUMP_KEY" -out "$BUMP_CERT" \
+        -subj "/O=Saguaro/CN=Saguaro Web Proxy CA" \
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1 \
+        || { echo "openssl failed to generate the SSL-bump CA" >&2; exit 1; }
+    fi
+    chown root:proxy "$BUMP_KEY" "$BUMP_CERT" 2>/dev/null || true
+    chmod 0440 "$BUMP_KEY"; chmod 0444 "$BUMP_CERT"
+    CERTGEN=/usr/lib/squid/security_file_certgen
+    [ -x "$CERTGEN" ] || CERTGEN=/usr/lib/squid/ssl_crtd
+    if [ ! -d "$SSL_DB" ] && [ -x "$CERTGEN" ]; then
+      "$CERTGEN" -c -s "$SSL_DB" -M 4MB >/dev/null 2>&1 || true
+    fi
+    chown -R proxy:proxy "$SSL_DB" 2>/dev/null || true
+    install -m 0644 -o root -g saguaro "$BUMP_CERT" "$CA_PUBLISH" 2>/dev/null || cp "$BUMP_CERT" "$CA_PUBLISH"
+    logger -t saguaro-webproxy "ssl-bump CA ensured"
+    ;;
   apply)
     PORT="${2:-8080}"
     FILTER="${3:-0}"
@@ -63,7 +94,7 @@ case "${1:-}" in
     logger -t saguaro-webproxy "web proxy disabled"
     ;;
   *)
-    echo "usage: saguaro-webproxy apply PORT FILTER | disable" >&2
+    echo "usage: saguaro-webproxy bump-ca | apply PORT FILTER | disable" >&2
     exit 2
     ;;
 esac

@@ -36,7 +36,24 @@ func (a *app) getWebProxy() squidcfg.Config {
 	cfg := *a.store.data.WebProxy
 	cfg.BannedSites = append([]string(nil), cfg.BannedSites...)
 	cfg.ExceptionSites = append([]string(nil), cfg.ExceptionSites...)
+	cfg.SpliceSites = append([]string(nil), cfg.SpliceSites...)
 	return cfg
+}
+
+// bumpCAPath is where the adapter publishes the public SSL-bump CA for download.
+const bumpCAPath = "/var/lib/saguaro/webproxy-bump-ca.crt"
+
+// apiWebProxyCA serves the public SSL-bump CA certificate so operators can
+// distribute it to client devices (which must trust it for HTTPS interception).
+func (a *app) apiWebProxyCA(w http.ResponseWriter, _ *http.Request) {
+	pem, err := os.ReadFile(bumpCAPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "SSL-bump CA not generated yet — enable SSL-bump first")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="saguaro-web-proxy-ca.crt"`)
+	_, _ = w.Write(pem)
 }
 
 func (a *app) setWebProxy(cfg squidcfg.Config) error {
@@ -52,6 +69,13 @@ func (a *app) applyWebProxy(ctx context.Context, cfg squidcfg.Config) error {
 			return errFromOutput("disable failed", out, err)
 		}
 		return nil
+	}
+	// SSL-bump needs its CA and cert-generator DB in place before squid -k parse
+	// validates the config that references them.
+	if cfg.SSLBump {
+		if out, err := a.runWebProxy(ctx, "bump-ca"); err != nil {
+			return errFromOutput("SSL-bump CA setup failed", out, err)
+		}
 	}
 	dropin, err := cfg.GenerateSquidDropIn()
 	if err != nil {
@@ -99,6 +123,9 @@ func (a *app) apiWebProxyPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.ExceptionSites == nil {
 		in.ExceptionSites = []string{}
+	}
+	if in.SpliceSites == nil {
+		in.SpliceSites = []string{}
 	}
 	if err := in.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
