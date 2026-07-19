@@ -1,0 +1,82 @@
+#!/bin/sh
+# saguaro-tools — network diagnostics adapter (ping/DNS/traceroute/mtr/http),
+# optionally bound to a chosen interface. Read-only probes, allow-listed only;
+# every argument is charset-validated and each run is time-bounded.
+#
+#   ping  HOST [IFACE]
+#   dns   HOST [SERVER]
+#   trace HOST [IFACE]
+#   mtr   HOST [IFACE]
+#   http  HOST [IFACE]
+set -eu
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+valid_host()  { echo "$1" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,252})$'; }
+valid_iface() { echo "$1" | grep -Eq '^[A-Za-z0-9._-]{1,15}$' && [ -e "/sys/class/net/$1" ]; }
+valid_ip()    { echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
+
+TOOL="${1:-}"
+HOST="${2:-}"
+ARG="${3:-}"
+
+valid_host "$HOST" || { echo "invalid host/target" >&2; exit 1; }
+
+case "$TOOL" in
+  ping)
+    command -v ping >/dev/null || { echo "ping is not installed" >&2; exit 1; }
+    if [ -n "$ARG" ]; then
+      valid_iface "$ARG" || { echo "invalid interface" >&2; exit 1; }
+      timeout 12 ping -c4 -W2 -I "$ARG" "$HOST"
+    else
+      timeout 12 ping -c4 -W2 "$HOST"
+    fi
+    ;;
+  dns)
+    command -v nslookup >/dev/null || { echo "nslookup is not installed" >&2; exit 1; }
+    if [ -n "$ARG" ]; then
+      valid_ip "$ARG" || { echo "invalid DNS server" >&2; exit 1; }
+      timeout 10 nslookup "$HOST" "$ARG"
+    else
+      timeout 10 nslookup "$HOST"
+    fi
+    ;;
+  trace)
+    if command -v traceroute >/dev/null; then
+      if [ -n "$ARG" ]; then
+        valid_iface "$ARG" || { echo "invalid interface" >&2; exit 1; }
+        timeout 30 traceroute -w2 -q1 -i "$ARG" "$HOST"
+      else
+        timeout 30 traceroute -w2 -q1 "$HOST"
+      fi
+    elif command -v tracepath >/dev/null; then
+      timeout 30 tracepath "$HOST"
+    else
+      echo "traceroute/tracepath is not installed" >&2
+      exit 1
+    fi
+    ;;
+  mtr)
+    command -v mtr >/dev/null || { echo "mtr is not installed" >&2; exit 1; }
+    if [ -n "$ARG" ]; then
+      valid_iface "$ARG" || { echo "invalid interface" >&2; exit 1; }
+      timeout 25 mtr --report --report-cycles 5 -I "$ARG" "$HOST"
+    else
+      timeout 25 mtr --report --report-cycles 5 "$HOST"
+    fi
+    ;;
+  http)
+    command -v curl >/dev/null || { echo "curl is not installed" >&2; exit 1; }
+    FMT='HTTP %{http_code} | connect %{time_connect}s | total %{time_total}s | peer %{remote_ip}\n'
+    if [ -n "$ARG" ]; then
+      valid_iface "$ARG" || { echo "invalid interface" >&2; exit 1; }
+      timeout 15 curl -sS --interface "$ARG" --max-time 10 -o /dev/null -w "$FMT" "https://$HOST"
+    else
+      timeout 15 curl -sS --max-time 10 -o /dev/null -w "$FMT" "https://$HOST"
+    fi
+    ;;
+  *)
+    echo "usage: saguaro-tools ping|dns|trace|mtr|http HOST [IFACE|SERVER]" >&2
+    exit 2
+    ;;
+esac
