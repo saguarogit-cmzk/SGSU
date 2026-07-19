@@ -11,7 +11,37 @@ permissions:
   contents: write
 
 jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt (formatting)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+      - name: node --check (embedded web assets)
+        run: node --check cmd/saguaro/web/app.js
+      - name: shellcheck (root adapters + installer)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          # Only hard errors fail the build (not style nits) so the root-privileged
+          # adapters and the installer are gated against real shell bugs.
+          shellcheck --severity=error scripts/saguaro-* scripts/*.sh
+      - name: nftables ruleset syntax (generated ruleset vs real nft parser)
+        run: |
+          sudo apt-get install -y nftables
+          # nft -c needs CAP_NET_ADMIN, so run this one test under sudo with the
+          # runner's PATH (for the go toolchain) preserved. The test skips itself
+          # if nft is unprivileged, so sudo is what makes it actually run in CI.
+          sudo env "PATH=$PATH" go test ./internal/adapters/nftgen/ -run TestGeneratedRulesetParses -v
+
   test:
+    needs: lint
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

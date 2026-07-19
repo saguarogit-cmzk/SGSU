@@ -59,7 +59,7 @@ func (a *app) apiDHCPBlockAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	next := append(append([]string(nil), macs...), mac)
 	if err := a.applyDropClass(r.Context(), next); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Kea DHCP"))
 		return
 	}
 	if err := a.setBlockedMACs(next); err != nil {
@@ -92,7 +92,7 @@ func (a *app) apiDHCPBlockDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.applyDropClass(r.Context(), next); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Kea DHCP"))
 		return
 	}
 	if err := a.setBlockedMACs(next); err != nil {

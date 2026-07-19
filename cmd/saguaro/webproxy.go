@@ -106,7 +106,7 @@ func (a *app) apiWebProxyPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.applyWebProxy(r.Context(), in); err != nil {
 		a.recordSev(r, a.actor(r), "webproxy-apply", "squid", "failed", "warning", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Web proxy"))
 		return
 	}
 	if err := a.setWebProxy(in); err != nil {

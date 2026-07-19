@@ -30,7 +30,7 @@ func (a *app) apiDNSZones(w http.ResponseWriter, r *http.Request) {
 	}
 	zones, err := c.ListZones(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "PowerDNS"))
 		return
 	}
 	if zones == nil {
@@ -63,7 +63,7 @@ func (a *app) apiDNSZoneCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := c.CreateZone(r.Context(), name, in.Nameservers); err != nil {
 		a.record(r, a.actor(r), "dns-zone-create", name, "failed", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "PowerDNS"))
 		return
 	}
 	a.record(r, a.actor(r), "dns-zone-create", name, "success", nil)
@@ -78,7 +78,7 @@ func (a *app) apiDNSZoneGet(w http.ResponseWriter, r *http.Request) {
 	}
 	detail, err := c.GetZone(r.Context(), r.PathValue("zone"))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "PowerDNS"))
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
@@ -93,7 +93,7 @@ func (a *app) apiDNSZoneDelete(w http.ResponseWriter, r *http.Request) {
 	zone := r.PathValue("zone")
 	if err := c.DeleteZone(r.Context(), zone); err != nil {
 		a.record(r, a.actor(r), "dns-zone-delete", zone, "failed", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "PowerDNS"))
 		return
 	}
 	a.recordSev(r, a.actor(r), "dns-zone-delete", zone, "success", "warning", nil)
@@ -147,7 +147,7 @@ func (a *app) apiDNSRecordPut(w http.ResponseWriter, r *http.Request) {
 	target := pdns.Canonical(in.Name) + "/" + typ
 	if err := c.PatchRRSet(r.Context(), zone, rr, in.Delete); err != nil {
 		a.record(r, a.actor(r), action, target, "failed", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "PowerDNS"))
 		return
 	}
 	a.record(r, a.actor(r), action, target, "success", map[string]any{"zone": zone, "ttl": rr.TTL, "values": len(rr.Records)})

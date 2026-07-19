@@ -139,7 +139,7 @@ func (a *app) apiVPNApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.applyVPN(r.Context(), cfg); err != nil {
 		a.recordSev(r, a.actor(r), "vpn-apply", "wireguard", "failed", "security", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "WireGuard VPN"))
 		return
 	}
 	if err := a.setVPN(cfg); err != nil {
@@ -197,7 +197,7 @@ func (a *app) apiVPNPeerAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.applyVPN(r.Context(), next); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "WireGuard VPN"))
 		return
 	}
 	if err := a.setVPN(next); err != nil {
@@ -237,7 +237,7 @@ func (a *app) apiVPNPeerDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.Enabled {
 		if err := a.applyVPN(r.Context(), next); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, http.StatusBadGateway, friendlyError(err, "WireGuard VPN"))
 			return
 		}
 	}

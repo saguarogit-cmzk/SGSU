@@ -150,7 +150,7 @@ func (a *app) apiS2SApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.applyS2S(r.Context(), cfg); err != nil {
 		a.recordSev(r, a.actor(r), "s2s-apply", "wireguard", "failed", "security", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Site-to-site VPN"))
 		return
 	}
 	if err := a.setS2S(cfg); err != nil {
@@ -222,7 +222,7 @@ func (a *app) apiS2SSiteAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.applyS2S(r.Context(), next); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Site-to-site VPN"))
 		return
 	}
 	if err := a.setS2S(next); err != nil {
@@ -253,7 +253,7 @@ func (a *app) apiS2SSiteDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.Enabled {
 		if err := a.applyS2S(r.Context(), next); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, http.StatusBadGateway, friendlyError(err, "Site-to-site VPN"))
 			return
 		}
 	}

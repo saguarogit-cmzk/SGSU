@@ -147,7 +147,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.47.0"
+const appVersion = "0.48.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -870,6 +870,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// friendlyError turns a low-level transport failure (a configured backend that
+// is down, unreachable, or slow) into an operator-readable message so the GUI
+// never shows raw "dial tcp ...: connect: connection refused" text. Any error
+// that is NOT a recognised transport failure passes through unchanged, so it is
+// always safe to wrap an adapter/backend error with this — validation output and
+// adapter stderr are preserved. `service` names the backend for the message.
+func friendlyError(err error, service string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "connection refused"):
+		return service + " is configured but not responding — check that its service is running."
+	case strings.Contains(low, "no such host") || strings.Contains(low, "server misbehaving"):
+		return service + " host could not be resolved — check the address and DNS."
+	case strings.Contains(low, "i/o timeout") || strings.Contains(low, "context deadline exceeded") || strings.Contains(low, "timeout"):
+		return service + " did not respond in time — it may be overloaded or unreachable."
+	case strings.Contains(low, "network is unreachable") || strings.Contains(low, "no route to host"):
+		return service + " is unreachable over the network — check routing and firewall."
+	case strings.Contains(low, "connection reset"):
+		return service + " reset the connection — check that its service is healthy."
+	default:
+		return msg
+	}
 }
 func env(k, fallback string) string {
 	if v := os.Getenv(k); v != "" {

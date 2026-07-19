@@ -192,7 +192,7 @@ func (a *app) apiIPsecApply(w http.ResponseWriter, r *http.Request) {
 	cfg.Enabled = in.Enabled
 	if err := a.applyIPsec(r.Context(), cfg); err != nil {
 		a.recordSev(r, a.actor(r), "ipsec-apply", "strongswan", "failed", "security", map[string]any{"error": err.Error()})
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "IPsec"))
 		return
 	}
 	if err := a.setIPsec(cfg); err != nil {
@@ -325,7 +325,7 @@ func (a *app) apiIPsecConnAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.Enabled {
 		if err := a.applyIPsec(r.Context(), next); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, http.StatusBadGateway, friendlyError(err, "IPsec"))
 			return
 		}
 	}
@@ -360,7 +360,7 @@ func (a *app) apiIPsecConnDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.Enabled {
 		if err := a.applyIPsec(r.Context(), next); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, http.StatusBadGateway, friendlyError(err, "IPsec"))
 			return
 		}
 	}

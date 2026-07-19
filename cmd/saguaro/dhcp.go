@@ -30,7 +30,7 @@ func (a *app) apiDHCPStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := c.Status(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Kea DHCP"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -46,7 +46,7 @@ func (a *app) apiDHCPSubnets(w http.ResponseWriter, r *http.Request) {
 	}
 	subnets, err := c.Subnets(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Kea DHCP"))
 		return
 	}
 	if subnets == nil {
@@ -63,7 +63,7 @@ func (a *app) apiDHCPLeases(w http.ResponseWriter, r *http.Request) {
 	}
 	leases, err := c.Leases(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, friendlyError(err, "Kea DHCP"))
 		return
 	}
 	if leases == nil {
