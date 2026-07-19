@@ -9,18 +9,18 @@ import (
 
 // Permission keys gate mutations; every authenticated user may read.
 const (
-	permDNSWrite     = "dns:write"
-	permDHCPWrite    = "dhcp:write"
+	permDNSWrite       = "dns:write"
+	permDHCPWrite      = "dhcp:write"
 	permServiceCheck   = "service:check"
 	permServiceControl = "service:control"
-	permMailWrite    = "mail:write"
-	permUsersWrite   = "users:write"
-	permSessions     = "sessions:revoke"
-	permFirewall     = "firewall:write"
-	permProxy        = "proxy:write"
-	permCerts        = "certs:write"
-	permBackup       = "backup:write"
-	permPackages     = "packages:write"
+	permMailWrite      = "mail:write"
+	permUsersWrite     = "users:write"
+	permSessions       = "sessions:revoke"
+	permFirewall       = "firewall:write"
+	permProxy          = "proxy:write"
+	permCerts          = "certs:write"
+	permBackup         = "backup:write"
+	permPackages       = "packages:write"
 )
 
 var rolePermissions = map[string]map[string]bool{
