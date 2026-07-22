@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,10 @@ func (a *app) apiSelfUpdateStatus(w http.ResponseWriter, r *http.Request) {
 				if n, e := strconv.Atoi(v); e == nil {
 					res["behind"] = n
 				}
+			case "previous":
+				if v != "none" {
+					res["previous"] = v
+				}
 			case "buildable":
 				res["buildable"] = v == "yes"
 			}
@@ -91,22 +96,88 @@ func (a *app) apiSelfUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// selfUpdateRefRE mirrors the ref charset guard in the adapter: branch names,
+// tags and commit shas only. Defense in depth — the adapter validates too.
+var selfUpdateRefRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,100}$`)
+
+// apiSelfUpdateRefs lists the branches and tags the operator may target, so the
+// GUI can offer a version picker instead of only origin/main.
+func (a *app) apiSelfUpdateRefs(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	branches, tags := []string{}, []string{}
+	if out, err := a.runSelfUpdate(ctx, "refs"); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			k, v, ok := strings.Cut(strings.TrimSpace(line), " ")
+			if !ok {
+				continue
+			}
+			switch k {
+			case "branch":
+				branches = append(branches, v)
+			case "tag":
+				tags = append(tags, v)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "tags": tags})
+}
+
 // apiSelfUpdateApply rebuilds and redeploys the control plane from git, then the
-// service restarts out-of-band. Admin-only; audited as a security event before
-// the adapter runs because the restart may cut the response short.
+// service restarts out-of-band. An optional {"ref":"..."} targets a specific
+// branch/tag/commit (default origin/main). Admin-only; audited as a security
+// event before the adapter runs because the restart may cut the response short.
 func (a *app) apiSelfUpdateApply(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Ref string `json:"ref"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	args := []string{"apply"}
+	if in.Ref != "" {
+		if !selfUpdateRefRE.MatchString(in.Ref) {
+			writeError(w, http.StatusBadRequest, "invalid ref")
+			return
+		}
+		args = append(args, in.Ref)
+	}
 	extendDeadline(w, 6*time.Minute)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	a.recordSev(r, a.actor(r), "self-update", "control-plane", "started", "security", nil)
-	out, err := a.runSelfUpdate(ctx, "apply")
+	target := in.Ref
+	if target == "" {
+		target = "origin/main"
+	}
+	a.recordSev(r, a.actor(r), "self-update", "control-plane", "started", "security",
+		map[string]any{"ref": target})
+	out, err := a.runSelfUpdate(ctx, args...)
 	if err != nil {
 		a.recordSev(r, a.actor(r), "self-update", "control-plane", "failed", "security",
-			map[string]any{"output": truncate(string(out), 400)})
+			map[string]any{"ref": target, "output": truncate(string(out), 400)})
 		writeError(w, http.StatusBadGateway, "update failed: "+truncate(string(out), 400))
 		return
 	}
 	a.recordSev(r, a.actor(r), "self-update", "control-plane", "success", "security",
+		map[string]any{"ref": target, "output": truncate(string(out), 200)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": truncate(string(out), 200)})
+}
+
+// apiSelfUpdateRollback re-applies the commit that was running before the last
+// apply (recorded by the adapter). Admin-only; audited like apply.
+func (a *app) apiSelfUpdateRollback(w http.ResponseWriter, r *http.Request) {
+	extendDeadline(w, 6*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	a.recordSev(r, a.actor(r), "self-update-rollback", "control-plane", "started", "security", nil)
+	out, err := a.runSelfUpdate(ctx, "rollback")
+	if err != nil {
+		a.recordSev(r, a.actor(r), "self-update-rollback", "control-plane", "failed", "security",
+			map[string]any{"output": truncate(string(out), 400)})
+		writeError(w, http.StatusBadGateway, "rollback failed: "+truncate(string(out), 400))
+		return
+	}
+	a.recordSev(r, a.actor(r), "self-update-rollback", "control-plane", "success", "security",
 		map[string]any{"output": truncate(string(out), 200)})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": truncate(string(out), 200)})
 }
