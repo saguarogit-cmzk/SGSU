@@ -17,6 +17,13 @@ SERVER_NAME="$(hostname -f 2>/dev/null || hostname)"
 CA_NAME="Saguaro Internal CA"
 CA_DNS=""
 DEB_SOURCE=""
+# Source (non-.deb) installs are built from a git checkout at this path so the
+# control plane can later update itself from git (saguaro-selfupdate). REPO_URL
+# overrides the remote; empty means "derive from the launch directory, else the
+# public repository below".
+SRC_INSTALL_DIR=/opt/SGSU
+REPO_URL=""
+REPO_URL_DEFAULT="https://github.com/saguarogit-cmzk/SGSU.git"
 ENABLE_SURICATA=false
 NON_INTERACTIVE=false
 ENABLE_FIREWALL=true
@@ -48,6 +55,10 @@ Usage: sudo ./scripts/install-ubuntu.sh [options]
   --deb PATH|URL             Install the prebuilt saguaro .deb (from CI) instead of
                              building from source on this host (recommended; avoids
                              installing a Go toolchain on the appliance)
+  --repo-url URL             Git remote for the source checkout at /opt/SGSU used
+                             by control-plane self-update (default: the origin of
+                             the directory this installer runs from, else the
+                             public Saguaro repository). Ignored with --deb.
   --with-suricata            Install the Suricata security package (needs >= 8 GB RAM
                              and >= 4 cores; enable IDS/IPS later from the GUI, W9)
   --with-docker              Install Docker (off by default: it manipulates netfilter)
@@ -66,6 +77,76 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 log() { printf '[%s] %s\n' "$(date --iso-8601=seconds)" "$*" | tee -a "$LOG_FILE"; }
 run() { if $DRY_RUN; then printf 'DRY-RUN:'; printf ' %q' "$@"; printf '\n'; else "$@"; fi; }
 
+# ensure_source_checkout establishes SRC_INSTALL_DIR (/opt/SGSU) as a git
+# checkout of the Saguaro repository and repoints the build to it, so the control
+# plane can later update itself from git (saguaro-selfupdate check|apply) and the
+# running binary always matches the source under version control. Only called on
+# source (non-.deb) installs. On success it sets SOURCE_DIR to the checkout so the
+# build and every adapter/unit install below read from the same tree.
+ensure_source_checkout() {
+  local target=$SRC_INSTALL_DIR
+  local url=$REPO_URL
+
+  # Derive the remote from the directory we were launched from, when that is a
+  # git clone; otherwise fall back to the public repository.
+  if [[ -z $url ]] && [[ -d "$SOURCE_DIR/.git" ]] && command -v git >/dev/null 2>&1; then
+    url=$(git -C "$SOURCE_DIR" remote get-url origin 2>/dev/null || true)
+  fi
+  [[ -n $url ]] || url=$REPO_URL_DEFAULT
+
+  # Already running from the target checkout: nothing to relocate.
+  if [[ "$(cd "$SOURCE_DIR" 2>/dev/null && pwd -P)" == "$target" ]]; then
+    log "Source checkout already at $target"
+    return 0
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    log "WARNING: git not installed; copying source into $target (self-update from git unavailable until $target is a git checkout)"
+    run install -d -m 0755 "$target"
+    run cp -a "$SOURCE_DIR/." "$target/"
+    SOURCE_DIR=$target
+    return 0
+  fi
+
+  run git config --global --add safe.directory "$target"
+  if [[ -d "$target/.git" ]]; then
+    log "Reusing existing git checkout at $target"
+    run git -C "$target" remote set-url origin "$url" 2>/dev/null || true
+    run git -C "$target" fetch --quiet origin || log "WARNING: git fetch in $target failed (offline?)"
+  elif [[ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    log "Initializing git checkout in existing $target"
+    run git -C "$target" init -q
+    run git -C "$target" remote add origin "$url" 2>/dev/null || run git -C "$target" remote set-url origin "$url"
+    if ! run git -C "$target" fetch --quiet origin; then
+      log "WARNING: could not fetch $url; keeping local source copy in $target"
+      run cp -a "$SOURCE_DIR/." "$target/"
+    fi
+  else
+    log "Cloning $url into $target"
+    if ! run git clone --quiet "$url" "$target"; then
+      log "WARNING: git clone failed (offline?); copying local source into $target"
+      run install -d -m 0755 "$target"
+      run cp -a "$SOURCE_DIR/." "$target/"
+      run git -C "$target" init -q 2>/dev/null || true
+      run git -C "$target" remote add origin "$url" 2>/dev/null || true
+    fi
+  fi
+
+  # Build the exact revision the installer was launched from, when that commit is
+  # present in the target checkout; otherwise the target's default branch stands.
+  if [[ -d "$SOURCE_DIR/.git" ]] && [[ -d "$target/.git" ]]; then
+    local ref
+    ref=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)
+    if [[ -n $ref ]] && git -C "$target" cat-file -e "${ref}^{commit}" 2>/dev/null; then
+      run git -C "$target" reset --hard "$ref"
+    elif [[ -n $ref ]]; then
+      log "NOTE: source revision ${ref:0:12} not present in $url; building its default branch"
+    fi
+  fi
+
+  SOURCE_DIR=$target
+}
+
 while (($#)); do
   case "$1" in
     --admin-network) ADMIN_NETWORK=${2:?}; shift 2 ;;
@@ -79,6 +160,7 @@ while (($#)); do
     --ca-name) CA_NAME=${2:?}; shift 2 ;;
     --ca-dns) CA_DNS=${2:?}; shift 2 ;;
     --deb) DEB_SOURCE=${2:?}; shift 2 ;;
+    --repo-url) REPO_URL=${2:?}; shift 2 ;;
     --with-suricata) ENABLE_SURICATA=true; shift ;;
     --with-docker) ENABLE_DOCKER=true; shift ;;
     --without-step-ca) ENABLE_STEP_CA=false; shift ;;
@@ -294,6 +376,9 @@ if [[ -n $DEB_SOURCE ]]; then
   run apt-get install -y "$DEB_PATH"
 else
   log "Building Saguaro control plane from source (no --deb given; prefer the CI-built package)"
+  # Establish /opt/SGSU as the git checkout and build from it, so the control
+  # plane can update itself from git after install (saguaro-selfupdate).
+  ensure_source_checkout
   run install -d -m 0755 /usr/lib/saguaro
   if ! $DRY_RUN; then
     (cd "$SOURCE_DIR" && go test ./... \
@@ -763,4 +848,5 @@ The initial HTTPS certificate is a 30-day bootstrap certificate. Replace it from
 Certificates using Step CA for internal names or Let's Encrypt for public names.
 Firewall: $($ENABLE_FIREWALL && echo "nftables active — SSH/HTTPS restricted to ${ADMIN_NETWORK}, DNS to ${CLIENT_NETWORK}" || echo "not configured (--without-firewall)").
 Kea DHCP is $([[ $dhcp_fields -eq 5 ]] && echo enabled || echo 'installed but disabled').
+Updates: $([[ -z $DEB_SOURCE ]] && echo "control plane self-updates from git at ${SRC_INSTALL_DIR} (System → update, or saguaro-selfupdate)" || echo ".deb install — update via the release package").
 EOF
