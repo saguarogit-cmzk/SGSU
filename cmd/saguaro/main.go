@@ -100,46 +100,47 @@ type store struct {
 }
 
 type app struct {
-	log            *slog.Logger
-	store          *store
-	adminUser      string
-	users          userStore
-	dummyPHC       string // constant-cost verify target for unknown usernames
-	sessions       sessionStore
-	sessionTTL     time.Duration
-	secure         bool
-	ipLimiter      *loginLimiter
-	userLimiter    *loginLimiter
-	events         *evstore.Store // nil without PostgreSQL (development)
-	mailKey        []byte         // AES-256 key for the stored SMTP password
-	keaHosts       *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
-	runFirewall    func(ctx context.Context, action string) ([]byte, error)
-	runIDS         func(ctx context.Context, args ...string) ([]byte, error)
-	runRPZ         func(ctx context.Context, action string) ([]byte, error)
-	runProxy       func(ctx context.Context, action string) ([]byte, error)
-	runWebProxy    func(ctx context.Context, args ...string) ([]byte, error)
-	probeUpstream  func(ctx context.Context, addr string) error
-	runCert        func(ctx context.Context, args ...string) ([]byte, error)
-	runVPN         func(ctx context.Context, action string) ([]byte, error)
-	runBackupCfg   func(ctx context.Context, action string) ([]byte, error)
-	runWAN         func(ctx context.Context, action string) ([]byte, error)
-	runRoute       func(ctx context.Context, action string) ([]byte, error)
-	runS2S         func(ctx context.Context, action string) ([]byte, error)
-	runIPsec       func(ctx context.Context, action string) ([]byte, error)
-	runSvc         func(ctx context.Context, args ...string) ([]byte, error)
-	runLogs        func(ctx context.Context, args ...string) ([]byte, error)
-	runTools       func(ctx context.Context, args ...string) ([]byte, error)
-	runPkg         func(ctx context.Context, args ...string) ([]byte, error)
-	runPower       func(ctx context.Context, action string) ([]byte, error)
-	runSelfUpdate  func(ctx context.Context, args ...string) ([]byte, error)
-	runDNSZones    func(ctx context.Context, action string) ([]byte, error)
-	runNet         func(ctx context.Context, args ...string) ([]byte, error)
-	readInterfaces func(ctx context.Context) ([]nicInfo, error)
-	hwMemMB        int
-	hwCores        int
-	cpuMu          sync.Mutex
-	cpuPrev        *cpuStat
-	siem           *siemForwarder
+	log               *slog.Logger
+	store             *store
+	adminUser         string
+	users             userStore
+	dummyPHC          string // constant-cost verify target for unknown usernames
+	sessions          sessionStore
+	sessionTTL        time.Duration
+	secure            bool
+	ipLimiter         *loginLimiter
+	userLimiter       *loginLimiter
+	events            *evstore.Store // nil without PostgreSQL (development)
+	mailKey           []byte         // AES-256 key for the stored SMTP password
+	keaHosts          *kea.HostStore // nil without SAGUARO_KEA_DB_DSN
+	runFirewall       func(ctx context.Context, action string) ([]byte, error)
+	runIDS            func(ctx context.Context, args ...string) ([]byte, error)
+	runRPZ            func(ctx context.Context, action string) ([]byte, error)
+	runProxy          func(ctx context.Context, action string) ([]byte, error)
+	runWebProxy       func(ctx context.Context, args ...string) ([]byte, error)
+	probeUpstream     func(ctx context.Context, addr string) error
+	runCert           func(ctx context.Context, args ...string) ([]byte, error)
+	runVPN            func(ctx context.Context, action string) ([]byte, error)
+	runBackupCfg      func(ctx context.Context, action string) ([]byte, error)
+	runWAN            func(ctx context.Context, action string) ([]byte, error)
+	runRoute          func(ctx context.Context, action string) ([]byte, error)
+	runS2S            func(ctx context.Context, action string) ([]byte, error)
+	runIPsec          func(ctx context.Context, action string) ([]byte, error)
+	runSvc            func(ctx context.Context, args ...string) ([]byte, error)
+	runLogs           func(ctx context.Context, args ...string) ([]byte, error)
+	runTools          func(ctx context.Context, args ...string) ([]byte, error)
+	runPkg            func(ctx context.Context, args ...string) ([]byte, error)
+	runPower          func(ctx context.Context, action string) ([]byte, error)
+	runSelfUpdate     func(ctx context.Context, args ...string) ([]byte, error)
+	runDNSZones       func(ctx context.Context, action string) ([]byte, error)
+	runNet            func(ctx context.Context, args ...string) ([]byte, error)
+	readInterfaces    func(ctx context.Context) ([]nicInfo, error)
+	readDefaultRoutes func(ctx context.Context) ([]defaultRoute, error)
+	hwMemMB           int
+	hwCores           int
+	cpuMu             sync.Mutex
+	cpuPrev           *cpuStat
+	siem              *siemForwarder
 
 	// mutateMu serializes config mutations that read the stored config, act on
 	// the system (kernel/service), then persist. The store's RWMutex only makes
@@ -159,7 +160,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.59.2"
+const appVersion = "0.59.3"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -258,35 +259,36 @@ func main() {
 		sessionTTL: time.Duration(atoi(env("SAGUARO_SESSION_HOURS", "8"), 8)) * time.Hour,
 		secure:     env("SAGUARO_SECURE_COOKIE", "true") == "true",
 
-		ipLimiter:      newLoginLimiter(),
-		userLimiter:    newLoginLimiter(),
-		events:         eventStore,
-		mailKey:        mailKey,
-		keaHosts:       keaHosts,
-		runFirewall:    defaultRunFirewall,
-		runIDS:         defaultRunIDS,
-		runRPZ:         defaultRunRPZ,
-		runProxy:       defaultRunProxy,
-		runWebProxy:    defaultRunWebProxy,
-		probeUpstream:  defaultProbeUpstream,
-		runCert:        defaultRunCert,
-		runVPN:         defaultRunVPN,
-		runBackupCfg:   defaultRunBackupCfg,
-		runWAN:         defaultRunWAN,
-		runRoute:       defaultRunRoute,
-		runS2S:         defaultRunS2S,
-		runIPsec:       defaultRunIPsec,
-		runSvc:         defaultRunSvc,
-		runLogs:        defaultRunLogs,
-		runTools:       defaultRunTools,
-		runPkg:         defaultRunPkg,
-		runPower:       defaultRunPower,
-		runSelfUpdate:  defaultRunSelfUpdate,
-		runDNSZones:    defaultRunDNSZones,
-		runNet:         defaultRunNet,
-		readInterfaces: defaultReadInterfaces,
-		hwMemMB:        readMemTotalMB(),
-		hwCores:        runtime.NumCPU(),
+		ipLimiter:         newLoginLimiter(),
+		userLimiter:       newLoginLimiter(),
+		events:            eventStore,
+		mailKey:           mailKey,
+		keaHosts:          keaHosts,
+		runFirewall:       defaultRunFirewall,
+		runIDS:            defaultRunIDS,
+		runRPZ:            defaultRunRPZ,
+		runProxy:          defaultRunProxy,
+		runWebProxy:       defaultRunWebProxy,
+		probeUpstream:     defaultProbeUpstream,
+		runCert:           defaultRunCert,
+		runVPN:            defaultRunVPN,
+		runBackupCfg:      defaultRunBackupCfg,
+		runWAN:            defaultRunWAN,
+		runRoute:          defaultRunRoute,
+		runS2S:            defaultRunS2S,
+		runIPsec:          defaultRunIPsec,
+		runSvc:            defaultRunSvc,
+		runLogs:           defaultRunLogs,
+		runTools:          defaultRunTools,
+		runPkg:            defaultRunPkg,
+		runPower:          defaultRunPower,
+		runSelfUpdate:     defaultRunSelfUpdate,
+		runDNSZones:       defaultRunDNSZones,
+		runNet:            defaultRunNet,
+		readInterfaces:    defaultReadInterfaces,
+		readDefaultRoutes: defaultReadDefaultRoutes,
+		hwMemMB:           readMemTotalMB(),
+		hwCores:           runtime.NumCPU(),
 
 		resolverAddr: env("SAGUARO_RESOLVER_ADDR", "127.0.0.1:53"),
 		pdnsURL:      os.Getenv("SAGUARO_PDNS_API_URL"),

@@ -76,16 +76,17 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		readInterfaces: func(context.Context) ([]nicInfo, error) {
 			return []nicInfo{{Name: "enp1s0", MAC: "aa:bb:cc:dd:ee:01", State: "up", Carrier: true, SpeedMb: 1000, Driver: "igb", Addresses: []string{"192.168.50.61/24"}}}, nil
 		},
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		store:       st,
-		adminUser:   "admin",
-		users:       users,
-		dummyPHC:    phc,
-		sessions:    sess,
-		sessionTTL:  time.Hour,
-		secure:      false,
-		ipLimiter:   newLoginLimiter(),
-		userLimiter: newLoginLimiter(),
+		readDefaultRoutes: func(context.Context) ([]defaultRoute, error) { return nil, nil },
+		log:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store:             st,
+		adminUser:         "admin",
+		users:             users,
+		dummyPHC:          phc,
+		sessions:          sess,
+		sessionTTL:        time.Hour,
+		secure:            false,
+		ipLimiter:         newLoginLimiter(),
+		userLimiter:       newLoginLimiter(),
 	}
 	srv := httptest.NewServer(a.handler())
 	t.Cleanup(srv.Close)
