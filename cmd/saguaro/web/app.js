@@ -124,7 +124,7 @@ ${help('Postavi JEDNO ili VIŠE WAN sučelja (npr. WAN1 + GSM WAN2). Svako je <b
 <div id="wanList"></div>
 <h3>Dodaj / uredi WAN sučelje</h3>
 <form id="wanForm" class="stack">
-<label>WAN sučelje <input id="wanIf" placeholder="enp2s0"></label>
+<label>WAN sučelje <select id="wanIf"><option value="">— odaberi port —</option>${(g.nics||[]).map(n=>`<option value="${escapeHtml(n.name)}">${escapeHtml(nlabel(n.name))}</option>`).join('')}</select></label>
 <label>Način adrese <select id="wanMode"><option value="dhcp">Dinamička (DHCP)</option><option value="static">Statička</option></select></label>
 <label>Metrika (manja = primarni) <input id="wanMetric" type="number" min="1" max="4000" value="100"></label>
 <div id="wanStatic" style="display:none">
@@ -159,7 +159,12 @@ const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gw
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>Sučelje</th><th>Način</th><th>Adresa</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(nlabel(x.interface))}</b></td><td>${x.mode}</td><td class="muted">${ew(x.mode==='static'?(x.address||''):'—')}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||''):'—')}</td><td class="muted">${x.metric||100}</td><td><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN sučelja.</p>';
 document.querySelectorAll('.wanRm').forEach(el=>el.onclick=()=>{wans.splice(+el.dataset.i,1);renderWanList()});
-document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+el.dataset.i];$('#wanIf').value=x.interface;$('#wanMode').value=x.mode;$('#wanMetric').value=x.metric||100;$('#wanAddr').value=x.address||'';$('#wanGw').value=x.gateway||'';$('#wanDns').value=(x.dns||[]).join(', ');$('#wanAliases').value=(x.aliases||[]).join(', ');$('#wanStatic').style.display=x.mode==='static'?'':'none';wans.splice(+el.dataset.i,1);renderWanList()});};
+document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+el.dataset.i];const sel=$('#wanIf');
+// A stored uplink can name a port this box no longer has (a NIC moved, or the
+// configuration came from other hardware). Keep it selectable instead of
+// silently blanking the field, which would rewrite the row on the next save.
+if(x.interface&&![...sel.options].some(o=>o.value===x.interface)){sel.add(new Option(x.interface+' (nedostupan)',x.interface))}
+sel.value=x.interface;$('#wanMode').value=x.mode;$('#wanMetric').value=x.metric||100;$('#wanAddr').value=x.address||'';$('#wanGw').value=x.gateway||'';$('#wanDns').value=(x.dns||[]).join(', ');$('#wanAliases').value=(x.aliases||[]).join(', ');$('#wanStatic').style.display=x.mode==='static'?'':'none';wans.splice(+el.dataset.i,1);renderWanList()});};
 renderWanList();
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
 $('#wanForm').onsubmit=e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;const iface=$('#wanIf').value.trim();
