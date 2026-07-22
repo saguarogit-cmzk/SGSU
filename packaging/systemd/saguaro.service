@@ -22,7 +22,13 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=true
 ProtectHome=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK is how the kernel is asked about interfaces and routes. Without it
+# `ip` dies with "Cannot open netlink socket" and every read of the live network
+# state comes back empty -- the interface list, the addresses shown against each
+# port, and the WAN uplinks detected from the routing table all silently render
+# as "unavailable" rather than reporting an error. Netlink here is read-only in
+# practice: changing the network goes through the root adapters, not this unit.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
