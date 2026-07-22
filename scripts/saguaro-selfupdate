@@ -68,6 +68,9 @@ do_apply() {
     install -m 0755 "$a" "$SBIN/$name"
   done
   install -D -m 0755 "$SRCDIR/scripts/saguaro-kea-linkwatch" /usr/lib/saguaro/kea-linkwatch
+  install -D -m 0644 "$SRCDIR/packaging/systemd/99-saguaro-ports.network" \
+    /etc/systemd/network/99-saguaro-ports.network
+  networkctl reload >/dev/null 2>&1 || true
   for hook in routable carrier; do
     install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
     ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"

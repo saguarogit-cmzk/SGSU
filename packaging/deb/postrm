@@ -1,11 +1,22 @@
 #!/bin/sh
 set -e
 
-# The Kea link-up hooks point at a file this package owns, so they must go with
-# it -- a dangling symlink would make every link event log a dispatcher error.
-for hook in routable carrier; do
-  rm -f "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
-done
+# Only on real removal: during an upgrade this runs from the OLD package before
+# the new one is configured, and tearing these down there would leave the box
+# without them until the next boot.
+case "$1" in
+  remove | purge)
+    # The Kea link-up hooks point at a file this package owns, so they must go
+    # with it -- a dangling symlink makes every link event log a dispatcher error.
+    for hook in routable carrier; do
+      rm -f "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
+    done
+    # Source installs drop the port-activation rule in /etc; dpkg only owns the
+    # /usr/lib copy, so clear ours explicitly and let networkd forget it.
+    rm -f /etc/systemd/network/99-saguaro-ports.network
+    networkctl reload >/dev/null 2>&1 || true
+    ;;
+esac
 
 if [ -d /run/systemd/system ]; then
   # Units were stopped/disabled in prerm; reload so systemd forgets the now-removed

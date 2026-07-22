@@ -773,6 +773,11 @@ if [[ -z $DEB_SOURCE ]]; then
     run ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
   done
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-webproxy" /usr/sbin/saguaro-webproxy
+  # Keep unconfigured Ethernet ports up so a freshly plugged cable is visible in
+  # the interface list whichever socket it went into (see the file's comments).
+  run install -D -m 0644 "$SOURCE_DIR/packaging/systemd/99-saguaro-ports.network" \
+    /etc/systemd/network/99-saguaro-ports.network
+  run networkctl reload 2>/dev/null || true
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-routes.service" /etc/systemd/system/saguaro-routes.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.timer" /etc/systemd/system/saguaro-wan-check.timer

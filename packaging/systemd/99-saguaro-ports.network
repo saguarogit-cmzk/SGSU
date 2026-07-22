@@ -1,0 +1,26 @@
+# Keep every unconfigured Ethernet port administratively up.
+#
+# The kernel only reports carrier on a link that is up, so a port systemd-networkd
+# does not manage looks exactly like a port with no cable in it: operstate down,
+# carrier 0, speed unknown. On an appliance that means a freshly plugged uplink is
+# invisible in the interface list and cannot be picked for a WAN or a VLAN -- the
+# operator has to guess which socket they used.
+#
+# systemd-networkd applies the first matching .network file in lexical order across
+# /etc, /run and /usr. netplan generates 10-netplan-*.network, so anything it
+# configures still wins; this file catches only the leftovers. It brings them up and
+# deliberately gives them no addressing at all: an unconfigured WAN port that picked
+# up a router advertisement would otherwise gain an IPv6 address and possibly a
+# default route before anyone configured it.
+[Match]
+Name=en* eth*
+Type=ether
+
+[Link]
+ActivationPolicy=up
+RequiredForOnline=no
+
+[Network]
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+DHCP=no
