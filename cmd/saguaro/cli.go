@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -115,4 +116,29 @@ func physicalPorts() ([]portmap.Port, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kernel < out[j].Kernel })
 	return out, nil
+}
+
+// revalidatingAssets makes browsers check with us before reusing a cached page
+// asset. http.FileServer sets no ETag, no Last-Modified and no Cache-Control for
+// files served out of an embed.FS, and with no validator at all a browser falls
+// back to heuristic caching: it may keep serving an old app.js indefinitely
+// without ever asking. On an appliance that updates itself in place that is a
+// permanent trap -- the GUI silently runs old code against a new API, and the
+// operator sees stale data with nothing to suggest a reload would help.
+//
+// "no-cache" does not mean "do not store": the asset stays cached, the browser
+// just has to revalidate it. Pairing it with a version ETag keeps the common
+// case a 304 with an empty body, so this costs a conditional request, not a
+// re-download.
+func revalidatingAssets(next http.Handler) http.Handler {
+	etag := `"` + appVersion + `"`
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

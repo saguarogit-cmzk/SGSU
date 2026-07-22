@@ -410,3 +410,29 @@ func TestLoginLockoutAfterRepeatedFailures(t *testing.T) {
 		t.Fatal("expected a security-severity login-lockout audit event")
 	}
 }
+
+func TestAssetsRevalidate(t *testing.T) {
+	srv, c, _ := newTestServer(t)
+	// Without a validator a browser may keep serving an old app.js forever, so
+	// the GUI would run stale code against a freshly self-updated API.
+	resp, err := c.Get(srv.URL + "/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	etag := resp.Header.Get("ETag")
+	if etag == "" || resp.Header.Get("Cache-Control") != "no-cache" {
+		t.Fatalf("assets served without revalidation headers: %+v", resp.Header)
+	}
+	// A browser holding the current version gets a cheap 304, not a re-download.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/app.js", nil)
+	req.Header.Set("If-None-Match", etag)
+	resp2, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotModified {
+		t.Fatalf("conditional request: got %d, want 304", resp2.StatusCode)
+	}
+}

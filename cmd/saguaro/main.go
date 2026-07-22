@@ -160,7 +160,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.59.3"
+const appVersion = "0.59.4"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -457,7 +457,7 @@ func (a *app) handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(assets)))
+	mux.Handle("/", revalidatingAssets(http.FileServer(http.FS(assets))))
 	return securityHeaders(a.requestLog(mux))
 }
 
