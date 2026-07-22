@@ -85,6 +85,7 @@ install -D -m 0755 "$ROOT/scripts/saguaro-tools"                    "$STAGE/usr/
 install -D -m 0755 "$ROOT/scripts/saguaro-webproxy"                 "$STAGE/usr/sbin/saguaro-webproxy"
 install -D -m 0755 "$ROOT/scripts/saguaro-kea-linkwatch"            "$STAGE/usr/lib/saguaro/kea-linkwatch"
 install -D -m 0644 "$ROOT/packaging/systemd/99-saguaro-ports.network" "$STAGE/usr/lib/systemd/network/99-saguaro-ports.network"
+install -D -m 0644 "$ROOT/packaging/systemd/kea-dhcp4-saguaro.conf" "$STAGE/usr/lib/systemd/system/kea-dhcp4-server.service.d/10-saguaro.conf"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-routes.service" "$STAGE/usr/lib/systemd/system/saguaro-routes.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.service" "$STAGE/usr/lib/systemd/system/saguaro-wan-check.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-wan-check.timer"   "$STAGE/usr/lib/systemd/system/saguaro-wan-check.timer"

@@ -885,6 +885,9 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -D -m 0644 "$SOURCE_DIR/packaging/systemd/99-saguaro-ports.network" \
     /etc/systemd/network/99-saguaro-ports.network
   run networkctl reload 2>/dev/null || true
+  # Kea keeps its leases in PostgreSQL but the packaged unit does not wait for it.
+  run install -D -m 0644 "$SOURCE_DIR/packaging/systemd/kea-dhcp4-saguaro.conf" \
+    /etc/systemd/system/kea-dhcp4-server.service.d/10-saguaro.conf
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-routes.service" /etc/systemd/system/saguaro-routes.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.timer" /etc/systemd/system/saguaro-wan-check.timer

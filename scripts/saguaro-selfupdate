@@ -71,6 +71,8 @@ do_apply() {
   install -D -m 0644 "$SRCDIR/packaging/systemd/99-saguaro-ports.network" \
     /etc/systemd/network/99-saguaro-ports.network
   networkctl reload >/dev/null 2>&1 || true
+  install -D -m 0644 "$SRCDIR/packaging/systemd/kea-dhcp4-saguaro.conf" \
+    /etc/systemd/system/kea-dhcp4-server.service.d/10-saguaro.conf
   for hook in routable carrier; do
     install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
     ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
