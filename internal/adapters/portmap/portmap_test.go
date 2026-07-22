@@ -116,6 +116,11 @@ func TestGenerateNetplan(t *testing.T) {
 	if strings.Contains(out, "dhcp4") || strings.Contains(out, "addresses:") {
 		t.Errorf("port map must carry no addressing:\n%s", out)
 	}
+	// Every port, spares included: netplan otherwise makes wait-online block the
+	// whole boot on empty sockets.
+	if got := strings.Count(out, "optional: true"); got != len(as) {
+		t.Errorf("optional: true on %d of %d ports:\n%s", got, len(as), out)
+	}
 }
 
 func TestRenamePlanSkipsPortsAlreadyNamed(t *testing.T) {

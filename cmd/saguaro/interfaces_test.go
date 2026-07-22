@@ -124,3 +124,54 @@ func TestInterfaceIdentifyRequiresRole(t *testing.T) {
 		t.Fatalf("auditor identify: got %d, want 403", r.StatusCode)
 	}
 }
+
+func TestNICLabelsFollowRenamedPorts(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	// After the port map renames ports, aliases the operator wrote against the
+	// old kernel names would otherwise be stranded on interfaces that are gone.
+	a.readInterfaces = func(context.Context) ([]nicInfo, error) {
+		return []nicInfo{
+			{Name: "wan1", SysName: "enp1s0", MAC: "aa:bb:cc:dd:ee:01"},
+			{Name: "net4", SysName: "enp2s0", MAC: "aa:bb:cc:dd:ee:02"},
+			{Name: "lan0", SysName: "lan0", MAC: "aa:bb:cc:dd:ee:03"},
+		}, nil
+	}
+	for k, v := range map[string]string{"enp1s0": "WAN1", "enp2s0": "GSM WAN2", "net4": "wan2", "lan0": "LAN"} {
+		if err := a.setNICLabel(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	resp, err := c.Get(srv.URL + "/api/interfaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nics []nicInfo
+	json.NewDecoder(resp.Body).Decode(&nics)
+	resp.Body.Close()
+	got := map[string]string{}
+	for _, n := range nics {
+		got[n.Name] = n.Label
+	}
+	if got["wan1"] != "WAN1" {
+		t.Errorf("alias did not follow the rename: %+v", got)
+	}
+	// A label already set on the new name is the operator's newer intent and wins
+	// over the one stranded on the old kernel name.
+	if got["net4"] != "wan2" {
+		t.Errorf("newer alias must win: %+v", got)
+	}
+	if got["lan0"] != "LAN" {
+		t.Errorf("unrenamed port lost its alias: %+v", got)
+	}
+	// The stale keys are gone, not merely shadowed.
+	labels := a.getNICLabels()
+	if _, ok := labels["enp1s0"]; ok {
+		t.Errorf("stale key kept: %+v", labels)
+	}
+	if _, ok := labels["enp2s0"]; ok {
+		t.Errorf("stale key kept after losing to a newer alias: %+v", labels)
+	}
+}

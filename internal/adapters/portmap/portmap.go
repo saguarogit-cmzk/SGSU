@@ -156,7 +156,11 @@ func GenerateNetplan(as []Assignment) (string, error) {
 	b.WriteString("# reference valid across hardware changes and configuration restores.\n")
 	b.WriteString("network:\n  version: 2\n  ethernets:\n")
 	for _, a := range sorted {
-		fmt.Fprintf(&b, "    %s:\n      match:\n        macaddress: %s\n      set-name: %s\n",
+		// optional: true on every entry, including the spares. netplan otherwise
+		// generates a wait-online drop-in listing them, and an appliance with a
+		// few empty sockets then spends the full two-minute timeout at every boot
+		// waiting for ports that have nothing plugged into them.
+		fmt.Fprintf(&b, "    %s:\n      match:\n        macaddress: %s\n      set-name: %s\n      optional: true\n",
 			a.Name, normalizeMAC(a.MAC), a.Name)
 	}
 	return b.String(), nil

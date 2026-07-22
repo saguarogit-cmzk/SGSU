@@ -317,9 +317,9 @@ async function interfacesPage(){const nics=await api('/api/interfaces');
 const link=n=>n.carrier?`<span class="status st-healthy">up${n.speedMb?' · '+n.speedMb+'Mb':''}</span>`:`<span class="status st-muted">no link</span>`;
 const role=n=>n.role?`<span class="badge">${escapeHtml(n.role)}</span>`:'';
 $('#content').innerHTML=`<div class="panel"><h2>Mrežna sučelja (${nics.length})</h2>
-<p class="muted">Daj svakom sučelju <b>naziv (alias)</b> — npr. <b>WAN1</b>, <b>LAN</b>, <b>GSM WAN2</b> — pa se prikazuje kroz cijeli sustav umjesto <code>enpXsY</code>. Ne znaš koji je fizički port? Klikni <b>Identificiraj</b> — LED zatreperi ~10 s.</p>
+<p class="muted">Daj svakom sučelju <b>naziv (alias)</b> — npr. <b>WAN1</b>, <b>LAN</b>, <b>GSM WAN2</b> — pa se prikazuje kroz cijeli sustav. Ispod naziva sučelja stoji sitno <b>kernelov naziv</b> (<code>enpXsY</code>) i <b>PCI adresa</b> — to je ono što ne mijenja Saguaro, pa služi za orijentaciju na kućištu. Ne znaš koji je fizički port? Klikni <b>Identificiraj</b> — LED zatreperi ~10 s.</p>
 <table><thead><tr><th>Sučelje</th><th>Naziv (alias)</th><th>Uloga</th><th>Link</th><th>MAC</th><th>IPv4</th><th>Driver</th><th></th></tr></thead><tbody>${nics.map(n=>`<tr>
-<td><b>${escapeHtml(n.name)}</b></td>
+<td><b>${escapeHtml(n.name)}</b>${n.sysName&&n.sysName!==n.name?`<div class="muted" style="font-size:11px">${escapeHtml(n.sysName)}</div>`:''}${n.bus?`<div class="muted" style="font-size:11px">${escapeHtml(n.bus)}</div>`:''}</td>
 <td><input class="nicLbl" data-n="${escapeHtml(n.name)}" value="${escapeHtml(n.label||'')}" placeholder="npr. WAN1" style="max-width:140px;padding:5px 8px"></td>
 <td>${role(n)}</td><td>${link(n)}</td>
 <td class="muted">${escapeHtml(n.mac||'')}</td>

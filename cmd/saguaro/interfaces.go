@@ -23,8 +23,15 @@ type nicInfo struct {
 	SpeedMb   int      `json:"speedMb"`
 	Driver    string   `json:"driver"`
 	Addresses []string `json:"addresses"`
-	Role      string   `json:"role"`  // WAN | LAN | mgmt | ""
-	Label     string   `json:"label"` // operator-friendly alias (e.g. "WAN1", "LAN")
+	// SysName is the name the kernel would have given this port on its own
+	// (enp2s0). Once the port map renames ports to lan0/wan1/net1, that name is
+	// the only cue left tying a row to a physical socket on the chassis.
+	SysName string `json:"sysName"`
+	// Bus is the PCI/USB address of the port (0000:02:00.0), which is what the
+	// kernel name encodes and what survives when nothing else does.
+	Bus   string `json:"bus"`
+	Role  string `json:"role"`  // WAN | LAN | mgmt | ""
+	Label string `json:"label"` // operator-friendly alias (e.g. "WAN1", "LAN")
 }
 
 var nicNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
@@ -52,6 +59,38 @@ func (a *app) setNICLabel(name, label string) error {
 		a.store.data.NICLabels[name] = label
 	}
 	return a.store.saveLocked()
+}
+
+// migrateNICLabels moves aliases that are still keyed on a port's old kernel
+// name onto the logical name the port map gave it. Without this, renaming the
+// ports silently orphans every alias the operator wrote before the migration --
+// they stay in the store, attached to interfaces that no longer exist. An alias
+// already set on the new name wins, since the operator wrote it more recently.
+func (a *app) migrateNICLabels(nics []nicInfo) {
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+	labels := a.store.data.NICLabels
+	if len(labels) == 0 {
+		return
+	}
+	changed := false
+	for _, n := range nics {
+		if n.SysName == "" || n.SysName == n.Name {
+			continue
+		}
+		old, ok := labels[n.SysName]
+		if !ok {
+			continue
+		}
+		if _, taken := labels[n.Name]; !taken {
+			labels[n.Name] = old
+		}
+		delete(labels, n.SysName)
+		changed = true
+	}
+	if changed {
+		_ = a.store.saveLocked()
+	}
 }
 
 // apiInterfaceLabel sets (or clears) an interface's friendly alias.
@@ -147,6 +186,11 @@ func defaultReadInterfaces(ctx context.Context) ([]nicInfo, error) {
 			parts := strings.Split(link, "/")
 			n.Driver = parts[len(parts)-1]
 		}
+		if link, err := os.Readlink("/sys/class/net/" + name + "/device"); err == nil {
+			parts := strings.Split(link, "/")
+			n.Bus = parts[len(parts)-1]
+		}
+		n.SysName = udevName(ctx2, name)
 		if n.Addresses == nil {
 			n.Addresses = []string{}
 		}
@@ -154,6 +198,29 @@ func defaultReadInterfaces(ctx context.Context) ([]nicInfo, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// udevName returns the predictable name udev derived for this port
+// (ID_NET_NAME_ONBOARD, then _SLOT, then _PATH), which is what the interface
+// would be called had the port map not renamed it. Empty when udev has nothing
+// to say -- a virtual device, or a system without a udev database.
+func udevName(ctx context.Context, name string) string {
+	out, err := exec.CommandContext(ctx, "udevadm", "info", "-q", "property", "-p", "/sys/class/net/"+name).Output()
+	if err != nil {
+		return ""
+	}
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			props[k] = v
+		}
+	}
+	for _, key := range []string{"ID_NET_NAME_ONBOARD", "ID_NET_NAME_SLOT", "ID_NET_NAME_PATH"} {
+		if v := props[key]; v != "" && nicNameRe.MatchString(v) {
+			return v
+		}
+	}
+	return ""
 }
 
 func (a *app) nicRole(name string) string {
@@ -174,6 +241,7 @@ func (a *app) apiInterfacesList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot read interfaces")
 		return
 	}
+	a.migrateNICLabels(nics)
 	labels := a.getNICLabels()
 	for i := range nics {
 		nics[i].Role = a.nicRole(nics[i].Name)
