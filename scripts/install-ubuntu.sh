@@ -83,6 +83,111 @@ run() { if $DRY_RUN; then printf 'DRY-RUN:'; printf ' %q' "$@"; printf '\n'; els
 # running binary always matches the source under version control. Only called on
 # source (non-.deb) installs. On success it sets SOURCE_DIR to the checkout so the
 # build and every adapter/unit install below read from the same tree.
+# setup_port_names gives every Ethernet port a stable logical name (lan0, wan1,
+# net1...) matched on its MAC address, so that the interface names every module
+# records survive a NIC moving slot and a configuration restore onto different
+# hardware. It runs itself: roles come from the interfaces the installer already
+# knows about, and the map is written once and never re-derived, because the
+# whole point is that the names do not move.
+setup_port_names() {
+  local map=/etc/netplan/05-saguaro-ports.yaml
+  local bin=/usr/lib/saguaro/saguaro
+  local wan_dst=/etc/netplan/60-saguaro-wan.yaml
+
+  if [[ -f $map ]]; then
+    log "Stable port names already assigned ($map); leaving them alone"
+    remap_port_vars; return 0
+  fi
+  $DRY_RUN && { log "[dry-run] would assign stable port names"; return 0; }
+  [[ -x $bin ]] || { log "NOTE: control plane binary not available; keeping kernel port names"; return 0; }
+  if [[ -z $DHCP_INTERFACE ]]; then
+    log "NOTE: no --dhcp-interface given; keeping kernel port names"; return 0
+  fi
+
+  local wan_if
+  wan_if=$(ip -o route show default 2>/dev/null | awk '{print $5}' | head -n1)
+  if [[ -z $wan_if ]]; then
+    # Renaming the uplink without writing addressing for its new name would cut
+    # the box off the network, so do nothing rather than guess which port it is.
+    log "NOTE: no default route found; keeping kernel port names"; return 0
+  fi
+
+  local plan
+  if ! plan=$("$bin" portmap --lan "$DHCP_INTERFACE" --wan "$wan_if" --plan 2>&1); then
+    log "WARNING: cannot derive stable port names ($plan); keeping kernel names"; return 0
+  fi
+  log "Assigning stable port names (LAN $DHCP_INTERFACE -> lan0, WAN $wan_if -> wan1)"
+  "$bin" portmap --lan "$DHCP_INTERFACE" --wan "$wan_if" >"$map"
+  chmod 0600 "$map"
+
+  # The uplink is about to be renamed, so its addressing has to follow it in the
+  # same apply. cloud-init keys its file on the old kernel name and regenerates
+  # it every boot, which would fight this map forever.
+  if [[ ! -f $wan_dst ]]; then
+    cat >"$wan_dst" <<'EOF'
+# Managed by Saguaro (generated). Manual edits are overwritten on apply.
+network:
+  version: 2
+  ethernets:
+    wan1:
+      optional: true
+      dhcp4: true
+      dhcp4-overrides:
+        route-metric: 100
+EOF
+    chmod 0600 "$wan_dst"
+  fi
+  install -d -m 0755 /etc/cloud/cloud.cfg.d
+  printf 'network: {config: disabled}\n' >/etc/cloud/cloud.cfg.d/99-saguaro-disable-network.cfg
+  rm -f /etc/netplan/50-cloud-init.yaml
+
+  if ! netplan generate; then
+    log "WARNING: netplan rejected the port map; reverting to kernel port names"
+    rm -f "$map" /etc/cloud/cloud.cfg.d/99-saguaro-disable-network.cfg
+    netplan generate || true
+    return 0
+  fi
+
+  # set-name only takes effect through udev at boot; rename live as well so the
+  # rest of this install (and the operator session) needs no reboot. The uplink
+  # goes last: everything else is already settled when its link bounces.
+  local old new
+  while read -r old new; do
+    [[ -n $old && -n $new ]] || continue
+    [[ $old == "$wan_if" ]] && continue
+    rename_port "$old" "$new"
+  done <<<"$plan"
+  while read -r old new; do
+    [[ $old == "$wan_if" ]] || continue
+    rename_port "$old" "$new"
+  done <<<"$plan"
+  netplan apply || true
+  remap_port_vars
+}
+
+# rename_port renames a live interface. The link has to be down to be renamed,
+# so bring it back up explicitly rather than waiting for networkd to notice.
+rename_port() {
+  local old=$1 new=$2
+  [[ -n $old && -n $new ]] || return 0
+  ip link set dev "$old" down 2>/dev/null || true
+  if ip link set dev "$old" name "$new" 2>/dev/null; then
+    ip link set dev "$new" up 2>/dev/null || true
+  else
+    log "WARNING: could not rename $old to $new; it keeps its kernel name until reboot"
+    ip link set dev "$old" up 2>/dev/null || true
+  fi
+}
+
+# remap_port_vars points the rest of the installer at the logical names, so the
+# Kea and nftables configuration it writes never mentions a kernel name.
+remap_port_vars() {
+  [[ -f /etc/netplan/05-saguaro-ports.yaml ]] || return 0
+  if [[ -n $DHCP_INTERFACE ]] && [[ -e /sys/class/net/lan0 ]]; then
+    DHCP_INTERFACE=lan0
+  fi
+}
+
 ensure_source_checkout() {
   local target=$SRC_INSTALL_DIR
   local url=$REPO_URL
@@ -388,6 +493,8 @@ else
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro.service" /etc/systemd/system/saguaro.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-eventd.service" /etc/systemd/system/saguaro-eventd.service
 fi
+# Stable port names must be in place before anything records an interface name.
+setup_port_names
 run useradd --system --home-dir /var/lib/saguaro --shell /usr/sbin/nologin saguaro 2>/dev/null || true
 run install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
 run install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro

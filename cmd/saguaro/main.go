@@ -159,12 +159,19 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.58.1"
+const appVersion = "0.59.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
 
 func main() {
+	// The installer needs the port map before there is a server (or an admin
+	// password) to talk to, so it runs the same generator as a subcommand.
+	if len(os.Args) > 1 {
+		if code, handled := runCLI(os.Args[1:]); handled {
+			os.Exit(code)
+		}
+	}
 	dataDir := env("SAGUARO_DATA_DIR", "/var/lib/saguaro")
 	listen := env("SAGUARO_LISTEN", "127.0.0.1:9080")
 	adminUser := env("SAGUARO_ADMIN_USER", "admin")

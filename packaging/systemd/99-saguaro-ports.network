@@ -12,12 +12,18 @@
 # deliberately gives them no addressing at all: an unconfigured WAN port that picked
 # up a router advertisement would otherwise gain an IPv6 address and possibly a
 # default route before anyone configured it.
+# lan*/wan*/net* are the stable names the port map assigns: once a port is
+# renamed it no longer matches en*, and without them a renamed spare would drop
+# back to being unmanaged -- down, and invisible again in the interface list.
 [Match]
-Name=en* eth*
+Name=en* eth* lan* wan* net*
 Type=ether
 
 [Link]
-ActivationPolicy=up
+# always-up rather than up: "up" honours a manual `ip link set down`, which
+# leaves the port invisible again -- including right after the port map renames
+# it, since renaming requires taking the link down first.
+ActivationPolicy=always-up
 RequiredForOnline=no
 
 [Network]
