@@ -81,6 +81,11 @@ func (w WAN) Validate() error {
 func (w WAN) ethernetBlock() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "    %s:\n", w.Interface)
+	// A WAN that is down must never hold up the boot. Without this, an uplink
+	// with no cable (or no DHCP answer) makes systemd-networkd-wait-online block
+	// for its full timeout -- and on a multi-WAN appliance a backup uplink being
+	// down is a normal state, not a fault worth stalling every boot for.
+	b.WriteString("      optional: true\n")
 	if w.Mode == "dhcp" {
 		b.WriteString("      dhcp4: true\n")
 		fmt.Fprintf(&b, "      dhcp4-overrides:\n        route-metric: %d\n", w.metric())

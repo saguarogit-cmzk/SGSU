@@ -44,6 +44,12 @@ func TestGenerateNetplan(t *testing.T) {
 			t.Errorf("static netplan missing %q:\n%s", w, st)
 		}
 	}
+	// Neither mode may let a down uplink stall the boot in wait-online.
+	for _, out := range []string{dhcp, st} {
+		if !strings.Contains(out, "optional: true") {
+			t.Errorf("WAN block is not optional:\n%s", out)
+		}
+	}
 }
 
 func TestNetplanAliases(t *testing.T) {
