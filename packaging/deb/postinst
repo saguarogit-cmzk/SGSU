@@ -10,6 +10,13 @@ case "$1" in
     install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
     install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro
     install -d -o root -g saguaro -m 0750 /etc/saguaro
+    # Re-open Kea's DHCP sockets when a LAN port comes up after boot. Symlinked
+    # rather than shipped in the .d directories so a purge leaves nothing behind
+    # that networkd-dispatcher would try to execute.
+    for hook in routable carrier; do
+      install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
+      ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
+    done
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload || true
       # Restart a previously configured instance on upgrade; a fresh install

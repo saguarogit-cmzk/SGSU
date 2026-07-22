@@ -62,7 +62,15 @@ do_apply() {
   for a in "$SRCDIR"/scripts/saguaro-*; do
     [ -f "$a" ] || continue
     name=$(basename "$a"); name=${name%.sh}
+    # The Kea link-up hook is not a sudo adapter: it belongs in /usr/lib and is
+    # run by networkd-dispatcher, not by the control plane.
+    [ "$name" = saguaro-kea-linkwatch ] && continue
     install -m 0755 "$a" "$SBIN/$name"
+  done
+  install -D -m 0755 "$SRCDIR/scripts/saguaro-kea-linkwatch" /usr/lib/saguaro/kea-linkwatch
+  for hook in routable carrier; do
+    install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
+    ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
   done
   # Refresh sudoers, but validate it before replacing so a bad file can't lock us out.
   install -m 0440 -o root -g root "$SRCDIR/packaging/sudoers/saguaro-adapter" /tmp/saguaro-sudoers.new

@@ -1,0 +1,52 @@
+#!/bin/sh
+# saguaro-kea-linkwatch - re-open Kea's DHCP sockets when a LAN port comes up.
+#
+# Kea opens its DHCP service sockets once, at startup, and only on interfaces
+# that are running at that moment. An appliance booted before its LAN cable was
+# plugged in (or one whose LAN port is moved later) therefore serves no leases
+# at all until someone restarts the service by hand. The retry settings in
+# interfaces-config cover the boot race; this hook covers everything after it.
+#
+# networkd-dispatcher runs us from routable.d/ and carrier.d/ with $IFACE set.
+# We restart kea-dhcp4-server only when that interface is one Kea is configured
+# to listen on AND Kea currently has no DHCP socket open, so a normal link flap
+# on an unrelated port never disturbs running leases.
+set -eu
+
+CONF=/etc/kea/kea-dhcp4.conf
+LOCK=/run/saguaro-kea-linkwatch.lock
+
+iface=${IFACE:-${1:-}}
+case "$iface" in
+  '' | lo) exit 0 ;;
+  # networkd-dispatcher hands us the kernel name; refuse anything else outright
+  # rather than letting it reach the config grep below.
+  *[!A-Za-z0-9._-]*) exit 0 ;;
+esac
+
+[ -r "$CONF" ] || exit 0
+systemctl is-active --quiet kea-dhcp4-server || exit 0
+
+# Is this interface (or the "*" wildcard) in Kea's listen list? The list lives
+# in interfaces-config.interfaces; a plain grep over the file would also match
+# a per-subnet "interface" key, which is exactly what we want here anyway --
+# both mean Kea is expected to serve DHCP on that port.
+grep -qE "\"(${iface}|\\*)(/[0-9a-fA-F.:]+)?\"" "$CONF" || exit 0
+
+serving() {
+  ss -uln 2>/dev/null | grep -qE '(^|[^0-9])[0-9.]+:67[[:space:]]'
+}
+
+# Already serving? Then there is nothing to heal.
+serving && exit 0
+
+# carrier and routable fire for the same port within the same second, so take
+# the lock and re-check: without the second look the runner-up would see the
+# socket of a restart still in flight as missing and restart Kea again.
+exec 9>"$LOCK" 2>/dev/null || exec 9>/dev/null
+flock -w 30 9 || exit 0
+sleep 2
+serving && exit 0
+
+logger -t saguaro-kea-linkwatch "restarting kea-dhcp4-server: ${iface} is up but no DHCP socket is open"
+systemctl restart kea-dhcp4-server || true

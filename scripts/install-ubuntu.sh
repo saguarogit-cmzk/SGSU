@@ -631,7 +631,12 @@ if ((dhcp_fields == 5)) && ! $DRY_RUN; then
   cat >/etc/kea/kea-dhcp4.conf <<EOF
 {
   "Dhcp4": {
-    "interfaces-config": { "interfaces": [ "${DHCP_INTERFACE}" ] },
+    "interfaces-config": {
+      "interfaces": [ "${DHCP_INTERFACE}" ],
+      "re-detect": true,
+      "service-sockets-max-retries": 5,
+      "service-sockets-retry-wait-time": 5000
+    },
     "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea4-ctrl-socket" },
     "hooks-libraries": [ { "library": "${KEA_HOOKS_DIR}/libdhcp_lease_cmds.so" } ],
     "lease-database": { "type": "postgresql", "name": "kea", "user": "kea", "password": "${KEA_DB_PASSWORD}", "host": "127.0.0.1" },
@@ -760,6 +765,13 @@ if [[ -z $DEB_SOURCE ]]; then
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-selfupdate" /usr/sbin/saguaro-selfupdate
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-logs" /usr/sbin/saguaro-logs
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-tools" /usr/sbin/saguaro-tools
+  # Link-up self-heal for Kea (see the script header). Runs as root from
+  # networkd-dispatcher, so it lives outside /usr/sbin's adapter set.
+  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-kea-linkwatch" /usr/lib/saguaro/kea-linkwatch
+  for hook in routable carrier; do
+    run install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
+    run ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
+  done
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-webproxy" /usr/sbin/saguaro-webproxy
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-routes.service" /etc/systemd/system/saguaro-routes.service
   run install -m 0644 "$SOURCE_DIR/packaging/systemd/saguaro-wan-check.service" /etc/systemd/system/saguaro-wan-check.service

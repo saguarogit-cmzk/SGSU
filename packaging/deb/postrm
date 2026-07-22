@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# The Kea link-up hooks point at a file this package owns, so they must go with
+# it -- a dangling symlink would make every link event log a dispatcher error.
+for hook in routable carrier; do
+  rm -f "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
+done
+
 if [ -d /run/systemd/system ]; then
   # Units were stopped/disabled in prerm; reload so systemd forgets the now-removed
   # unit files and clears any leftover state.

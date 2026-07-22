@@ -105,6 +105,29 @@ func TestEnsureInterfaceWildcard(t *testing.T) {
 	}
 }
 
+func TestSocketResilienceMigration(t *testing.T) {
+	// An install predating the retry settings gains them the next time a subnet
+	// is written -- otherwise a box booted with its LAN cable unplugged would
+	// keep serving no leases at all until someone restarted Kea by hand.
+	d := dhcp4Fixture()
+	d["interfaces-config"] = map[string]any{"interfaces": []any{"enp1s0"}}
+	s := specOK()
+	s.Interface = "" // no per-subnet NIC: migration must still happen
+	if _, err := AddSubnet(d, s); err != nil {
+		t.Fatalf("AddSubnet: %v", err)
+	}
+	ic := d["interfaces-config"].(map[string]any)
+	if ic["service-sockets-max-retries"] != 5 || ic["service-sockets-retry-wait-time"] != 5000 || ic["re-detect"] != true {
+		t.Fatalf("socket resilience not applied: %+v", ic)
+	}
+	// An operator who tuned the values keeps them.
+	tuned := map[string]any{"service-sockets-max-retries": 20, "re-detect": false}
+	EnsureSocketResilience(tuned)
+	if tuned["service-sockets-max-retries"] != 20 || tuned["re-detect"] != false {
+		t.Fatalf("existing settings overwritten: %+v", tuned)
+	}
+}
+
 func TestAddSubnetRefusesOverlap(t *testing.T) {
 	d := dhcp4Fixture()
 	overlap := SubnetSpec{Subnet: "192.168.10.128/25", PoolStart: "192.168.10.130", PoolEnd: "192.168.10.140"}

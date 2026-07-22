@@ -102,13 +102,9 @@ func (s SubnetSpec) Validate() error {
 // already listens on that interface or on "*"), so a subnet bound to a per-zone
 // NIC/VLAN actually receives DHCP there.
 func EnsureInterface(dhcp4 map[string]any, iface string) {
+	ic := EnsureDefaults(dhcp4)
 	if iface == "" {
 		return
-	}
-	ic, _ := dhcp4["interfaces-config"].(map[string]any)
-	if ic == nil {
-		ic = map[string]any{}
-		dhcp4["interfaces-config"] = ic
 	}
 	list, _ := ic["interfaces"].([]any)
 	for _, v := range list {
@@ -117,6 +113,40 @@ func EnsureInterface(dhcp4 map[string]any, iface string) {
 		}
 	}
 	ic["interfaces"] = append(list, iface)
+}
+
+// EnsureDefaults returns the interfaces-config block, creating it if missing,
+// with the socket-resilience settings applied.
+func EnsureDefaults(dhcp4 map[string]any) map[string]any {
+	ic, _ := dhcp4["interfaces-config"].(map[string]any)
+	if ic == nil {
+		ic = map[string]any{}
+		dhcp4["interfaces-config"] = ic
+	}
+	EnsureSocketResilience(ic)
+	return ic
+}
+
+// EnsureSocketResilience makes Kea survive a LAN port whose carrier is not up
+// yet when the server starts. By default Kea tries once, logs
+// DHCPSRV_OPEN_SOCKET_FAIL and then serves nothing until someone restarts it —
+// so an appliance booted before its LAN cable was plugged in hands out no
+// leases at all. The retries cover the boot race; a cable plugged in much later
+// is handled out-of-band by the networkd-dispatcher hook (saguaro-kea-linkwatch).
+// Existing installs are migrated the first time a subnet is written.
+func EnsureSocketResilience(ic map[string]any) {
+	if ic == nil {
+		return
+	}
+	if _, ok := ic["service-sockets-max-retries"]; !ok {
+		ic["service-sockets-max-retries"] = 5
+	}
+	if _, ok := ic["service-sockets-retry-wait-time"]; !ok {
+		ic["service-sockets-retry-wait-time"] = 5000
+	}
+	if _, ok := ic["re-detect"]; !ok {
+		ic["re-detect"] = true
+	}
 }
 
 func subnetSlice(dhcp4 map[string]any) []any {
@@ -170,6 +200,7 @@ func AddSubnet(dhcp4 map[string]any, s SubnetSpec) (int64, error) {
 	if err := s.Validate(); err != nil {
 		return 0, err
 	}
+	EnsureDefaults(dhcp4)
 	list := subnetSlice(dhcp4)
 	var maxID int64
 	for _, entry := range list {
@@ -207,6 +238,7 @@ func UpdateSubnet(dhcp4 map[string]any, id int64, s SubnetSpec) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
+	EnsureDefaults(dhcp4)
 	for _, entry := range subnetSlice(dhcp4) {
 		if subnetID(entry) != id {
 			continue
