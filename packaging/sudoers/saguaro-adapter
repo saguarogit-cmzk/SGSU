@@ -19,6 +19,6 @@ saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-logs unbound-stats, /usr/sbin/sag
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-tools ping *, /usr/sbin/saguaro-tools dns *, /usr/sbin/saguaro-tools trace *, /usr/sbin/saguaro-tools mtr *, /usr/sbin/saguaro-tools http *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-webproxy bump-ca, /usr/sbin/saguaro-webproxy apply *, /usr/sbin/saguaro-webproxy disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-backup-config apply, /usr/sbin/saguaro-backup-config run, /usr/sbin/saguaro-backup-config disable
-saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-wan apply, /usr/sbin/saguaro-wan disable
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-wan apply, /usr/sbin/saguaro-wan confirm, /usr/sbin/saguaro-wan disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-net identify *, /usr/sbin/saguaro-net wan-apply, /usr/sbin/saguaro-net vlan-apply
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-route apply, /usr/sbin/saguaro-route flush

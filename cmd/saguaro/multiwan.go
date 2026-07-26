@@ -42,7 +42,8 @@ func (a *app) apiWANGet(w http.ResponseWriter, _ *http.Request) {
 	if cfg.Uplinks == nil {
 		cfg.Uplinks = []multiwan.Uplink{}
 	}
-	writeJSON(w, http.StatusOK, cfg)
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Enabled, "uplinks": cfg.Uplinks,
+		"pending": wanPending()})
 }
 
 func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
@@ -95,5 +96,32 @@ func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.recordSev(r, a.actor(r), "multiwan-config", "routing", "success", "security", map[string]any{"uplinks": len(in.Uplinks)})
-	writeJSON(w, http.StatusOK, in)
+	writeJSON(w, http.StatusOK, map[string]any{"config": in, "confirmWindowSeconds": 120,
+		"message": "multi-WAN applied; confirm within 120 seconds or it rolls back automatically"})
+}
+
+func wanPending() bool {
+	_, err := os.Stat("/run/saguaro/wan-pending")
+	return err == nil
+}
+
+func (a *app) apiWANConfirm(w http.ResponseWriter, r *http.Request) {
+	if out, err := a.runWAN(r.Context(), "confirm"); err != nil {
+		writeError(w, http.StatusBadGateway, "confirm failed: "+truncate(string(out), 200))
+		return
+	}
+	a.recordSev(r, a.actor(r), "multiwan-confirm", "routing", "success", "security", nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *app) apiWANRollback(w http.ResponseWriter, r *http.Request) {
+	if out, err := a.runWAN(r.Context(), "disable"); err != nil {
+		writeError(w, http.StatusBadGateway, "rollback failed: "+truncate(string(out), 200))
+		return
+	}
+	cfg := a.getWAN()
+	cfg.Enabled = false
+	_ = a.setWAN(cfg)
+	a.recordSev(r, a.actor(r), "multiwan-rollback", "routing", "success", "security", nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

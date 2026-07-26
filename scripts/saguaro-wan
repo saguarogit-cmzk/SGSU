@@ -13,6 +13,8 @@ set -eu
 STAGED=/var/lib/saguaro/staged-wan.spec
 SPEC=/etc/saguaro/wan.spec
 PBR_PREF=20000
+FLAG=/run/saguaro/wan-pending
+TIMER_UNIT=saguaro-wan-rollback
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -36,12 +38,22 @@ cleanup_pbr() {
 # stays symmetric. Table = 100+index, mark = index+1.
 setup_pbr() {
   cleanup_pbr
+  # Snapshot the directly-connected (on-link) subnet routes. Each per-uplink
+  # table must carry these so traffic to local subnets -- LAN clients, the other
+  # WAN, and the box's own management replies -- stays on-link instead of being
+  # sent to the WAN gateway. Without them a `from <wan-ip>` rule routes management
+  # replies to the gateway, which does not hairpin, and cuts the admin off.
+  connected=$(ip -4 route show table main scope link proto kernel 2>/dev/null)
   i=0
   while read -r name iface gw weight hc; do
     case "$name" in ''|\#*) continue ;; esac
     tbl=$((100 + i))
     mark=$((i + 1))
     ip route replace default via "$gw" dev "$iface" table "$tbl" 2>/dev/null || true
+    # Keep local subnets reachable directly from within this uplink's table.
+    printf '%s\n' "$connected" | while IFS= read -r cr; do
+      [ -n "$cr" ] && ip route add table "$tbl" $cr 2>/dev/null || true
+    done
     src=$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
     if [ -n "$src" ]; then
       ip rule add from "$src" lookup "$tbl" pref $((PBR_PREF + i)) 2>/dev/null || true
@@ -89,7 +101,21 @@ case "${1:-}" in
     build_route || true
     setup_pbr
     systemctl enable --now saguaro-wan-check.timer >/dev/null 2>&1 || true
-    logger -t saguaro-wan "multi-WAN applied"
+    # Arm an auto-rollback: a routing change can cut the admin off (a bad gateway,
+    # or a policy-routing edge case). If it is not confirmed within 120 s the
+    # config is torn down and the previous routes restored -- the same safety the
+    # firewall apply has, learned the hard way.
+    install -d -m 0755 /run/saguaro 2>/dev/null || true
+    : >"$FLAG"
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
+    systemd-run --unit="$TIMER_UNIT" --on-active=120 --timer-property=AccuracySec=1s \
+      /usr/sbin/saguaro-wan rollback-if-pending >/dev/null 2>&1 || true
+    logger -t saguaro-wan "multi-WAN applied; auto-rollback in 120 s unless confirmed"
+    ;;
+  confirm)
+    rm -f "$FLAG"
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
+    logger -t saguaro-wan "multi-WAN confirmed"
     ;;
   check)
     [ -s "$SPEC" ] || exit 0
@@ -97,12 +123,26 @@ case "${1:-}" in
     ;;
   disable)
     systemctl disable --now saguaro-wan-check.timer 2>/dev/null || true
+    rm -f "$FLAG"
+    systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
     cleanup_pbr
     rm -f "$SPEC"
+    # Restore the addresses' own DHCP/static routes that the multipath default
+    # replaced, so egress returns to normal immediately.
+    networkctl reload >/dev/null 2>&1 || true
     logger -t saguaro-wan "multi-WAN disabled"
     ;;
+  rollback-if-pending)
+    [ -e "$FLAG" ] || exit 0
+    systemctl disable --now saguaro-wan-check.timer 2>/dev/null || true
+    rm -f "$FLAG"
+    cleanup_pbr
+    rm -f "$SPEC"
+    networkctl reload >/dev/null 2>&1 || true
+    logger -t saguaro-wan "multi-WAN auto-rolled back (unconfirmed)"
+    ;;
   *)
-    echo "usage: saguaro-wan apply|check|disable" >&2
+    echo "usage: saguaro-wan apply|confirm|check|disable|rollback-if-pending" >&2
     exit 2
     ;;
 esac
