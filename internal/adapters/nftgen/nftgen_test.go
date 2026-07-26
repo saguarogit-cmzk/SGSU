@@ -142,6 +142,26 @@ func TestMgmtOnInterface(t *testing.T) {
 
 // TestMgmtLockoutGuard rejects configs that would leave the drop-policy input
 // chain with no way for an administrator to reach SSH or the GUI.
+// TestRuleLog checks that a rule with Log set emits an nft log prefix before its
+// verdict, and that a rule without it does not.
+func TestRuleLog(t *testing.T) {
+	c := gwCfg()
+	c.Rules = []Rule{
+		{Name: "trace-guests", Action: "drop", Proto: "any", Log: true, Enabled: true},
+		{Name: "quiet", Action: "accept", Proto: "any", Enabled: true},
+	}
+	text, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `log prefix "SNA:trace-guests "`) {
+		t.Fatalf("logged rule missing log prefix:\n%s", text)
+	}
+	if strings.Contains(text, "SNA:quiet") {
+		t.Fatalf("non-logged rule must not emit a log prefix:\n%s", text)
+	}
+}
+
 func TestMgmtLockoutGuard(t *testing.T) {
 	// Gateway with no admin network and neither toggle: total lockout.
 	c := gwCfg()

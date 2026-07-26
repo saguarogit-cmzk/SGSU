@@ -49,6 +49,7 @@ type Rule struct {
 	Category string `json:"category"` // traffic group: lan2wan|wan2lan|wan2dmz|vpn|local|other
 	FromZone string `json:"fromZone"` // optional: match traffic entering from this zone
 	ToZone   string `json:"toZone"`   // optional: match traffic leaving to this zone
+	Log      bool   `json:"log"`      // log matches to the kernel log with an SNA prefix
 	Enabled  bool   `json:"enabled"`
 }
 
@@ -469,7 +470,17 @@ func ruleMatch(r Rule, zoneIface map[string]string) string {
 	case r.Proto == "tcp" || r.Proto == "udp":
 		parts = append(parts, "meta l4proto "+r.Proto)
 	}
-	parts = append(parts, "counter", r.Action)
+	parts = append(parts, "counter")
+	if r.Log {
+		// The rule name charset (letters/digits/space . _ -) is safe inside a log
+		// prefix; cap the length so the prefix stays well under nft's limit.
+		name := r.Name
+		if len(name) > 24 {
+			name = name[:24]
+		}
+		parts = append(parts, fmt.Sprintf("log prefix %q", "SNA:"+name+" "))
+	}
+	parts = append(parts, r.Action)
 	return strings.Join(parts, " ")
 }
 

@@ -124,6 +124,9 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .filterbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:2px 0 14px}
 .filterbar input,.filterbar select{width:auto;min-width:150px}
 .filterbar input[type=search]{min-width:200px;flex:1 1 220px}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:5px;vertical-align:middle;letter-spacing:.03em}
+.chip-log{background:#e7edf5;color:#2563eb;border:1px solid #cfe0f5}
+.chip-zone{background:#eef2f6;color:#5b6b7b;border:1px solid #dbe3ec}
 .panel{margin-top:16px;overflow-x:auto}
 .panel h2{margin:0 0 6px;font-size:16px;font-weight:700}
 .panel h3{margin:16px 0 4px;font-size:14px;font-weight:700;color:var(--fg)}
@@ -155,7 +158,7 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .navres .nav-ico,.navres .nav-ico svg{width:16px;height:16px}
 .navres-empty{padding:9px 10px;color:var(--faint);font-size:13px}
 
-/* ---------- top sub-nav (Sophos-style module tabs) ---------- */
+/* ---------- top sub-nav (module tabs) ---------- */
 .subnav{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line2);
   margin:-4px 0 18px;overflow-x:auto}
 .subtab{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);
@@ -182,7 +185,7 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .st-muted{color:var(--faint);background:#f2f5f8}
 .up{color:var(--brand)}
 
-/* ---------- sliding toggle (Sophos-style on/off) ---------- */
+/* ---------- sliding toggle (on/off) ---------- */
 .toggle{position:relative;display:inline-block;width:38px;height:22px;flex:0 0 auto}
 .toggle input{opacity:0;width:0;height:0;position:absolute;margin:0}
 .toggle .track{position:absolute;inset:0;background:var(--line2);border-radius:99px;transition:background .18s}

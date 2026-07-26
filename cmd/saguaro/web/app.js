@@ -44,7 +44,7 @@ const ICONS={
   audit:svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>'),
   _default:svg('<circle cx="12" cy="12" r="9"/>')
 };
-// Small action icons for per-row buttons (Sophos-style).
+// Small action icons for per-row buttons.
 const AICON={
   up:svg('<path d="m6 15 6-6 6 6"/>'),
   down:svg('<path d="m6 9 6 6 6-6"/>'),
@@ -65,7 +65,7 @@ function toggle(id,checked,label,extra){return `<label class="toggle-row"><span 
 const UTM_MODULES=new Set(['gateway','fwrules','ids','webproxy','vpn','sitevpn','ipsec','multiwan']);
 // Each group is [title, iconKey, [moduleIds]]. The left rail shows only these
 // groups; the modules of the active group appear as tabs across the top of the
-// content (Sophos-style), so the rail stays short no matter how many modules.
+// content as tabs, so the rail stays short no matter how many modules.
 const NAV_GROUPS=[
  ['Status','monitoring',['dashboard','monitoring','conflicts','tools','audit']],
  ['Mreža','interfaces',['interfaces','gateway','routing','multiwan']],
@@ -588,7 +588,7 @@ async function fwRulesPage(){const f=await api('/api/firewall');const aliases=f.
 const nics=await api('/api/interfaces').catch(()=>[]);
 const gw=((await api('/api/gateway').catch(()=>({config:{}}))).config)||{};
 // NAT rules are configured on the Gateway page; surface them here read-only in a
-// Sophos-style Original -> Translated view so all rule types live in one place.
+// Original -> Translated view so all rule types live in one place.
 const gwWan=gw.wanInterface||'wan1',pf=gw.portForwards||[],sn=gw.snatRules||[];
 const masq=!!(gw.gatewayEnabled&&gw.natEnabled!==false);
 const natCount=(masq?1:0)+pf.length+sn.length;
@@ -617,9 +617,9 @@ const catLabel=c=>{const f=CATS.find(x=>x[0]===c);return f?f[1]:c};
 const catOpts=sel=>CATS.map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');
 const actClass=a=>a==='accept'?'st-healthy':(a==='drop'||a==='reject')?'st-error':'';
 const ruleRows=rules.length?rules.map((r,i)=>{const acts=`<div class="rowacts">${iconBtn('up','Pomakni gore','',`data-i="${i}"${i===0?' disabled':''}`).replace('iconbtn','iconbtn ruUp')}${iconBtn('down','Pomakni dolje','',`data-i="${i}"${i===rules.length-1?' disabled':''}`).replace('iconbtn','iconbtn ruDown')}${iconBtn('test','Testiraj ovo pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruTestBtn')}${iconBtn('del','Obriši pravilo','danger',`data-i="${i}"`).replace('iconbtn','iconbtn ruDel')}</div>`;
-const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}" data-action="${e(r.action||'')}" data-enabled="${r.enabled?'1':'0'}" data-name="${e((r.name||'').toLowerCase())}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td>${acts}</td></tr>`;
+const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}" data-action="${e(r.action||'')}" data-enabled="${r.enabled?'1':'0'}" data-name="${e((r.name||'').toLowerCase())}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b>${r.log?'<span class="chip chip-log">LOG</span>':''}${(r.fromZone||r.toZone)?`<span class="chip chip-zone">${e(r.fromZone||'*')}→${e(r.toZone||'*')}</span>`:''}</td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td>${acts}</td></tr>`;
 const dl=(t,d)=>`<dl><dt>${t}</dt><dd>${d}</dd></dl>`;
-const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="7"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}${(r.fromZone||r.toZone)?dl('Zona',e(r.fromZone||'bilo koja')+' → '+e(r.toZone||'bilo koja')):''}</div></td></tr>`;
+const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="7"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}${(r.fromZone||r.toZone)?dl('Zona',e(r.fromZone||'bilo koja')+' → '+e(r.toZone||'bilo koja')):''}${dl('Logiranje',r.log?'<span class="status st-healthy">uključeno</span>':'<span class="muted">isključeno</span>')}</div></td></tr>`;
 return main+detail}).join(''):'<tr><td colspan="7" class="muted">Nema pravila.</td></tr>';
 $('#content').innerHTML=`${pend}
 <div class="panel"><h2>Firewall aliasi i pravila</h2>
@@ -649,6 +649,7 @@ ${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCo
 <label>Iz zone <select id="ruFromZone">${zoneOpt('')}</select></label>
 <label>U zonu <select id="ruToZone">${zoneOpt('')}</select></label>
 <label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
+${toggle('ruLog',false,'Logiraj promet koji pravilo uhvati (kernel log)')}
 ${toggle('ruEnabled',true,'Omogućeno')}
 <div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="nat">
@@ -714,7 +715,7 @@ $('#ruAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ruMsg');m.textCo
 if(!/^[A-Za-z0-9 ._-]{1,40}$/.test(name)){m.textContent='Naziv pravila: 1-40 znakova (slova, brojke, razmak . _ -).';return}
 if(port&&proto==='any'){m.textContent='Za odredišni port odaberi tcp ili udp.';return}
 if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoji.';return}
-const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,enabled:$('#ruEnabled').checked};
+const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,log:$('#ruLog').checked,enabled:$('#ruEnabled').checked};
 try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.znDel').forEach(el=>el.onclick=async()=>{const list=zones.filter((_,j)=>j!==+el.dataset.i);try{await putZones(list);fwRulesPage()}catch(err){alert(err.message)}});
 document.querySelectorAll('.znDhcp').forEach(el=>el.onclick=()=>{const z=zones[+el.dataset.i];const ifn=z.vlanId?z.interface+'.'+z.vlanId:z.interface;const router=z.address?z.address.split('/')[0]:'';window.__zoneDhcp={name:z.name,subnet:z.network,iface:ifn,router};openModule('dhcp')});
