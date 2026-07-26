@@ -90,7 +90,7 @@ func (a *app) apiFirewallTest(w http.ResponseWriter, r *http.Request) {
 // generator writes as `comment "<name> [category]"`). Best effort: if the
 // ruleset is not loaded yet it returns an empty map, not an error.
 func (a *app) apiFirewallCounters(w http.ResponseWriter, r *http.Request) {
-	empty := map[string]any{"counters": map[string]any{}}
+	empty := map[string]any{"counters": map[string]any{}, "drops": map[string]any{}}
 	out, err := a.runFirewall(r.Context(), "counters")
 	if err != nil {
 		writeJSON(w, http.StatusOK, empty)
@@ -104,6 +104,7 @@ func (a *app) apiFirewallCounters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	counters := map[string]map[string]int64{}
+	drops := map[string]map[string]int64{}
 	for _, entry := range dump.Nftables {
 		raw, ok := entry["rule"]
 		if !ok {
@@ -113,7 +114,45 @@ func (a *app) apiFirewallCounters(w http.ResponseWriter, r *http.Request) {
 			Comment string                       `json:"comment"`
 			Expr    []map[string]json.RawMessage `json:"expr"`
 		}
-		if json.Unmarshal(raw, &rule) != nil || rule.Comment == "" {
+		if json.Unmarshal(raw, &rule) != nil {
+			continue
+		}
+		// A rule's counter, and its log prefix if it logs (used to recognise the
+		// input/forward drop rules), both live in the same expr array.
+		var cnt map[string]int64
+		var logPrefix string
+		for _, ex := range rule.Expr {
+			if craw, ok := ex["counter"]; ok {
+				var c struct {
+					Packets int64 `json:"packets"`
+					Bytes   int64 `json:"bytes"`
+				}
+				if json.Unmarshal(craw, &c) == nil {
+					cnt = map[string]int64{"packets": c.Packets, "bytes": c.Bytes}
+				}
+			}
+			if lraw, ok := ex["log"]; ok {
+				var l struct {
+					Prefix string `json:"prefix"`
+				}
+				if json.Unmarshal(lraw, &l) == nil {
+					logPrefix = l.Prefix
+				}
+			}
+		}
+		if cnt == nil {
+			continue
+		}
+		// The catch-all drop rules carry a known log prefix but no comment.
+		switch strings.TrimSpace(logPrefix) {
+		case "SNA-FWD-DROP":
+			drops["forward"] = cnt
+			continue
+		case "SNA-INPUT-DROP":
+			drops["input"] = cnt
+			continue
+		}
+		if rule.Comment == "" {
 			continue
 		}
 		// The generator appends " [category]" to the rule name in the comment;
@@ -122,21 +161,9 @@ func (a *app) apiFirewallCounters(w http.ResponseWriter, r *http.Request) {
 		if i := strings.Index(name, " ["); i >= 0 {
 			name = name[:i]
 		}
-		for _, ex := range rule.Expr {
-			craw, ok := ex["counter"]
-			if !ok {
-				continue
-			}
-			var c struct {
-				Packets int64 `json:"packets"`
-				Bytes   int64 `json:"bytes"`
-			}
-			if json.Unmarshal(craw, &c) == nil {
-				counters[name] = map[string]int64{"packets": c.Packets, "bytes": c.Bytes}
-			}
-		}
+		counters[name] = cnt
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"counters": counters})
+	writeJSON(w, http.StatusOK, map[string]any{"counters": counters, "drops": drops})
 }
 
 func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {

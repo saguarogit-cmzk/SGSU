@@ -122,6 +122,16 @@ function fmtRate(bps){if(!isFinite(bps)||bps<0)bps=0;if(bps>=1e9)return (bps/1e9
 function fmtUptime(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'d ':'')+h+'h '+m+'m'}
 function fmtBytes(n){n=+n||0;if(n>=1e9)return (n/1e9).toFixed(2)+' GB';if(n>=1e6)return (n/1e6).toFixed(1)+' MB';if(n>=1e3)return (n/1e3).toFixed(0)+' kB';return n+' B'}
 function barPct(p){const cl=p>=85?'var(--err)':p>=60?'var(--warn)':'var(--brand)';return `<div class="bar"><i style="width:${Math.min(100,Math.max(0,p))}%;background:${cl}"></i></div>`}
+// loadSecurity fills the dashboard "Sigurnost" view: firewall drop counters,
+// recent security-severity events, and the IDS/IPS alert count.
+async function loadSecurity(){
+try{const fc=await api('/api/firewall/counters');const d=fc.drops||{};const f=d.forward,i=d.input;
+if($('#secFwd')){$('#secFwd').textContent=f?(+f.packets).toLocaleString('hr-HR'):'0';if($('#secFwdB'))$('#secFwdB').textContent=f?fmtBytes(f.bytes):''}
+if($('#secIn')){$('#secIn').textContent=i?(+i.packets).toLocaleString('hr-HR'):'0';if($('#secInB'))$('#secInB').textContent=i?fmtBytes(i.bytes):''}}catch(e){}
+try{const rows=await api('/api/events?limit=100');const sev=new Set(['security','critical','error','warning']);const sec=(rows||[]).filter(x=>sev.has((x.severity||'').toLowerCase()));
+if($('#secEvN'))$('#secEvN').textContent=sec.length;const el=$('#secEvents');
+if(el)el.innerHTML=sec.length?`<table class="compact"><thead><tr><th>Vrijeme</th><th>Razina</th><th>Modul</th><th>Akcija</th><th>Poruka</th></tr></thead><tbody>${sec.slice(0,50).map(x=>`<tr><td class="muted">${new Date(x.ts).toLocaleString()}</td><td class="sev-${escapeHtml(x.severity||'info')}">${escapeHtml(x.severity)}</td><td>${escapeHtml(x.module)}</td><td>${escapeHtml(x.action||'')}</td><td>${escapeHtml(x.message||'')}</td></tr>`).join('')}</tbody></table>`:'<span class="muted">Nema nedavnih sigurnosnih događaja.</span>';}catch(e){}
+try{const s=await api('/api/logs/suricata');if($('#secAlerts'))$('#secAlerts').textContent=(s.alerts||[]).length}catch(e){}}
 async function dashboard(){const services=await api('/api/services').catch(()=>[]);const nics=await api('/api/interfaces').catch(()=>[]);const eh=escapeHtml;
 const nicHw=nics.map(n=>`<tr><td><b>${eh(n.label||n.name)}</b> <span class="muted small">${eh(n.name)}</span></td><td>${n.role?`<span class="badge">${eh(n.role)}</span>`:'<span class="muted">—</span>'}</td><td>${n.carrier?`<span class="status st-healthy">Spojen${n.speedMb?' · '+n.speedMb+' Mbps':''}</span>`:'<span class="status st-muted">Nije spojen</span>'}</td><td class="muted">${eh((n.addresses||[]).join(', ')||'—')}</td><td class="muted small">${eh(n.sysName||'')}${n.driver?' · '+eh(n.driver):''}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Nema podataka.</td></tr>';
 $('#content').innerHTML=`${tabBar('dashViews',[['hw','Stanje i hardver'],['std','Standard'],['sec','Sigurnost']])}
@@ -139,8 +149,14 @@ $('#content').innerHTML=`${tabBar('dashViews',[['hw','Stanje i hardver'],['std',
 <div class="panel"><h2>Komponente</h2><div class="services">${services.map(s=>`<div class="card service"><div><h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(s.description)}</p></div><div><span class="status ${stClass(s.status)}">${escapeHtml(s.status)}</span><button class="svcCheck" data-id="${escapeHtml(s.id)}">Provjeri</button></div></div>`).join('')}</div></div>
 <div class="panel"><h2>Čarobnjaci</h2><div class="wizRow"><button id="wzNet">DHCP mreža (W2)</button> <button id="wzRes">DHCP rezervacija (W3)</button> <button id="wzZone">DNS zona (W4)</button> <button id="wzGw">Gateway (W8)</button> <button id="wzMail">Mail alarmi (W10)</button></div></div></div>
 <div class="tabpane" data-pane="dashViews" data-tabkey="sec">
+<div class="cards">
+<div class="card"><div class="muted">Odbačeno — forward</div><div class="metric" id="secFwd" style="font-size:22px">—</div><div class="muted small" id="secFwdB"></div></div>
+<div class="card"><div class="muted">Odbačeno — ulaz</div><div class="metric" id="secIn" style="font-size:22px">—</div><div class="muted small" id="secInB"></div></div>
+<div class="card"><div class="muted">IDS/IPS alarmi</div><div class="metric" id="secAlerts" style="font-size:22px">—</div><div class="muted small">nedavni</div></div>
+<div class="card"><div class="muted">Sigurnosni događaji</div><div class="metric" id="secEvN" style="font-size:22px">—</div><div class="muted small">nedavni</div></div></div>
+<div class="panel scroll"><h2>Sigurnosni događaji</h2><div id="secEvents" class="muted">Učitavanje…</div></div>
 <div class="panel scroll"><h2>IDS/IPS alarmi (Suricata)</h2><div id="idsAlerts" class="muted">Učitavanje…</div></div></div>`;
-wireTabs('dashViews');
+wireTabs('dashViews');loadSecurity();
 document.querySelectorAll('.svcCheck').forEach(b=>b.onclick=()=>checkService(b.dataset.id));
 $('#wzNet').onclick=wizDhcpNet;$('#wzRes').onclick=wizReservation;$('#wzZone').onclick=wizDnsZone;$('#wzGw').onclick=()=>wizGateway().catch(e=>alert(e.message));$('#wzMail').onclick=()=>openModule('mail');
 const healthy=services.filter(s=>s.status==='healthy').length;$('#mSvc').textContent=`${healthy}/${services.length} servisa zdravo`;
