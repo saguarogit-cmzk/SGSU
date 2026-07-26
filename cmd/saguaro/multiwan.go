@@ -72,6 +72,8 @@ func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "cannot persist multi-WAN configuration")
 			return
 		}
+		// Remove the per-uplink connmark mangle chain now that multi-WAN is off.
+		a.syncFirewallForWAN(r)
 		a.recordSev(r, a.actor(r), "multiwan-config", "routing", "success", "warning", map[string]any{"enabled": false})
 		writeJSON(w, http.StatusOK, in)
 		return
@@ -95,6 +97,10 @@ func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot persist multi-WAN configuration")
 		return
 	}
+	// Regenerate the firewall so the per-uplink connmark mangle chain is added.
+	// Without it replies leave via the wrong WAN (asymmetric routing) and TCP over
+	// the secondary uplink breaks -- the manual "re-apply firewall" step, automated.
+	a.syncFirewallForWAN(r)
 	a.recordSev(r, a.actor(r), "multiwan-config", "routing", "success", "security", map[string]any{"uplinks": len(in.Uplinks)})
 	writeJSON(w, http.StatusOK, map[string]any{"config": in, "confirmWindowSeconds": 120,
 		"message": "multi-WAN applied; confirm within 120 seconds or it rolls back automatically"})
@@ -103,6 +109,20 @@ func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
 func wanPending() bool {
 	_, err := os.Stat("/run/saguaro/wan-pending")
 	return err == nil
+}
+
+// syncFirewallForWAN regenerates the firewall so the per-uplink connmark mangle
+// chain matches the current multi-WAN state (added when enabled, removed when
+// disabled) -- symmetric routing depends on it. Best-effort: the WAN routes are
+// already applied, so a firewall hiccup is logged, not fatal to the WAN change.
+func (a *app) syncFirewallForWAN(r *http.Request) {
+	if _, ok := a.firewallConfig(); !ok {
+		return
+	}
+	if err := a.applyAndConfirm(r); err != nil {
+		a.recordSev(r, a.actor(r), "multiwan-fwsync", "nftables", "failed", "warning",
+			map[string]any{"error": err.Error()})
+	}
 }
 
 func (a *app) apiWANConfirm(w http.ResponseWriter, r *http.Request) {
