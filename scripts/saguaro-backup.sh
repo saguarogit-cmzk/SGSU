@@ -24,7 +24,7 @@ mkdir -p "$DEST"
 
 # Configuration backup. /etc/step-ca is deliberately excluded and archived
 # separately below under a stricter policy.
-for path in /etc/saguaro /etc/kea /etc/unbound /etc/powerdns /etc/nginx /etc/nftables.conf /var/lib/saguaro; do
+for path in /etc/saguaro /etc/kea /etc/unbound /etc/powerdns /etc/nginx /etc/nftables.conf /etc/netplan /etc/systemd/network /etc/sysctl.d/99-saguaro-forward.conf /var/lib/saguaro; do
   [[ -e $path ]] && cp -a --parents "$path" "$WORK"
 done
 # The decryption key must never travel inside the backup it protects.

@@ -60,6 +60,11 @@ case "$1" in
     fi
     nft -f "$ACTIVE"
     enable_forwarding_if_needed
+    # Make the ruleset survive a reboot. nftables.service loads /etc/nftables.conf
+    # at boot but ships disabled on Ubuntu; without this the firewall and NAT
+    # vanish after a restart (clients lose internet, box loses its filtering).
+    # ACTIVE is exactly the file that unit loads, so enabling it is enough.
+    systemctl enable nftables >/dev/null 2>&1 || true
     : >"$FLAG"
     systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
     systemd-run --unit="$TIMER_UNIT" --on-active=120 --timer-property=AccuracySec=1s \
