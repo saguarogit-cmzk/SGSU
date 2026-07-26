@@ -117,6 +117,10 @@ header p{margin:0;color:var(--muted);font-size:14px}
   padding:18px;box-shadow:var(--shadow)}
 .metric{font-size:29px;font-weight:750;letter-spacing:-.5px;margin-top:6px;color:var(--fg)}
 .muted{color:var(--muted)}
+.small{font-size:11px;line-height:1.4}
+.ifname{display:flex;align-items:center;gap:8px}
+.ifname .nav-ico{color:var(--faint);flex:0 0 auto}
+.btnrow{display:flex;gap:9px;flex-wrap:wrap;margin-top:8px}
 .panel{margin-top:16px;overflow-x:auto}
 .panel h2{margin:0 0 6px;font-size:16px;font-weight:700}
 .panel h3{margin:16px 0 4px;font-size:14px;font-weight:700;color:var(--fg)}

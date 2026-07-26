@@ -223,13 +223,27 @@ func udevName(ctx context.Context, name string) string {
 	return ""
 }
 
+// nicRole labels a port WAN or LAN for display. When gateway mode is on the
+// configured WAN/LAN interfaces are authoritative; otherwise we still infer a
+// role from a configured WAN uplink or the DHCP-serving port so the Interfaces
+// page shows roles before the box is converted to a gateway.
 func (a *app) nicRole(name string) string {
-	if gw, ok := a.getGateway(); ok && gw.GatewayEnabled {
-		switch name {
-		case gw.WANInterface:
-			return "WAN"
-		case gw.LANInterface:
+	if gw, ok := a.getGateway(); ok {
+		if gw.GatewayEnabled {
+			switch name {
+			case gw.WANInterface:
+				return "WAN"
+			case gw.LANInterface:
+				return "LAN"
+			}
+		}
+		if gw.DHCPInterface == name && name != "" {
 			return "LAN"
+		}
+	}
+	for _, w := range a.getWANs() {
+		if w.Interface == name && name != "" {
+			return "WAN"
 		}
 	}
 	return ""

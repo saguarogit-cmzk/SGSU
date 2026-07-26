@@ -159,12 +159,24 @@ const pfFormat=l=>(l||[]).map(p=>`${p.proto}:${p.extPort}:${p.destIp}:${p.destPo
 const snatParse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{source:(p[0]||'').trim(),toAddress:(p[1]||'').trim()}}).filter(r=>r.source&&r.toAddress);
 const snatFormat=l=>(l||[]).map(r=>`${r.source} -> ${r.toAddress}`).join('\n');
 async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};let wans=((await api('/api/wan').catch(()=>({wans:[]}))).wans)||[];const ew=escapeHtml;
-const wanPanel=`<div class="panel"><h2>WAN sučelja</h2>
-${help('Postavi JEDNO ili VIŠE WAN sučelja (npr. WAN1 + GSM WAN2). Svako je <b>DHCP</b> ili <b>statičko</b> (IP/CIDR + gateway + DNS + aliasi). <b>Metrika</b> je prioritet default rute — manja = primarni WAN. Za balans/failover preko oba uključi modul <b>Multi-WAN</b> (weighted + PBR). Promjena piše netplan i radi <code>netplan apply</code>; mgmt pristup ide preko svog sučelja pa GUI ne puca.')}
+// Sensible defaults from the box's own ports (stable names lan0/wan1) so the
+// form is nearly one-click on a fresh gateway instead of empty.
+const nb=n=>(g.nics||[]).find(z=>z.name===n)||null;
+const lanN=nb('lan0'),wanN=nb('wan1');
+const lanAddr=(lanN&&(lanN.addresses||[])[0])||'';
+const defClient=c.clientNetwork||cidrNetwork(lanAddr);
+const defWan=c.wanInterface||(wanN?'wan1':'');
+const defLan=c.lanInterface||(lanN?'lan0':'');
+const defDhcp=c.dhcpInterface||(lanN?'lan0':'');
+const nicOpt=v=>(g.nics||[]).map(n=>`<option value="${ew(n.name)}" ${n.name===v?'selected':''}>${ew(nlabel(n.name))}</option>`).join('')||(v?`<option selected>${ew(v)}</option>`:'<option value="">—</option>');
+const nicOptBlank=v=>`<option value="">— nijedno —</option>`+(g.nics||[]).map(n=>`<option value="${ew(n.name)}" ${n.name===v?'selected':''}>${ew(nlabel(n.name))}</option>`).join('');
+const nicsTable=`<table class="compact"><thead><tr><th>Port</th><th>Stanje</th><th>IPv4</th></tr></thead><tbody>${(g.nics||[]).map(n=>`<tr><td><b>${ew(nlabel(n.name))}</b></td><td>${ew(n.state)}</td><td class="muted">${ew((n.addresses||[]).join(', ')||'—')}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nema podataka o portovima.</td></tr>'}</tbody></table>`;
+const wanPanel=`<div class="panel"><h2>WAN veze</h2>
+${help('Postavi JEDNU ili VIŠE WAN veza (npr. WAN1 + GSM WAN2). Svaka je <b>DHCP</b> ili <b>statička</b> (IP/CIDR + gateway + DNS + aliasi). <b>Metrika</b> je prioritet default rute — manja = primarni WAN. Za balans/failover preko oba uključi modul <b>Multi-WAN</b>. Promjena piše netplan i radi <code>netplan apply</code>; mgmt pristup ide preko svog porta pa GUI ne puca.')}
 <div id="wanList"></div>
-<h3>Dodaj / uredi WAN sučelje</h3>
+<h3>Dodaj / uredi WAN vezu</h3>
 <form id="wanForm" class="stack">
-<label>WAN sučelje <select id="wanIf"><option value="">— odaberi port —</option>${(g.nics||[]).map(n=>`<option value="${escapeHtml(n.name)}">${escapeHtml(nlabel(n.name))}</option>`).join('')}</select></label>
+<label>WAN port <select id="wanIf"><option value="">— odaberi port —</option>${(g.nics||[]).map(n=>`<option value="${ew(n.name)}">${ew(nlabel(n.name))}</option>`).join('')}</select></label>
 <label>Način adrese <select id="wanMode"><option value="dhcp">Dinamička (DHCP)</option><option value="static">Statička</option></select></label>
 <label>Metrika (manja = primarni) <input id="wanMetric" type="number" min="1" max="4000" value="100"></label>
 <div id="wanStatic" style="display:none">
@@ -173,30 +185,34 @@ ${help('Postavi JEDNO ili VIŠE WAN sučelja (npr. WAN1 + GSM WAN2). Svako je <b
 <label>DNS serveri (zarezom) <input id="wanDns" placeholder="1.1.1.1, 8.8.8.8"></label>
 <label>Dodatne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" placeholder="203.0.113.6/24"></label>
 </div>
-<div><button type="submit" class="ghost">Dodaj u listu</button> <button type="button" id="wanApplyBtn">Primijeni sva WAN sučelja</button></div>
+<div class="btnrow"><button type="submit" class="ghost">Dodaj u listu</button> <button type="button" id="wanApplyBtn">Primijeni WAN veze</button></div>
 <div id="wanMsg" class="muted"></div></form></div>`;
-const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div>`:'';
-const nics=`<table><thead><tr><th>Interface</th><th>Stanje</th><th>IPv4</th></tr></thead><tbody>${(g.nics||[]).map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${escapeHtml(n.state)}</td><td>${escapeHtml((n.addresses||[]).join(', '))}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nedostupno (razvojno okruženje)</td></tr>'}</tbody></table>`;
-const nicOpt=v=>(g.nics||[]).map(n=>`<option value="${escapeHtml(n.name)}" ${n.name===v?'selected':''}>${escapeHtml(nlabel(n.name))}</option>`).join('')||(v?`<option selected>${escapeHtml(v)}</option>`:'<option value="">—</option>');
-$('#content').innerHTML=`${pend}<div class="panel"><h2>Mrežna sučelja</h2>${nics}</div>
-${wanPanel}
-<div class="panel"><h2>Gateway konfiguracija</h2>
-${help('<b>Upravljanje (SSH/GUI)</b>: uključi <b>na LAN strani</b> i/ili <b>na WAN strani</b> — tako biraš s kojeg porta kutija odgovara na SSH (22) i GUI (443). Vezano je na sučelje, pa radi i kad se promijeni podmreža. <b>Mgmt mreža (CIDR)</b> je opcionalan dodatni izvor (npr. jedan admin subnet) koji se pušta bez obzira na port — ostavi prazno ako koristiš samo LAN/WAN prekidače. <b>Barem jedan</b> put upravljanja mora ostati uključen (inače bi se svi zaključali; sustav to odbija). <b>Klijentska mreža</b> je LAN koji poslužuje DHCP/DNS. <b>Gateway mod</b> uključuje routing WAN↔LAN — odaberi <b>WAN</b> (prema internetu) i <b>LAN</b> (prema klijentima) sučelje; ako ne znaš koji je koji fizički port, otvori <b>Interfaces</b> pa klikni Identificiraj (LED zatreperi). <b>NAT</b> ostavi uključen da klijenti izlaze na internet preko WAN adrese. <b>Port forward</b> otvara vanjski port prema unutarnjem poslužitelju (redak: <code>proto:vanjski:IP:unutarnji</code>, npr. <code>tcp:8443:192.168.10.5:443</code>). Promjena firewalla traži potvrdu unutar 120 s — ako izgubiš pristup, sustav sam vraća staru konfiguraciju.')}
+const gwPanel=`<div class="panel"><h2>Gateway / NAT</h2>
+${help('<b>Portovi:</b> odaberi <b>WAN port</b> (prema internetu) i <b>LAN port</b> (prema klijentima). Ne znaš koji je koji fizički? Otvori <b>Mreža → Interfaces</b> i klikni Identificiraj (LED zatreperi). <b>LAN / klijentska mreža</b> je subnet koji kutija poslužuje (DHCP/DNS) — sam se popuni iz LAN porta. <b>Gateway mod</b> uključuje routing WAN↔LAN, <b>NAT</b> pušta klijente na internet preko WAN adrese. <b>Pristup upravljanju</b>: biraš odgovara li kutija na SSH/GUI s LAN i/ili WAN strane; barem jedan mora ostati. <b>Port forward</b> (napredno) otvara vanjski port prema unutarnjem poslužitelju. Primjena traži potvrdu unutar 120 s — ako izgubiš pristup, vraća se stara konfiguracija.')}
 <form id="gwForm" class="stack">
-<label>Mgmt mreža (CIDR, opcionalno) <input id="gwAdmin" value="${escapeHtml(c.adminNetwork||'')}" placeholder="192.168.10.0/24"></label>
-<label>Klijentska mreža (CIDR) <input id="gwClient" value="${escapeHtml(c.clientNetwork||'')}" placeholder="192.168.10.0/24" required></label>
-<label>DHCP interface <input id="gwDhcpIf" value="${escapeHtml(c.dhcpInterface||'')}" placeholder="enp2s0"></label>
+<label>WAN port (prema internetu) <select id="gwWan">${nicOpt(defWan)}</select></label>
+<label>LAN port (prema klijentima) <select id="gwLan">${nicOpt(defLan)}</select></label>
+<label>LAN port koji poslužuje DHCP <select id="gwDhcpIf">${nicOptBlank(defDhcp)}</select></label>
+<label>LAN / klijentska mreža (CIDR) <input id="gwClient" value="${ew(defClient)}" placeholder="10.10.10.0/24" required></label>
 ${toggle('gwEnabled',c.gatewayEnabled,'Gateway mod (routing WAN↔LAN)')}
-<label>WAN interface <select id="gwWan">${nicOpt(c.wanInterface)}</select></label>
-<label>LAN interface <select id="gwLan">${nicOpt(c.lanInterface)}</select></label>
 ${toggle('gwNat',c.natEnabled!==false,'NAT (masquerade) na WAN')}
-${toggle('gwMgmtLan',c.mgmtOnLan!==false,'Upravljanje (SSH/GUI) dostupno s LAN strane')}
-${toggle('gwMgmtWan',c.mgmtOnWan===true,'Upravljanje (SSH/GUI) dostupno s WAN strane')}
+<h3>Pristup upravljanju (SSH / GUI)</h3>
+${toggle('gwMgmtLan',c.mgmtOnLan!==false,'Dostupno s LAN strane')}
+${toggle('gwMgmtWan',c.mgmtOnWan===true,'Dostupno s WAN strane')}
+<label>Dodatna mgmt mreža (CIDR) — opcionalno <input id="gwAdmin" value="${ew(c.adminNetwork||'')}" placeholder="npr. 192.168.10.0/24"></label>
+<p class="muted small">Sivi tekst je samo primjer (placeholder) — ostavi prazno ako koristiš prekidače gore. Barem jedan pristup mora ostati uključen.</p>
+<h3>Napredno</h3>
 ${toggle('gwHairpin',c.hairpinNat,'Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)')}
-<label>Port forwardi (redak: proto:vanjski:IP:unutarnji) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${escapeHtml(pfFormat(c.portForwards))}</textarea></label>
-<label>Per-WAN SNAT (redak: izvor -&gt; WAN alias IP) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${escapeHtml(snatFormat(c.snatRules))}</textarea></label>
-<div><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
+<label>Port forwardi (redak: proto:vanjski:IP:unutarnji) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${ew(pfFormat(c.portForwards))}</textarea></label>
+<label>Per-WAN SNAT (redak: izvor -&gt; WAN alias IP) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${ew(snatFormat(c.snatRules))}</textarea></label>
+<div class="btnrow"><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
+const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><div class="btnrow"><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div></div>`:'';
+$('#content').innerHTML=`${pend}
+${tabBar('gwTabs',[['wan','WAN veze'],['nat','Gateway / NAT']])}
+<div class="tabpane active" data-pane="gwTabs" data-tabkey="wan"><div class="panel"><h2>Mrežni portovi</h2>${nicsTable}</div>${wanPanel}</div>
+<div class="tabpane" data-pane="gwTabs" data-tabkey="nat">${gwPanel}</div>`;
+wireTabs('gwTabs');
 const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,mgmtOnLan:$('#gwMgmtLan').checked,mgmtOnWan:$('#gwMgmtWan').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>Sučelje</th><th>Način</th><th>Adresa</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(nlabel(x.interface))}</b></td><td>${x.mode}</td><td class="muted">${ew(x.mode==='static'?(x.address||''):'—')}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||''):'—')}</td><td class="muted">${x.metric||100}</td><td><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN sučelja.</p>';
@@ -214,7 +230,7 @@ if(!/^[a-zA-Z0-9._-]{1,15}$/.test(iface)){m.textContent='Upiši ispravno ime su�
 const wn={interface:iface,mode,metric:parseInt($('#wanMetric').value,10)||100,dns:$('#wanDns').value.split(',').map(x=>x.trim()).filter(Boolean),aliases:$('#wanAliases').value.split(',').map(x=>x.trim()).filter(Boolean)};
 if(mode==='static'){wn.address=$('#wanAddr').value.trim();wn.gateway=$('#wanGw').value.trim();if(!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(wn.address)){m.textContent='IP adresa mora biti CIDR (npr. 203.0.113.5/24).';return}if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(wn.gateway)){m.textContent='Gateway mora biti IPv4 adresa.';return}}
 if(wans.some(x=>x.interface===iface)){m.textContent='To sučelje je već u listi (ukloni pa dodaj).';return}
-wans.push(wn);renderWanList();['wanIf','wanAddr','wanGw','wanDns','wanAliases'].forEach(id=>$('#'+id).value='');$('#wanMetric').value=100;$('#wanMode').value='dhcp';$('#wanStatic').style.display='none';m.textContent='Dodano u listu — klikni „Primijeni sva WAN sučelja".'};
+wans.push(wn);renderWanList();['wanIf','wanAddr','wanGw','wanDns','wanAliases'].forEach(id=>$('#'+id).value='');$('#wanMetric').value=100;$('#wanMode').value='dhcp';$('#wanStatic').style.display='none';m.textContent='Dodano u listu — klikni „Primijeni WAN veze".'};
 $('#wanApplyBtn').onclick=async()=>{const m=$('#wanMsg');if(!wans.length){m.textContent='Dodaj barem jedno WAN sučelje.';return}if(!confirm('Primijeniti sva WAN sučelja? Piše netplan i radi netplan apply.'))return;m.textContent='Primjena…';try{await api('/api/wan/apply',{method:'POST',body:JSON.stringify({wans})});m.textContent='WAN sučelja primijenjena.'}catch(err){m.textContent=err.message}};
 $('#gwForm').onsubmit=async e=>{e.preventDefault();$('#gwMsg').textContent='';try{await save();$('#gwMsg').textContent='Spremljeno (još nije primijenjeno).'}catch(err){$('#gwMsg').textContent=err.message}};
 $('#gwPreview').onclick=async()=>{try{await save();const p=await api('/api/gateway/preview');$('#gwRules').textContent=p.ruleset}catch(err){$('#gwMsg').textContent=err.message}};
@@ -361,22 +377,25 @@ runWizard('Čarobnjak: IPS enablement (W9)',[
 {title:'Drop policy i primjena',render:s=>`<p class="error">IPS će aktivno blokirati promet koji pravila ocijene zlonamjernim. Gumb "Emergency IPS off" ostaje uvijek dostupan.</p><p>Primjena: Suricata prelazi u NFQUEUE način + nftables queue pravilo kroz 120 s confirm-or-rollback transakciju (potvrda na Gateway stranici).</p>`}],
 async s=>{const r=await api('/api/ids/enable',{method:'POST',body:JSON.stringify({mode:'ips',interface:c.interface||'',homeNet:c.homeNet||'',force:!!s.force})});if(r.note)alert(r.note);openModule('ids')})}
 async function interfacesPage(){const nics=await api('/api/interfaces');
-const link=n=>n.carrier?`<span class="status st-healthy">up${n.speedMb?' · '+n.speedMb+'Mb':''}</span>`:`<span class="status st-muted">no link</span>`;
-const role=n=>n.role?`<span class="badge">${escapeHtml(n.role)}</span>`:'';
-$('#content').innerHTML=`<div class="panel"><h2>Mrežna sučelja (${nics.length})</h2>
-<p class="muted">Daj svakom sučelju <b>naziv (alias)</b> — npr. <b>WAN1</b>, <b>LAN</b>, <b>GSM WAN2</b> — pa se prikazuje kroz cijeli sustav. Ispod naziva sučelja stoji sitno <b>kernelov naziv</b> (<code>enpXsY</code>) i <b>PCI adresa</b> — to je ono što ne mijenja Saguaro, pa služi za orijentaciju na kućištu. Ne znaš koji je fizički port? Klikni <b>Identificiraj</b> — LED zatreperi ~10 s.</p>
-<table><thead><tr><th>Sučelje</th><th>Naziv (alias)</th><th>Uloga</th><th>Link</th><th>MAC</th><th>IPv4</th><th>Driver</th><th></th></tr></thead><tbody>${nics.map(n=>`<tr>
-<td><b>${escapeHtml(n.name)}</b>${n.sysName&&n.sysName!==n.name?`<div class="muted" style="font-size:11px">${escapeHtml(n.sysName)}</div>`:''}${n.bus?`<div class="muted" style="font-size:11px">${escapeHtml(n.bus)}</div>`:''}</td>
-<td><input class="nicLbl" data-n="${escapeHtml(n.name)}" value="${escapeHtml(n.label||'')}" placeholder="npr. WAN1" style="max-width:140px;padding:5px 8px"></td>
-<td>${role(n)}</td><td>${link(n)}</td>
-<td class="muted">${escapeHtml(n.mac||'')}</td>
-<td>${escapeHtml((n.addresses||[]).join(', ')||'—')}</td>
-<td class="muted">${escapeHtml(n.driver||'')}</td>
-<td><button class="nicSave ghost" data-n="${escapeHtml(n.name)}">Spremi naziv</button> <button class="nicId" data-n="${escapeHtml(n.name)}">Identificiraj</button></td></tr>`).join('')}</tbody></table>
+const statusCell=n=>n.carrier?`<span class="status st-healthy">Spojen${n.speedMb?' · '+n.speedMb+' Mbps':''}</span>`:`<span class="status st-muted">Nije spojen</span>`;
+const roleBadge=n=>n.role?`<span class="badge">${escapeHtml(n.role)}</span>`:'';
+const ew=escapeHtml;
+$('#content').innerHTML=`<div class="panel"><h2>Mrežni portovi (${nics.length})</h2>
+<p class="muted">Svaki port ima <b>logički naziv</b> (npr. <code>wan1</code>, <code>lan0</code>) koji Saguaro drži stabilnim, a u stupcu <b>Hardver</b> je fizički naziv (<code>enpXsY</code> + PCI) za orijentaciju na kućištu. Dodaj <b>alias</b> (npr. „Ured WAN") pa se prikazuje kroz cijeli sustav. Ne znaš koji je port? Klikni <b>Identificiraj</b> — LED zatreperi ~10 s.</p>
+<table><thead><tr><th>Port</th><th>Status / brzina</th><th>IP adresa</th><th>Hardver</th><th>Alias</th><th></th></tr></thead><tbody>${nics.map(n=>`<tr>
+<td><div class="ifname"><span class="nav-ico">${ICONS.interfaces}</span><b>${ew(n.label||n.name)}</b> ${roleBadge(n)}</div>${n.label?`<div class="muted small">${ew(n.name)}</div>`:''}</td>
+<td>${statusCell(n)}${n.state?`<div class="muted small">${ew(n.state)}</div>`:''}</td>
+<td>${(n.addresses||[]).length?(n.addresses).map(a=>`<div>${ew(a)}</div>`).join(''):'<span class="muted">—</span>'}</td>
+<td class="muted small">${n.sysName&&n.sysName!==n.name?ew(n.sysName)+'<br>':''}${n.bus?ew(n.bus)+'<br>':''}${n.driver?ew(n.driver):''}${n.mac?'<br>'+ew(n.mac):''}</td>
+<td><input class="nicLbl" data-n="${ew(n.name)}" value="${ew(n.label||'')}" placeholder="npr. Ured WAN" style="max-width:150px;padding:6px 8px"></td>
+<td class="rowacts"><button class="nicSave ghost" data-n="${ew(n.name)}">Spremi</button> <button class="nicId" data-n="${ew(n.name)}">Identificiraj</button></td></tr>`).join('')}</tbody></table>
 <div id="nicMsg" class="muted"></div></div>`;
 document.querySelectorAll('.nicSave').forEach(el=>el.onclick=async()=>{$('#nicMsg').textContent='';const inp=document.querySelector('.nicLbl[data-n="'+el.dataset.n+'"]');try{await api(`/api/interfaces/${encodeURIComponent(el.dataset.n)}/label`,{method:'PUT',body:JSON.stringify({label:inp.value.trim()})});await loadNicLabels();renderNav();$('#nicMsg').textContent=`Naziv za ${el.dataset.n} spremljen — vidljiv kroz sve menije.`}catch(e){$('#nicMsg').textContent=e.message}});
 document.querySelectorAll('.nicId').forEach(el=>el.onclick=async()=>{$('#nicMsg').textContent='';try{const r=await api(`/api/interfaces/${encodeURIComponent(el.dataset.n)}/identify`,{method:'POST',body:JSON.stringify({seconds:10})});$('#nicMsg').textContent=`${el.dataset.n}: LED treperi ~${r.seconds}s — pogledaj koji port svijetli.`}catch(e){$('#nicMsg').textContent=e.message}})}
 function isIPv4(s){return /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(s)}
+// cidrNetwork turns a host CIDR like "10.10.10.1/24" into its network address
+// "10.10.10.0/24", used to prefill the client/LAN network from a port's own IP.
+function cidrNetwork(a){const m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(a||'');if(!m)return '';const b=+m[5];if(b<0||b>32)return '';const ip=((+m[1]<<24)|(+m[2]<<16)|(+m[3]<<8)|(+m[4]))>>>0;const mask=b===0?0:(0xffffffff<<(32-b))>>>0;const net=(ip&mask)>>>0;return `${net>>>24&255}.${net>>>16&255}.${net>>>8&255}.${net&255}/${b}`}
 function isCIDR(s){const m=/^(.+)\/(\d{1,2})$/.exec(s);if(!m)return false;return isIPv4(m[1])&&+m[2]>=0&&+m[2]<=32}
 async function routingPage(){const cfg=await api('/api/routes');const routes=cfg.routes||[];let nics=[];try{nics=await api('/api/interfaces')}catch(e){}
 const save=list=>api('/api/routes',{method:'PUT',body:JSON.stringify({routes:list})});
