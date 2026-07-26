@@ -4,7 +4,7 @@
 # Do not add "saguaro ALL=(ALL) NOPASSWD: ALL" here.
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-firewall check, /usr/sbin/saguaro-firewall apply, /usr/sbin/saguaro-firewall confirm, /usr/sbin/saguaro-firewall rollback, /usr/sbin/saguaro-firewall counters, /usr/sbin/saguaro-firewall log
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ids apply ids, /usr/sbin/saguaro-ids apply ips, /usr/sbin/saguaro-ids disable, /usr/sbin/saguaro-ids update-rules
-saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-rpz apply, /usr/sbin/saguaro-rpz disable
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-rpz apply, /usr/sbin/saguaro-rpz disable, /usr/sbin/saguaro-rpz hits
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-dns zone-access-apply, /usr/sbin/saguaro-dns zone-access-disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-proxy apply, /usr/sbin/saguaro-proxy disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-cert issue, /usr/sbin/saguaro-cert acme *, /usr/sbin/saguaro-cert acme-dns *, /usr/sbin/saguaro-cert renew-all, /usr/sbin/saguaro-cert remove *, /usr/sbin/saguaro-cert deploy-gui *

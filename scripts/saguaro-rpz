@@ -33,8 +33,14 @@ case "${1:-}" in
     systemctl restart unbound
     logger -t saguaro-rpz "RPZ filtering disabled"
     ;;
+  hits)
+    # Read-only: recent RPZ block log lines (unbound rpz-log) for the "top blocked
+    # domains" panel. Format: "... rpz: applied [saguaro-rpz*] <trigger>. <action>
+    # <client>@<port> <qname>. <qtype> <qclass>".
+    journalctl -u unbound -o short-iso --no-pager -n 20000 2>/dev/null | grep "rpz: applied" | tail -1000 || true
+    ;;
   *)
-    echo "usage: saguaro-rpz apply|disable" >&2
+    echo "usage: saguaro-rpz apply|disable|hits" >&2
     exit 2
     ;;
 esac
