@@ -128,7 +128,7 @@ func GenerateAccessConf(zones []nftgen.Zone, split []SplitRecord, clientNet stri
 	var b strings.Builder
 	b.WriteString("# Managed by Saguaro (generated). Per-zone resolver access")
 	if len(valid) > 0 {
-		b.WriteString(" + split-horizon views")
+		b.WriteString(" and split-horizon views")
 	}
 	b.WriteString(".\n")
 	b.WriteString("server:\n")
