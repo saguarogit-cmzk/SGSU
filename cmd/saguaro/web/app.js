@@ -747,25 +747,36 @@ ${help('<b>ping</b> — dostupnost + latencija. <b>nslookup</b> — DNS razluči
 <pre id="tlOut" class="muted" style="margin-top:12px;white-space:pre-wrap;min-height:60px">Rezultat će se prikazati ovdje.</pre></div>`;
 $('#tlForm').onsubmit=async ev=>{ev.preventDefault();const o=$('#tlOut');const host=$('#tlHost').value.trim();if(!host){o.textContent='Upiši cilj (host ili IP).';return}o.textContent='Izvršavam… (može potrajati par sekundi)';try{const r=await api('/api/tools',{method:'POST',body:JSON.stringify({tool:$('#tlTool').value,host,iface:$('#tlIface').value,server:$('#tlServer').value.trim()})});o.textContent=r.output||'(nema izlaza)'}catch(err){o.textContent=err.message}}}
 async function webproxyPage(){const s=await api('/api/webproxy');const e=escapeHtml;
-$('#content').innerHTML=`<div class="panel"><h2>Web proxy ${s.enabled?'<span class="badge">aktivan</span>':''}</h2>
-<p class="muted">Squid (caching proxy) + e2guardian (filtriranje URL-ova). Klijenti postave proxy na IP appliancea (LAN) : port.</p>
-${help('<b>Explicit proxy</b>: na klijentu postaviš proxy = IP appliancea (LAN) : <b>port</b> (default 8080). Squid kešira, a <b>e2guardian</b> filtrira po <b>banned/exception</b> domenama. <b>Dozvoljena mreža</b> ograničava tko smije koristiti proxy. Sinergija: <b>RPZ (DNS filtering)</b> već blokira domene jeftino na DNS razini — proxy dodaje keš i per-URL kontrolu. <b>SSL-bump</b> otključava filtriranje HTTPS <b>sadržaja</b>: Squid dešifrira TLS vlastitim CA-om (klijenti ga MORAJU imati u trustu). Osjetljive domene (banke, zdravlje) stavi u <b>Splice</b> listu da se NE dešifriraju.')}
-<form id="wpForm" class="stack">
+const banN=(s.bannedSites||[]).length,excN=(s.exceptionSites||[]).length,splN=(s.spliceSites||[]).length;
+$('#content').innerHTML=`<div class="panel"><h2>Web proxy i filtriranje ${s.enabled?'<span class="badge">aktivan</span>':'<span class="badge">isključen</span>'}</h2>
+<p class="muted">Squid (caching proxy) + e2guardian (filtriranje URL-ova). Klijenti postave proxy na IP appliancea (LAN) : port. Postavke su podijeljene u kartice — na kraju klikni <b>Spremi i primijeni</b>.</p>
+${help('<b>Explicit proxy</b>: na klijentu postaviš proxy = IP appliancea (LAN) : <b>port</b> (default 8080). Squid kešira, a <b>e2guardian</b> filtrira po <b>URL grupama</b> (blokirane/iznimke). <b>Dozvoljena mreža</b> ograničava tko smije koristiti proxy. Sinergija: <b>RPZ (DNS filtering)</b> već blokira domene jeftino na DNS razini — proxy dodaje keš i per-URL kontrolu. <b>SSL-bump</b> otključava filtriranje HTTPS <b>sadržaja</b>: Squid dešifrira TLS vlastitim CA-om (klijenti ga MORAJU imati u trustu). Osjetljive domene (banke, zdravlje) stavi u <b>Splice</b> listu da se NE dešifriraju.')}</div>
+${tabBar('wpTabs',[['general','Općenito'],['urls','URL grupe',banN+excN],['https','HTTPS (SSL-bump)',splN]])}
+<form id="wpForm">
+<div class="tabpane active" data-pane="wpTabs" data-tabkey="general"><div class="panel"><h3>Općenito</h3>
 ${toggle('wpEn',s.enabled,'Uključi web proxy')}
+${toggle('wpFilter',s.filtering,'Filtriranje URL-ova (e2guardian)')}
 <label>Port (klijentski, e2guardian) <input id="wpPort" type="number" min="1" max="65535" value="${s.filterPort||8080}"></label>
 <label>Dozvoljena mreža (CIDR) <input id="wpNet" value="${e(s.allowedNetwork||'')}" placeholder="192.168.10.0/24"></label>
-${toggle('wpFilter',s.filtering,'Filtriranje URL-ova (e2guardian)')}
-<label>Blokirane domene (po retku) <textarea id="wpBan" rows="4" placeholder="ads.example.com">${e((s.bannedSites||[]).join('\n'))}</textarea></label>
-<label>Iznimke / uvijek dozvoli (po retku) <textarea id="wpExc" rows="3" placeholder="update.microsoft.com">${e((s.exceptionSites||[]).join('\n'))}</textarea></label>
-<fieldset><legend>HTTPS filtriranje (SSL-bump)</legend>
+<p class="muted small">Klijent: postavi HTTP proxy na <code>IP-appliancea:${s.filterPort||8080}</code>. Samo uređaji iz „dozvoljene mreže" smiju koristiti proxy.</p>
+</div></div>
+<div class="tabpane" data-pane="wpTabs" data-tabkey="urls">
+<div class="panel"><h3>Blokirane domene <span class="badge">${banN}</span></h3>
+<p class="muted small">Domene koje se <b>blokiraju</b> (npr. oglasi, društvene mreže, neprikladan sadržaj). Jedna po retku, npr. <code>ads.example.com</code>, <code>facebook.com</code>.</p>
+<textarea id="wpBan" rows="8" placeholder="ads.example.com&#10;facebook.com">${e((s.bannedSites||[]).join('\n'))}</textarea></div>
+<div class="panel"><h3>Iznimke — uvijek dozvoli <span class="badge">${excN}</span></h3>
+<p class="muted small">Domene koje se <b>nikad</b> ne blokiraju, čak i ako bi ih neko pravilo uhvatilo (npr. servisi za ažuriranje). Jedna po retku.</p>
+<textarea id="wpExc" rows="5" placeholder="update.microsoft.com&#10;windowsupdate.com">${e((s.exceptionSites||[]).join('\n'))}</textarea></div></div>
+<div class="tabpane" data-pane="wpTabs" data-tabkey="https"><div class="panel"><h3>HTTPS filtriranje (SSL-bump)</h3>
 ${toggle('wpBump',s.sslBump,'Uključi SSL-bump (dešifrira HTTPS)')}
 <div class="panel error" style="margin:8px 0;padding:12px"><b>⚠ Upozorenje:</b> SSL-bump dešifrira HTTPS promet korisnika (MITM). Klijenti moraju instalirati naš CA certifikat. Obavijesti korisnike — u nekim jurisdikcijama je presretanje bez pristanka nezakonito. Osjetljive domene stavi u Splice listu.</div>
 <label>SSL-bump port <input id="wpBumpPort" type="number" min="1" max="65535" value="${s.sslBumpPort||3130}"></label>
-<label>Splice (NE dešifriraj — banke i sl., po retku) <textarea id="wpSplice" rows="3" placeholder="*.bank.hr\nlogin.gov.hr">${e((s.spliceSites||[]).join('\n'))}</textarea></label>
-<div class="wizRow"><button type="button" id="wpCa" class="ghost">Preuzmi CA certifikat</button></div>
-<p class="muted">Instaliraj preuzeti CA na svaki klijent (sustav/preglednik trust store) prije korištenja SSL-bumpa.</p></fieldset>
-<div><button type="submit">Spremi i primijeni</button></div>
-<div id="wpMsg" class="muted"></div></form></div>`;
+<label>Splice — NE dešifriraj (banke, zdravlje…) <span class="badge">${splN}</span> <textarea id="wpSplice" rows="4" placeholder="*.bank.hr&#10;login.gov.hr">${e((s.spliceSites||[]).join('\n'))}</textarea></label>
+<div class="btnrow"><button type="button" id="wpCa" class="ghost">Preuzmi CA certifikat</button></div>
+<p class="muted small">Instaliraj preuzeti CA na svaki klijent (sustav/preglednik trust store) prije korištenja SSL-bumpa.</p></div></div>
+<div class="panel"><div class="btnrow"><button type="submit">Spremi i primijeni</button></div><div id="wpMsg" class="muted"></div></div>
+</form>`;
+wireTabs('wpTabs');
 $('#wpCa').onclick=()=>{window.open('/api/webproxy/ca','_blank')};
 $('#wpForm').onsubmit=async ev=>{ev.preventDefault();const m=$('#wpMsg');const en=$('#wpEn').checked;
 const lines=id=>$('#'+id).value.split(/[\n,]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
