@@ -100,11 +100,19 @@ type Config struct {
 	ClientNetwork string `json:"clientNetwork"` // CIDR allowed to query DNS
 	DHCPInterface string `json:"dhcpInterface"` // optional: interface serving DHCP
 
-	GatewayEnabled bool          `json:"gatewayEnabled"`
-	WANInterface   string        `json:"wanInterface"`
-	LANInterface   string        `json:"lanInterface"`
-	NATEnabled     bool          `json:"natEnabled"`
-	PortForwards   []PortForward `json:"portForwards"`
+	GatewayEnabled bool   `json:"gatewayEnabled"`
+	WANInterface   string `json:"wanInterface"`
+	LANInterface   string `json:"lanInterface"`
+	// MgmtOnWAN/MgmtOnLAN decide on which side the appliance answers its own
+	// management ports (SSH 22, GUI 443). They are interface-bound (iifname on
+	// the WAN/LAN port) so they keep working when the LAN or WAN subnet changes,
+	// unlike AdminNetwork which pins a fixed source CIDR. At least one management
+	// path (a toggle or AdminNetwork) must remain or the drop-policy input chain
+	// would lock everyone out — Validate enforces that.
+	MgmtOnWAN    bool          `json:"mgmtOnWan"`
+	MgmtOnLAN    bool          `json:"mgmtOnLan"`
+	NATEnabled   bool          `json:"natEnabled"`
+	PortForwards []PortForward `json:"portForwards"`
 	// HairpinNAT lets LAN clients reach a port-forwarded service via the WAN
 	// (public) address — NAT reflection.
 	HairpinNAT bool `json:"hairpinNat"`
@@ -483,7 +491,9 @@ func validCIDR4(s string) bool {
 }
 
 func (c Config) Validate() error {
-	if !validCIDR4(c.AdminNetwork) {
+	// AdminNetwork is optional: management can instead be bound to the WAN/LAN
+	// interface via MgmtOnWAN/MgmtOnLAN. When set it must still be a valid CIDR.
+	if c.AdminNetwork != "" && !validCIDR4(c.AdminNetwork) {
 		return fmt.Errorf("adminNetwork must be an IPv4 CIDR")
 	}
 	if !validCIDR4(c.ClientNetwork) {
@@ -511,6 +521,12 @@ func (c Config) Validate() error {
 		}
 	}
 	if !c.GatewayEnabled {
+		// Without gateway mode there are no WAN/LAN interfaces to bind the
+		// management toggles to, so an explicit admin source network is the only
+		// way in and cannot be omitted.
+		if c.AdminNetwork == "" {
+			return fmt.Errorf("adminNetwork is required")
+		}
 		return nil
 	}
 	if !validIface(c.WANInterface) || !validIface(c.LANInterface) {
@@ -518,6 +534,12 @@ func (c Config) Validate() error {
 	}
 	if c.WANInterface == c.LANInterface {
 		return fmt.Errorf("WAN and LAN must be different interfaces")
+	}
+	// The input chain drops by default; if no management path is allowed the
+	// appliance answers SSH/GUI on no interface and locks everyone out. Require
+	// at least one: management on WAN, management on LAN, or an admin network.
+	if c.AdminNetwork == "" && !c.MgmtOnWAN && !c.MgmtOnLAN {
+		return fmt.Errorf("enable management on WAN or LAN, or set an admin network")
 	}
 	for _, pf := range c.PortForwards {
 		if pf.Proto != "tcp" && pf.Proto != "udp" {
@@ -558,7 +580,9 @@ func (c Config) Generate() (string, error) {
 	b.WriteString("# Managed by Saguaro (generated). Manual edits are overwritten on apply.\n")
 	b.WriteString("flush ruleset\n")
 	b.WriteString("table inet saguaro {\n")
-	fmt.Fprintf(&b, "  set mgmt4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.AdminNetwork)
+	if c.AdminNetwork != "" {
+		fmt.Fprintf(&b, "  set mgmt4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.AdminNetwork)
+	}
 	fmt.Fprintf(&b, "  set clients4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.ClientNetwork)
 	for _, a := range c.Aliases {
 		fmt.Fprintf(&b, "  set alias_%s { %s }\n", a.Name, aliasSetType(a))
@@ -571,7 +595,17 @@ func (c Config) Generate() (string, error) {
 	b.WriteString("    iif \"lo\" accept\n")
 	b.WriteString("    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept\n")
 	b.WriteString("    ip6 nexthdr ipv6-icmp accept\n")
-	b.WriteString("    ip saddr @mgmt4 tcp dport { 22, 443 } accept\n")
+	if c.AdminNetwork != "" {
+		b.WriteString("    ip saddr @mgmt4 tcp dport { 22, 443 } accept\n")
+	}
+	// Interface-bound management: answer SSH/GUI on the LAN and/or WAN port. This
+	// survives a LAN/WAN subnet change because it matches the port, not a CIDR.
+	if c.MgmtOnLAN && c.LANInterface != "" {
+		fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.LANInterface)
+	}
+	if c.MgmtOnWAN && c.WANInterface != "" {
+		fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.WANInterface)
+	}
 	b.WriteString("    ip saddr @clients4 udp dport 53 accept\n")
 	b.WriteString("    ip saddr @clients4 tcp dport 53 accept\n")
 	if c.DHCPInterface != "" {

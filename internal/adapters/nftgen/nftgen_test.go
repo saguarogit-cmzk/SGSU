@@ -111,3 +111,49 @@ func TestGenerateGatewayWithoutNAT(t *testing.T) {
 		t.Fatal("no NAT and no forwards must skip the nat table entirely")
 	}
 }
+
+// TestMgmtOnInterface covers the interface-bound management toggles: with no
+// AdminNetwork the appliance still answers SSH/GUI on the chosen port, and the
+// @mgmt4 source set is omitted entirely.
+func TestMgmtOnInterface(t *testing.T) {
+	c := gwCfg()
+	c.AdminNetwork = "" // no fixed admin source; rely on the LAN toggle
+	c.MgmtOnLAN = true
+	text, err := c.Generate()
+	if err != nil {
+		t.Fatalf("mgmt-on-lan should validate: %v", err)
+	}
+	if !strings.Contains(text, `iifname "enp2s0" tcp dport { 22, 443 } accept`) {
+		t.Fatalf("missing LAN management rule:\n%s", text)
+	}
+	if strings.Contains(text, "@mgmt4") || strings.Contains(text, "set mgmt4") {
+		t.Fatalf("no admin network was set, so @mgmt4 must not appear:\n%s", text)
+	}
+
+	// The WAN toggle answers on the WAN port instead.
+	c = gwCfg()
+	c.AdminNetwork = ""
+	c.MgmtOnWAN = true
+	text, _ = c.Generate()
+	if !strings.Contains(text, `iifname "enp1s0" tcp dport { 22, 443 } accept`) {
+		t.Fatalf("missing WAN management rule:\n%s", text)
+	}
+}
+
+// TestMgmtLockoutGuard rejects configs that would leave the drop-policy input
+// chain with no way for an administrator to reach SSH or the GUI.
+func TestMgmtLockoutGuard(t *testing.T) {
+	// Gateway with no admin network and neither toggle: total lockout.
+	c := gwCfg()
+	c.AdminNetwork = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("gateway with no management path must be rejected")
+	}
+	// Host-only (no gateway) always needs an explicit admin network — there are
+	// no WAN/LAN interfaces for the toggles to bind to.
+	h := baseCfg()
+	h.AdminNetwork = ""
+	if err := h.Validate(); err == nil {
+		t.Fatal("host-only config without an admin network must be rejected")
+	}
+}
