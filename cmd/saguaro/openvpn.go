@@ -99,6 +99,7 @@ func (a *app) stageAndApplyOpenVPN(ctx context.Context, cfg openvpn.Config) erro
 		"saguaro-server.key":   srvKey,
 		"saguaro-tlscrypt.key": tlsCrypt,
 		"saguaro-crl.pem":      crl,
+		"saguaro-auth":         openvpn.GenerateAuthFile(cfg.Clients),
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
@@ -212,9 +213,14 @@ func (a *app) apiOpenVPNApply(w http.ResponseWriter, r *http.Request) {
 func (a *app) apiOpenVPNAddClient(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name       string `json:"name"`
+		Password   string `json:"password"`
 		ExpiryDays int    `json:"expiryDays"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	if len(in.Password) < 8 {
+		writeError(w, http.StatusBadRequest, "a password of at least 8 characters is required")
 		return
 	}
 	a.mutateMu.Lock()
@@ -235,7 +241,8 @@ func (a *app) apiOpenVPNAddClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot open CA key")
 		return
 	}
-	var notAfter time.Time
+	// A real, displayable expiry: default two years when none is given.
+	notAfter := time.Now().AddDate(2, 0, 0)
 	if in.ExpiryDays > 0 {
 		notAfter = time.Now().AddDate(0, 0, in.ExpiryDays)
 	}
@@ -244,11 +251,23 @@ func (a *app) apiOpenVPNAddClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	phc, err := hashPassword(in.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot hash password")
+		return
+	}
 	cfg.Clients = append(cfg.Clients, openvpn.Client{Name: in.Name, Serial: serial, CertPEM: certPEM,
-		CreatedAt: time.Now(), ExpiresAt: notAfter})
+		PassHash: phc, CreatedAt: time.Now(), ExpiresAt: notAfter})
 	if err := a.setOpenVPN(cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist client")
 		return
+	}
+	// Reload the server so its auth file knows the new user's password.
+	if cfg.Enabled {
+		if err := a.stageAndApplyOpenVPN(r.Context(), cfg); err != nil {
+			writeError(w, http.StatusBadGateway, "reload failed: "+truncate(err.Error(), 200))
+			return
+		}
 	}
 	tlsCrypt, err := mailmod.Decrypt(a.mailKey, cfg.TLSCryptEnc)
 	if err != nil {

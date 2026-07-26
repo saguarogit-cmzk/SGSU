@@ -30,8 +30,9 @@ var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]{0,30}[a-z0-9])?$`)
 // certificate and serial are kept so the CRL can revoke it.
 type Client struct {
 	Name      string    `json:"name"`
-	Serial    string    `json:"serial"` // hex
-	CertPEM   string    `json:"certPem"`
+	Serial    string    `json:"serial"`             // hex
+	CertPEM   string    `json:"certPem"`            //
+	PassHash  string    `json:"passHash,omitempty"` // argon2 PHC; user+password auth on top of the cert
 	Revoked   bool      `json:"revoked,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt,omitempty"`
@@ -256,6 +257,20 @@ func GenerateCRL(caCertPEM, caKeyPEM string, revoked []Client) (string, error) {
 	return pemEncode("X509 CRL", der), nil
 }
 
+// GenerateAuthFile renders "username:argon2phc" lines for active clients, read
+// by the auth-verify helper. Clients without a password are omitted (they can't
+// authenticate, so they are effectively disabled -- passwords are required).
+func GenerateAuthFile(clients []Client) string {
+	var b strings.Builder
+	for _, c := range clients {
+		if c.Revoked || c.PassHash == "" {
+			continue
+		}
+		b.WriteString(c.Name + ":" + c.PassHash + "\n")
+	}
+	return b.String()
+}
+
 // --- config rendering ------------------------------------------------------
 
 // GenerateServerConf renders /etc/openvpn/server/saguaro.conf. File paths are
@@ -280,6 +295,11 @@ func (c Config) GenerateServerConf() (string, error) {
 	b.WriteString("dh none\n")
 	b.WriteString("tls-crypt /etc/openvpn/server/saguaro-tlscrypt.key\n")
 	b.WriteString("crl-verify /etc/openvpn/server/saguaro-crl.pem\n")
+	// A second factor on top of the client certificate: username + password,
+	// verified by the Saguaro binary against the stored argon2 hashes.
+	b.WriteString("auth-user-pass-verify /etc/openvpn/server/saguaro-authverify via-file\n")
+	b.WriteString("script-security 2\n")
+	b.WriteString("username-as-common-name\n")
 	b.WriteString("data-ciphers AES-256-GCM\n")
 	b.WriteString("auth SHA256\n")
 	b.WriteString("keepalive 10 60\n")
@@ -315,6 +335,7 @@ func (c Config) GenerateClientOVPN(clientCertPEM, clientKeyPEM, tlsCrypt string)
 	b.WriteString("persist-key\n")
 	b.WriteString("persist-tun\n")
 	b.WriteString("remote-cert-tls server\n")
+	b.WriteString("auth-user-pass\n")
 	b.WriteString("data-ciphers AES-256-GCM\n")
 	b.WriteString("auth SHA256\n")
 	b.WriteString("verb 3\n")

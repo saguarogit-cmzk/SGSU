@@ -25,6 +25,12 @@ case "${1:-}" in
     install -m 0600 "$STAGED/saguaro-server.key"  "$DEST/saguaro-server.key"
     install -m 0600 "$STAGED/saguaro-tlscrypt.key" "$DEST/saguaro-tlscrypt.key"
     install -m 0644 "$STAGED/saguaro-crl.pem"     "$DEST/saguaro-crl.pem"
+    # Username+password hashes, readable by the dropped-privilege server (nogroup)
+    # for the verify helper, but not world-readable.
+    install -m 0640 -g nogroup "$STAGED/saguaro-auth" "$DEST/saguaro-auth"
+    # The verify helper OpenVPN calls: hand the creds file to the Saguaro binary.
+    printf "#!/bin/sh\nexec /usr/lib/saguaro/saguaro openvpn-authverify \"\$@\"\n" > "$DEST/saguaro-authverify"
+    chmod 0755 "$DEST/saguaro-authverify"
     rm -rf "$STAGED"
     systemctl enable "$UNIT" >/dev/null 2>&1 || true
     systemctl restart "$UNIT"

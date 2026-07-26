@@ -19,11 +19,45 @@ func runCLI(args []string) (int, bool) {
 	switch args[0] {
 	case "portmap":
 		return cmdPortmap(args[1:]), true
+	case "openvpn-authverify":
+		return cmdOpenVPNAuthVerify(args[1:]), true
 	case "-h", "--help", "help":
 		fmt.Fprintln(os.Stderr, "usage: saguaro [portmap --lan NAME --wan NAME [--json|--plan]]\n\nWith no arguments the control plane starts normally.")
 		return 0, true
 	}
 	return 0, false
+}
+
+// cmdOpenVPNAuthVerify is OpenVPN's auth-user-pass-verify (via-file) helper: it
+// reads the temp credentials file (line 1 username, line 2 password) and checks
+// them against the argon2 hashes the adapter installed. Exit 0 = allow.
+func cmdOpenVPNAuthVerify(args []string) int {
+	if len(args) < 1 {
+		return 1
+	}
+	creds, err := os.ReadFile(args[0])
+	if err != nil {
+		return 1
+	}
+	lines := strings.Split(strings.ReplaceAll(string(creds), "\r\n", "\n"), "\n")
+	if len(lines) < 2 {
+		return 1
+	}
+	user, pass := lines[0], lines[1]
+	hashes, err := os.ReadFile("/etc/openvpn/server/saguaro-auth")
+	if err != nil {
+		return 1
+	}
+	for _, ln := range strings.Split(string(hashes), "\n") {
+		i := strings.IndexByte(ln, ':')
+		if i < 0 {
+			continue
+		}
+		if ln[:i] == user && verifyPassword(pass, ln[i+1:]) {
+			return 0
+		}
+	}
+	return 1
 }
 
 // cmdPortmap prints the stable-port-name netplan for this machine's NICs, or
