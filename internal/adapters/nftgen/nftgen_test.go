@@ -229,3 +229,32 @@ func TestMgmtLockoutGuard(t *testing.T) {
 		t.Fatal("host-only config without an admin network must be rejected")
 	}
 }
+
+// TestOpenVPNAccessAlias verifies a per-user VPN rule that targets a named
+// alias renders `ip daddr @alias_<name>` in the forward chain, and that the
+// backing `set alias_<name>` is emitted so the rule actually loads.
+func TestOpenVPNAccessAlias(t *testing.T) {
+	c := gwCfg()
+	c.Aliases = []Alias{{Name: "rdp_srv", Type: "host", Values: []string{"10.10.10.50"}}}
+	c.OpenVPNIface = "ovpn-saguaro"
+	c.OpenVPNSubnet = "10.9.0.0/24"
+	c.OpenVPNAccess = []OVPNAccess{{
+		Addr:  "10.9.0.2",
+		Rules: []OVPNRule{{DestAlias: "rdp_srv", Proto: "tcp", Port: 3389}},
+	}}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(out, "set alias_rdp_srv") {
+		t.Errorf("alias set not emitted; @alias_rdp_srv rule would fail to load:\n%s", out)
+	}
+	want := `iifname "ovpn-saguaro" ip saddr 10.9.0.2 ip daddr @alias_rdp_srv tcp dport 3389 ct state new accept`
+	if !strings.Contains(out, want) {
+		t.Errorf("missing alias-targeted VPN rule\nwant: %s\ngot:\n%s", want, out)
+	}
+	// And the tunnel still ends in a default drop for unlisted destinations.
+	if !strings.Contains(out, `iifname "ovpn-saguaro" counter drop`) {
+		t.Errorf("VPN tunnel missing default drop:\n%s", out)
+	}
+}
