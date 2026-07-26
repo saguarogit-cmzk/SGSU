@@ -71,6 +71,7 @@ func (a *app) firewallConfig() (nftgen.Config, bool) {
 	cfg, ok := a.getGateway()
 	cfg.TunnelNets = a.tunnelNets()
 	cfg.PBRUplinks = a.pbrUplinks()
+	cfg.GeoCIDRs = geoCIDRsForCodes(cfg.GeoCountries)
 	return cfg, ok
 }
 

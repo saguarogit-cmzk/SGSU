@@ -94,6 +94,7 @@ var RuleCategories = map[string]bool{
 }
 
 var aliasNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
+var geoCodeRe = regexp.MustCompile(`^[a-z]{2}$`)
 var ruleNameRe = regexp.MustCompile(`^[A-Za-z0-9 ._-]{1,40}$`)
 
 type Config struct {
@@ -133,12 +134,20 @@ type Config struct {
 	// page; rules may additionally scope by from/to zone.
 	Zones []Zone `json:"zones,omitempty"`
 
+	// GeoCountries is the set of ISO-3166 alpha-2 codes whose IP ranges are
+	// blocked at the perimeter. The CIDR data is not stored here; only the
+	// selection is. Edited on the Geo-block page.
+	GeoCountries []string `json:"geoCountries,omitempty"`
+
 	// TunnelNets carries the local/remote subnet pairs of active VPN tunnels
 	// (WireGuard site-to-site and IPsec) so the forward chain lets that traffic
 	// through the gateway policy. Populated at generate time, not user-edited.
 	TunnelNets []TunnelNet `json:"-"`
 	// PBRUplinks marks connections per WAN for Dual-WAN policy routing.
 	PBRUplinks []PBRUplink `json:"-"`
+	// GeoCIDRs holds the resolved IPv4 CIDRs for GeoCountries, injected at
+	// generate time from the downloaded per-country lists (like TunnelNets).
+	GeoCIDRs []string `json:"-"`
 }
 
 // TunnelNet is one tunnel's local and remote subnets.
@@ -510,6 +519,16 @@ func (c Config) Validate() error {
 	if !validCIDR4(c.ClientNetwork) {
 		return fmt.Errorf("clientNetwork must be an IPv4 CIDR")
 	}
+	for _, cc := range c.GeoCountries {
+		if !geoCodeRe.MatchString(cc) {
+			return fmt.Errorf("country code %q must be two lowercase letters", cc)
+		}
+	}
+	for _, cidr := range c.GeoCIDRs {
+		if !validCIDR4(strings.TrimSpace(cidr)) {
+			return fmt.Errorf("geo CIDR %q is not an IPv4 CIDR", cidr)
+		}
+	}
 	if c.DHCPInterface != "" && !validIface(c.DHCPInterface) {
 		return fmt.Errorf("invalid DHCP interface name")
 	}
@@ -595,6 +614,9 @@ func (c Config) Generate() (string, error) {
 		fmt.Fprintf(&b, "  set mgmt4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.AdminNetwork)
 	}
 	fmt.Fprintf(&b, "  set clients4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.ClientNetwork)
+	if len(c.GeoCIDRs) > 0 {
+		fmt.Fprintf(&b, "  set geo4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(c.GeoCIDRs, ", "))
+	}
 	for _, a := range c.Aliases {
 		fmt.Fprintf(&b, "  set alias_%s { %s }\n", a.Name, aliasSetType(a))
 	}
@@ -604,6 +626,9 @@ func (c Config) Generate() (string, error) {
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    ct state invalid drop\n")
 	b.WriteString("    iif \"lo\" accept\n")
+	if len(c.GeoCIDRs) > 0 {
+		b.WriteString("    ip saddr @geo4 drop\n")
+	}
 	b.WriteString("    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept\n")
 	b.WriteString("    ip6 nexthdr ipv6-icmp accept\n")
 	if c.AdminNetwork != "" {
@@ -634,10 +659,15 @@ func (c Config) Generate() (string, error) {
 		}
 	}
 	zoneIface := c.zoneIfaceMap()
-	forwardActive := c.GatewayEnabled || hasRules || len(c.TunnelNets) > 0
+	forwardActive := c.GatewayEnabled || hasRules || len(c.TunnelNets) > 0 || len(c.GeoCIDRs) > 0
 	if forwardActive {
 		b.WriteString("    ct state established,related accept\n")
 		b.WriteString("    ct state invalid drop\n")
+	}
+	// Perimeter geo-block: drop forwarded traffic sourced from blocked countries
+	// before any accept rule can let it through.
+	if len(c.GeoCIDRs) > 0 {
+		b.WriteString("    ip saddr @geo4 drop\n")
 	}
 	if c.GatewayEnabled && c.IPSEnabled {
 		b.WriteString("    ct state new queue num 0 bypass\n")

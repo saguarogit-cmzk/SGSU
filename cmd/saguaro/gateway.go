@@ -124,6 +124,7 @@ func (a *app) apiGatewayPut(w http.ResponseWriter, r *http.Request) {
 	// disable inline IPS on the next apply while the IDS page still reads "ips".
 	if cur, ok := a.getGateway(); ok {
 		in.Aliases, in.Rules, in.Zones, in.IPSEnabled = cur.Aliases, cur.Rules, cur.Zones, cur.IPSEnabled
+		in.GeoCountries = cur.GeoCountries
 	}
 	if err := a.setGateway(in); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist gateway configuration")

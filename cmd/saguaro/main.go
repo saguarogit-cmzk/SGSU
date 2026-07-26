@@ -160,7 +160,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.75.0"
+const appVersion = "0.76.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -408,6 +408,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/firewall/counters", a.auth(a.apiFirewallCounters))
 	mux.HandleFunc("GET /api/firewall/blocklist", a.auth(a.apiFirewallBlocklist))
 	mux.HandleFunc("GET /api/firewall/log", a.auth(a.apiFirewallLog))
+	mux.HandleFunc("GET /api/geoip", a.auth(a.apiGeoGet))
+	mux.HandleFunc("POST /api/geoip/apply", a.authz(permFirewall, a.serialized(a.apiGeoApply)))
 	mux.HandleFunc("POST /api/firewall/block-ip", a.authz(permFirewall, a.serialized(a.apiFirewallBlockIP)))
 	mux.HandleFunc("POST /api/firewall/unblock-ip", a.authz(permFirewall, a.serialized(a.apiFirewallUnblockIP)))
 	mux.HandleFunc("GET /api/metrics", a.auth(a.apiMetrics))

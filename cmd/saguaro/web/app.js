@@ -654,7 +654,7 @@ $('#content').innerHTML=`${pend}
 ${help('<b>1.</b> Napravi <b>alias</b>: ime (počinje slovom, a-z 0-9 _), tip <code>host</code> (jedan/više IP-a), <code>network</code> (CIDR) ili <code>range</code> (<code>192.168.1.10-192.168.1.20</code>), i vrijednosti odvojene zarezom. <b>2.</b> Napravi <b>pravilo</b> koje povuče alias po imenu: akcija (accept/drop/reject), protokol, izvorni i odredišni alias (prazno = bilo koji) i opcionalno port. <b>3.</b> Klikni <b>Primijeni</b> — ruleset se učita s 120 s prozorom za potvrdu (ako izgubiš pristup, vraća se stara konfiguracija). Redoslijed pravila mijenjaj strelicama ↑↓. Pravila rade u <b>Gateway</b> modu.')}
 ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgmt/klijentska mreža) da bi mogao primijeniti pravila.</div>'}
 <div class="wizRow"><button id="fwApply">Primijeni firewall (120 s potvrda)</button></div><div id="fwMsg" class="muted"></div></div>
-${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCount],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['log','Log'],['test','Test pravila']])}
+${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCount],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['geo','Geo-blokada'],['log','Log'],['test','Test pravila']])}
 <div class="tabpane active" data-pane="fwTabs" data-tabkey="pravila">
 <div class="panel"><h3>Pravila (${rules.length})</h3>
 <div class="filterbar">
@@ -720,6 +720,12 @@ ${(hasVlan||hasInternalZone)?`<div class="wizRow">${hasVlan?'<button id="znVlanA
 <label>Odredišni port (0 = bilo koji) <input id="tsPort" type="number" min="0" max="65535" value="0"></label>
 <div><button type="submit">Testiraj</button></div></form>
 <div id="tsOut" style="margin-top:10px"></div></div></div>
+<div class="tabpane" data-pane="fwTabs" data-tabkey="geo">
+<div class="panel"><h3>Geo-blokada (po državi)</h3>
+<p class="muted small">Blokiraj sav promet s IP raspona odabranih država (ISO-3166 alpha-2 kod, npr. <code>cn</code>, <code>ru</code>, <code>kp</code>). Liste se preuzimaju i učitavaju u firewall (drop na input i forward). Koristi kad napadi dolaze iz regije s kojom ne posluješ. Privatne mreže (LAN/mgmt) nisu u geo listama pa pristup ostaje.</p>
+<div id="geoList" class="muted">Učitavanje…</div>
+<div class="filterbar"><input id="geoInput" placeholder="npr. cn, ru, kp"><button type="button" id="geoApply">Primijeni geo-blokadu</button></div>
+<div id="geoMsg" class="muted"></div></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="log">
 <div class="panel"><h3>Firewall log (SNA)</h3>
 <p class="muted small">Zapisi koje generiraju pravila s uključenim <b>LOG</b>-om, blokade i završna odbacivanja (netfilter LOG iz kernela) — vremenska crta <b>tko → kome</b>. Klikni <b>Blokiraj</b> da odmah zabraniš izvor.</p>
@@ -738,6 +744,13 @@ el.innerHTML=rows.length?`<table class="compact"><thead><tr><th>Vrijeme</th><th>
 el.querySelectorAll('.fwlBlk').forEach(b=>b.onclick=async()=>{if(!confirm('Blokirati sav proslijeđeni promet s '+b.dataset.ip+'?'))return;b.disabled=true;b.textContent='…';try{await api('/api/firewall/block-ip',{method:'POST',body:JSON.stringify({ip:b.dataset.ip})});b.textContent='Blokiran';renderBlk()}catch(err){b.disabled=false;b.textContent='Blokiraj';alert(err.message)}})};
 const loadFwl=async()=>{const el=$('#fwlBody');if(el)el.innerHTML='<span class="muted">Učitavanje…</span>';try{fwlData=(await api('/api/firewall/log')).entries||[]}catch(err){fwlData=[]}renderFwl()};
 loadFwl();const fwlS=$('#fwlSearch');if(fwlS)fwlS.oninput=renderFwl;const fwlR=$('#fwlReload');if(fwlR)fwlR.onclick=loadFwl;
+let geoCodes=[];
+const geoSubmit=async(list)=>{const m=$('#geoMsg');m.textContent='Preuzimam liste i primjenjujem…';try{const r=await api('/api/geoip/apply',{method:'POST',body:JSON.stringify({countries:list})});m.textContent=`Primijenjeno (${r.cidrs||0} raspona).`;renderGeo()}catch(err){m.textContent=err.message}};
+const renderGeo=async()=>{const el=$('#geoList');if(!el)return;try{const g=await api('/api/geoip');geoCodes=g.countries||[];const counts=g.counts||{};
+el.innerHTML=geoCodes.length?`<table class="compact"><thead><tr><th>Država (ISO)</th><th>CIDR-ova</th><th></th></tr></thead><tbody>${geoCodes.map(cc=>`<tr><td><b>${e(cc.toUpperCase())}</b></td><td class="muted">${counts[cc]||0}</td><td class="rowacts"><button class="geoDel danger" data-cc="${e(cc)}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nijedna država nije blokirana.</p>';
+el.querySelectorAll('.geoDel').forEach(b=>b.onclick=()=>geoSubmit(geoCodes.filter(x=>x!==b.dataset.cc)))}catch(err){el.innerHTML='<span class="muted">—</span>'}};
+renderGeo();
+const geoApplyBtn=$('#geoApply');if(geoApplyBtn)geoApplyBtn.onclick=()=>{const add=($('#geoInput').value||'').split(/[\s,]+/).map(x=>x.trim().toLowerCase()).filter(Boolean);const merged=[...new Set([...geoCodes,...add])];$('#geoInput').value='';geoSubmit(merged)};
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
 $('#fwApply').onclick=async()=>{if(!confirm('Primijeniti firewall? Bez potvrde u 120 s vraća se stara konfiguracija.'))return;const m=$('#fwMsg');m.textContent='Primjena…';try{await api('/api/firewall/apply',{method:'POST',body:'{}'});fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);fwRulesPage()}catch(err){alert(err.message)}});

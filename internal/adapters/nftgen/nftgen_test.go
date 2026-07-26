@@ -162,6 +162,31 @@ func TestRuleLog(t *testing.T) {
 	}
 }
 
+// TestGeoBlock checks that resolved geo CIDRs produce a set and drop rules, and
+// that a bad country code is rejected.
+func TestGeoBlock(t *testing.T) {
+	c := gwCfg()
+	c.GeoCountries = []string{"cn"}
+	c.GeoCIDRs = []string{"1.2.3.0/24", "5.6.0.0/16"}
+	text, err := c.Generate()
+	if err != nil {
+		t.Fatalf("geo config should generate: %v", err)
+	}
+	for _, want := range []string{
+		"set geo4 { type ipv4_addr; flags interval; elements = { 1.2.3.0/24, 5.6.0.0/16 } }",
+		"ip saddr @geo4 drop",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("geo output missing %q:\n%s", want, text)
+		}
+	}
+	bad := gwCfg()
+	bad.GeoCountries = []string{"XX"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("uppercase/invalid country code must be rejected")
+	}
+}
+
 func TestMgmtLockoutGuard(t *testing.T) {
 	// Gateway with no admin network and neither toggle: total lockout.
 	c := gwCfg()
