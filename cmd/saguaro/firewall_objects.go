@@ -99,7 +99,11 @@ func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"aliases": aliases, "rules": rules, "zones": zones,
-		"configured": ok && cfg.AdminNetwork != "", "gatewayEnabled": cfg.GatewayEnabled,
+		// "configured" means a base gateway config exists that the ruleset can be
+		// generated from. ClientNetwork is the universally required field; the
+		// admin network is now optional (management can be bound to WAN/LAN), so
+		// keying off it would wrongly report a working gateway as unconfigured.
+		"configured": ok && cfg.ClientNetwork != "", "gatewayEnabled": cfg.GatewayEnabled,
 		"pending": firewallPending(),
 	})
 }
@@ -242,8 +246,8 @@ func (a *app) apiFirewallRulesPut(w http.ResponseWriter, r *http.Request) {
 // applies it with the confirm-or-rollback window, like the gateway apply.
 func (a *app) apiFirewallApply(w http.ResponseWriter, r *http.Request) {
 	cfg, ok := a.firewallConfig()
-	if !ok || cfg.AdminNetwork == "" {
-		writeError(w, http.StatusConflict, "configure the Gateway (management/client networks) before applying firewall rules")
+	if !ok || cfg.ClientNetwork == "" {
+		writeError(w, http.StatusConflict, "configure the Gateway (client network) before applying firewall rules")
 		return
 	}
 	text, err := cfg.Generate()
