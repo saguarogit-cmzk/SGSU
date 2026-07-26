@@ -181,10 +181,14 @@ lastMetric=m;if(dashTick%5===0)refreshLogs();dashTick++}
 async function checkService(id){try{const r=await api(`/api/services/${id}/actions/check`,{method:'POST',body:'{}'});alert(`${r.result.id}: ${r.result.status}\n${r.result.detail||''} (${r.result.latencyMs} ms)`);openModule(current)}catch(e){alert(e.message)}}
 async function monitoring(){const rows=await api('/api/events?limit=100');$('#content').innerHTML=`<div class="panel scroll"><h2>Događaji (zadnjih ${rows.length})</h2><table><thead><tr><th>Vrijeme</th><th>Razina</th><th>Modul</th><th>Akcija</th><th>Poruka</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${new Date(x.ts).toLocaleString()}</td><td class="sev-${escapeHtml(x.severity||'info')}">${escapeHtml(x.severity)}</td><td>${escapeHtml(x.module)}</td><td>${escapeHtml(x.action||'')}</td><td>${escapeHtml(x.message)}</td></tr>`).join('')}</tbody></table></div>`}
 const ROLES=['admin','network-operator','dns-operator','auditor','read-only'];
-const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split(':');return{proto:p[0],extPort:parseInt(p[1],10),destIp:p[2],destPort:parseInt(p[3],10)}});
-const pfFormat=l=>(l||[]).map(p=>`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
+// Port forward line: proto:extPort:IP:port  OR (bound to a public IP)
+// proto:extIP:extPort:IP:port. A 5th field (the extra IP) is the public address.
+const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split(':');return p.length>=5?{proto:p[0],extIp:p[1],extPort:parseInt(p[2],10),destIp:p[3],destPort:parseInt(p[4],10)}:{proto:p[0],extPort:parseInt(p[1],10),destIp:p[2],destPort:parseInt(p[3],10)}});
+const pfFormat=l=>(l||[]).map(p=>p.extIp?`${p.proto}:${p.extIp}:${p.extPort}:${p.destIp}:${p.destPort}`:`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
 const snatParse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{source:(p[0]||'').trim(),toAddress:(p[1]||'').trim()}}).filter(r=>r.source&&r.toAddress);
 const snatFormat=l=>(l||[]).map(r=>`${r.source} -> ${r.toAddress}`).join('\n');
+const nat11Parse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{extIp:(p[0]||'').trim(),intIp:(p[1]||'').trim()}}).filter(r=>r.extIp&&r.intIp);
+const nat11Format=l=>(l||[]).map(r=>`${r.extIp} -> ${r.intIp}`).join('\n');
 async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};let wans=((await api('/api/wan').catch(()=>({wans:[]}))).wans)||[];const ew=escapeHtml;
 // Sensible defaults from the box's own ports (stable names lan0/wan1) so the
 // form is nearly one-click on a fresh gateway instead of empty.
@@ -230,8 +234,12 @@ ${toggle('gwMgmtWan',c.mgmtOnWan===true,'Dostupno s WAN strane')}
 <p class="muted small">Sivi tekst je samo primjer (placeholder) — ostavi prazno ako koristiš prekidače gore. Barem jedan pristup mora ostati uključen.</p>
 <h3>Napredno</h3>
 ${toggle('gwHairpin',c.hairpinNat,'Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)')}
-<label>Port forwardi (redak: proto:vanjski:IP:unutarnji) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${ew(pfFormat(c.portForwards))}</textarea></label>
-<label>Per-WAN SNAT (redak: izvor -&gt; WAN alias IP) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${ew(snatFormat(c.snatRules))}</textarea></label>
+<label>Preusmjeravanje portova (port forward) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${ew(pfFormat(c.portForwards))}</textarea></label>
+<p class="muted small">Otvara vanjski port prema unutarnjem poslužitelju. Jedan redak = jedno pravilo: <code>protokol:vanjski_port:unutarnja_IP:unutarnji_port</code> (npr. <code>tcp:8443:192.168.10.5:443</code>). Ako imaš <b>više javnih IP-ova</b> na WAN-u i želiš vezati port baš za jednu, dodaj je kao 2. polje: <code>tcp:<b>203.0.113.5</b>:8443:192.168.10.5:443</code> (tada <code>.5:8443</code> ide na taj server, a druga javna IP može isti port slati drugamo).</p>
+<label>Izlaz preko određene javne IP (SNAT) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${ew(snatFormat(c.snatRules))}</textarea></label>
+<p class="muted small">Neka <b>određeni</b> host ili mreža izlazi na internet pod točno određenom javnom adresom (umjesto zajedničke). Redak: <code>izvor -&gt; javna_IP</code> (npr. <code>192.168.10.5 -&gt; 203.0.113.6</code> = taj računalo se na internetu vidi kao <code>.6</code>). Javna IP mora biti dodana kao WAN alias.</p>
+<label>1:1 NAT — cijela javna IP ↔ jedan interni host <textarea id="gwNat11" rows="2" placeholder="203.0.113.7 -> 192.168.10.7">${ew(nat11Format(c.nat11))}</textarea></label>
+<p class="muted small">Puno mapiranje: sav <b>ulazni</b> promet na javnu IP ide na interni host, a taj host <b>izlazi</b> pod tom istom javnom IP — u oba smjera, svi portovi. Redak: <code>javna_IP -&gt; interna_IP</code>. Javnu IP dodaj i kao <b>WAN alias</b> (da kutija odgovara na nju). Za sigurnost dalje suzi firewall pravilima.</p>
 <div class="btnrow"><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
 const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><div class="btnrow"><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div></div>`:'';
@@ -240,7 +248,7 @@ ${tabBar('gwTabs',[['wan','WAN veze'],['nat','Gateway / NAT']])}
 <div class="tabpane active" data-pane="gwTabs" data-tabkey="wan"><div class="panel"><h2>Mrežni portovi</h2>${nicsTable}</div>${wanPanel}</div>
 <div class="tabpane" data-pane="gwTabs" data-tabkey="nat">${gwPanel}</div>`;
 wireTabs('gwTabs');
-const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,mgmtOnLan:$('#gwMgmtLan').checked,mgmtOnWan:$('#gwMgmtWan').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value)});
+const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,mgmtOnLan:$('#gwMgmtLan').checked,mgmtOnWan:$('#gwMgmtWan').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value),nat11:nat11Parse($('#gwNat11').value)});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 const ipOf=name=>{const n=(g.nics||[]).find(z=>z.name===name);return (n&&(n.addresses||[])[0])||''};
 const modeLabel=m=>m==='static'?'Statička':'Dinamička (DHCP)';

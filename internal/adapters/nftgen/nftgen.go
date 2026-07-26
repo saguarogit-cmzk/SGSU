@@ -17,6 +17,18 @@ type PortForward struct {
 	ExtPort  int    `json:"extPort"`
 	DestIP   string `json:"destIp"`
 	DestPort int    `json:"destPort"`
+	// ExtIP optionally binds the forward to one specific public/WAN address (a WAN
+	// alias), so the same external port can map to different internal hosts per
+	// public IP. Empty means match any address on the WAN interface.
+	ExtIP string `json:"extIp,omitempty"`
+}
+
+// NAT11Rule is a 1:1 NAT: a whole public/WAN address maps to one internal host,
+// all ports, both directions (inbound DNAT + outbound SNAT). ExtIP should also
+// be added as a WAN alias so the appliance answers ARP for it.
+type NAT11Rule struct {
+	ExtIP string `json:"extIp"`
+	IntIP string `json:"intIp"`
 }
 
 // SNATRule pins outbound traffic from a specific internal source (IP or CIDR)
@@ -120,6 +132,8 @@ type Config struct {
 	HairpinNAT bool `json:"hairpinNat"`
 	// SNATRules pin specific sources to specific WAN addresses on egress.
 	SNATRules []SNATRule `json:"snatRules"`
+	// NAT11 maps whole public addresses to internal hosts (1:1 NAT).
+	NAT11 []NAT11Rule `json:"nat11,omitempty"`
 	// IPSEnabled queues new forwarded connections to NFQUEUE 0 for Suricata
 	// inline inspection; `bypass` keeps traffic flowing if Suricata dies
 	// (fail-open by design — W9).
@@ -586,6 +600,11 @@ func (c Config) Validate() error {
 		if pf.ExtPort == 22 || pf.ExtPort == 443 {
 			return fmt.Errorf("refusing to forward the appliance management port %d", pf.ExtPort)
 		}
+		if pf.ExtIP != "" {
+			if ip := net.ParseIP(pf.ExtIP); ip == nil || ip.To4() == nil {
+				return fmt.Errorf("port forward external IP %q must be an IPv4 address", pf.ExtIP)
+			}
+		}
 	}
 	for _, s := range c.SNATRules {
 		if !validCIDR4(strings.TrimSpace(s.Source)) {
@@ -595,6 +614,14 @@ func (c Config) Validate() error {
 		}
 		if ip := net.ParseIP(strings.TrimSpace(s.ToAddress)); ip == nil || ip.To4() == nil {
 			return fmt.Errorf("SNAT target %q must be an IPv4 address", s.ToAddress)
+		}
+	}
+	for _, n := range c.NAT11 {
+		if ip := net.ParseIP(strings.TrimSpace(n.ExtIP)); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("1:1 NAT external IP %q must be an IPv4 address", n.ExtIP)
+		}
+		if ip := net.ParseIP(strings.TrimSpace(n.IntIP)); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("1:1 NAT internal IP %q must be an IPv4 address", n.IntIP)
 		}
 	}
 	return nil
@@ -726,6 +753,10 @@ func (c Config) Generate() (string, error) {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s %s dport %d ct state new accept\n",
 				c.WANInterface, pf.DestIP, pf.Proto, pf.DestPort)
 		}
+		// 1:1 NAT hosts accept all inbound from the WAN (restrict further with rules).
+		for _, n := range c.NAT11 {
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s ct state new accept\n", c.WANInterface, n.IntIP)
+		}
 	}
 	if forwardActive {
 		b.WriteString("    counter log prefix \"SNA-FWD-DROP \" drop\n")
@@ -745,14 +776,22 @@ func (c Config) Generate() (string, error) {
 	}
 	b.WriteString("}\n")
 	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
-	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0) {
+	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0 || len(c.NAT11) > 0) {
 		b.WriteString("\ntable ip saguaro-nat {\n")
-		if len(c.PortForwards) > 0 {
+		if len(c.PortForwards) > 0 || len(c.NAT11) > 0 {
 			b.WriteString("  chain prerouting {\n")
 			b.WriteString("    type nat hook prerouting priority dstnat;\n")
 			for _, pf := range c.PortForwards {
-				fmt.Fprintf(&b, "    iifname %q %s dport %d dnat to %s:%d\n",
-					c.WANInterface, pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
+				daddr := ""
+				if pf.ExtIP != "" {
+					daddr = "ip daddr " + pf.ExtIP + " "
+				}
+				fmt.Fprintf(&b, "    iifname %q %s%s dport %d dnat to %s:%d\n",
+					c.WANInterface, daddr, pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
+			}
+			// 1:1 NAT: the whole public address maps to the internal host.
+			for _, n := range c.NAT11 {
+				fmt.Fprintf(&b, "    iifname %q ip daddr %s dnat to %s\n", c.WANInterface, n.ExtIP, n.IntIP)
 			}
 			// Hairpin: LAN clients hitting the appliance's own (public/local)
 			// address on the forwarded port get DNAT'd to the internal host too.
@@ -764,7 +803,7 @@ func (c Config) Generate() (string, error) {
 			}
 			b.WriteString("  }\n")
 		}
-		if c.NATEnabled || hairpin || len(c.SNATRules) > 0 {
+		if c.NATEnabled || hairpin || len(c.SNATRules) > 0 || len(c.NAT11) > 0 {
 			b.WriteString("  chain postrouting {\n")
 			b.WriteString("    type nat hook postrouting priority srcnat;\n")
 			// Per-WAN / 1:1 SNAT first, so specific sources get their fixed WAN
@@ -772,6 +811,10 @@ func (c Config) Generate() (string, error) {
 			for _, s := range c.SNATRules {
 				fmt.Fprintf(&b, "    oifname %q ip saddr %s snat to %s\n",
 					c.WANInterface, strings.TrimSpace(s.Source), strings.TrimSpace(s.ToAddress))
+			}
+			// 1:1 NAT egress: the mapped host leaves as its public address.
+			for _, n := range c.NAT11 {
+				fmt.Fprintf(&b, "    oifname %q ip saddr %s snat to %s\n", c.WANInterface, n.IntIP, n.ExtIP)
 			}
 			if c.NATEnabled {
 				fmt.Fprintf(&b, "    oifname %q masquerade\n", c.WANInterface)

@@ -162,6 +162,32 @@ func TestRuleLog(t *testing.T) {
 	}
 }
 
+// TestNATPerIP covers a port forward bound to one public IP and a 1:1 NAT.
+func TestNATPerIP(t *testing.T) {
+	c := gwCfg()
+	c.PortForwards = []PortForward{{Proto: "tcp", ExtPort: 8443, DestIP: "192.168.10.5", DestPort: 443, ExtIP: "203.0.113.5"}}
+	c.NAT11 = []NAT11Rule{{ExtIP: "203.0.113.7", IntIP: "192.168.10.7"}}
+	text, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`iifname "enp1s0" ip daddr 203.0.113.5 tcp dport 8443 dnat to 192.168.10.5:443`, // per-IP DNAT
+		`iifname "enp1s0" ip daddr 203.0.113.7 dnat to 192.168.10.7`,                   // 1:1 inbound
+		`oifname "enp1s0" ip saddr 192.168.10.7 snat to 203.0.113.7`,                   // 1:1 outbound
+		`iifname "enp1s0" ip daddr 192.168.10.7 ct state new accept`,                   // 1:1 forward accept
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+	bad := gwCfg()
+	bad.NAT11 = []NAT11Rule{{ExtIP: "nope", IntIP: "192.168.10.7"}}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("invalid 1:1 NAT external IP must be rejected")
+	}
+}
+
 // TestGeoBlock checks that resolved geo CIDRs produce a set and drop rules, and
 // that a bad country code is rejected.
 func TestGeoBlock(t *testing.T) {
