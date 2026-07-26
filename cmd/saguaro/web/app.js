@@ -11,7 +11,7 @@ async function loadNicLabels(){try{const ni=await api('/api/interfaces');nicLabe
 async function showShell(){$('#login').classList.add('hidden');$('#shell').classList.remove('hidden');try{sysProfile=await api('/api/system')}catch(e){}try{meRole=(await api('/api/profile')).role||''}catch(e){}
 // Reboot/poweroff are admin-only; reveal them only for admins.
 if(meRole==='admin'){$('#mReboot').classList.remove('hidden');$('#mPoweroff').classList.remove('hidden')}else{$('#mReboot').classList.add('hidden');$('#mPoweroff').classList.add('hidden')}
-await loadNicLabels();renderNav();openModule(current)}
+await loadNicLabels();wireNavSearch();renderNav();openModule(current)}
 async function devPower(action){const label=action==='reboot'?'restartati':'isključiti';if(!confirm(`Sigurno želiš ${label} uređaj? Veza s GUI-jem će se prekinuti.`))return;$('#devMenu').classList.add('hidden');try{const r=await api(`/api/system/power/${action}`,{method:'POST',body:'{}'});alert(r.message||'OK')}catch(e){alert(e.message)}}
 function help(html){return `<details class="help"><summary>Kako ovo postaviti?</summary><div>${html}</div></details>`}
 const svg=p=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -63,21 +63,61 @@ function wireTabs(id){const bar=document.getElementById(id);if(!bar)return;bar.q
 // toggle renders a sliding on/off switch wrapping a real checkbox (id preserved so existing reads work).
 function toggle(id,checked,label,extra){return `<label class="toggle-row"><span class="toggle"><input type="checkbox" id="${id}" ${checked?'checked':''}${extra||''}><span class="track"></span></span><span>${label}</span></label>`}
 const UTM_MODULES=new Set(['gateway','fwrules','ids','webproxy','vpn','sitevpn','ipsec','multiwan']);
+// Each group is [title, iconKey, [moduleIds]]. The left rail shows only these
+// groups; the modules of the active group appear as tabs across the top of the
+// content (Sophos-style), so the rail stays short no matter how many modules.
 const NAV_GROUPS=[
- ['Status',['dashboard','monitoring','conflicts','tools','audit']],
- ['Mreža',['interfaces','gateway','routing','multiwan']],
- ['DNS i DHCP',['dns','dhcp','rpz']],
- ['Vatrozid',['fwrules','ids','webproxy']],
- ['VPN',['vpn','sitevpn','ipsec']],
- ['Servisi i TLS',['certificates','proxy','services','backup','mail','siem']],
- ['Sustav',['system','packages','users']],
+ ['Status','monitoring',['dashboard','monitoring','conflicts','tools','audit']],
+ ['Mreža','interfaces',['interfaces','gateway','routing','multiwan']],
+ ['DNS i DHCP','dns',['dns','dhcp','rpz']],
+ ['Vatrozid','fwrules',['fwrules','ids','webproxy']],
+ ['VPN','vpn',['vpn','sitevpn','ipsec']],
+ ['Servisi i TLS','services',['certificates','proxy','services','backup','mail','siem']],
+ ['Sustav','system',['system','packages','users']],
 ];
-function renderNav(){const nav=$('#nav');nav.innerHTML='';const byId=Object.fromEntries(modules.map(m=>[m[0],m]));
-for(const [title,ids] of NAV_GROUPS){const items=ids.filter(id=>byId[id]&&!(!sysProfile.gateway&&UTM_MODULES.has(id)));if(!items.length)continue;
-const h=document.createElement('div');h.className='nav-group';h.textContent=title;nav.appendChild(h);
-for(const id of items){const b=document.createElement('button');b.innerHTML=`<span class="nav-ico">${ICONS[id]||ICONS._default}</span><span>${escapeHtml(byId[id][1])}</span>`;b.className=id===current?'active':'';b.onclick=()=>openModule(id);nav.appendChild(b)}}}
+const byId=Object.fromEntries(modules.map(m=>[m[0],m]));
+let currentGroup=0; const lastByGroup={};
+// A module is hidden when it is UTM-only and the box is not in gateway mode.
+function modHidden(id){return !sysProfile.gateway&&UTM_MODULES.has(id)}
+function groupVisibleIds(gi){const g=NAV_GROUPS[gi];return g?g[2].filter(id=>byId[id]&&!modHidden(id)):[]}
+function groupIndexOf(id){return NAV_GROUPS.findIndex(g=>g[2].includes(id))}
+// renderNav draws the left rail: one button per group. The active group (the
+// one holding the current module) is highlighted. Sub-navigation (the modules
+// themselves) is rendered by renderSubnav, which this always keeps in sync.
+function renderNav(){const nav=$('#nav');nav.innerHTML='';
+for(let gi=0;gi<NAV_GROUPS.length;gi++){if(!groupVisibleIds(gi).length)continue;
+const g=NAV_GROUPS[gi];const b=document.createElement('button');
+b.className='nav-cat'+(gi===currentGroup?' active':'');
+b.innerHTML=`<span class="nav-ico">${ICONS[g[1]]||ICONS._default}</span><span>${escapeHtml(g[0])}</span>`;
+b.onclick=()=>selectGroup(gi);nav.appendChild(b)}
+renderSubnav()}
+// selectGroup switches the rail to a group and opens its last-visited module
+// (or the first one), so returning to a group lands where you left off.
+function selectGroup(gi){const vis=groupVisibleIds(gi);if(!vis.length)return;currentGroup=gi;
+const target=lastByGroup[gi]&&vis.includes(lastByGroup[gi])?lastByGroup[gi]:vis[0];openModule(target)}
+// renderSubnav draws the top tab strip for the active group's modules.
+function renderSubnav(){const sub=$('#subnav');if(!sub)return;const vis=groupVisibleIds(currentGroup);
+if(vis.length<=1){sub.innerHTML='';sub.classList.add('hidden');return}
+sub.classList.remove('hidden');
+sub.innerHTML=vis.map(id=>`<button type="button" class="subtab${id===current?' active':''}" data-id="${id}"><span class="subtab-ico">${ICONS[id]||ICONS._default}</span><span>${escapeHtml(byId[id][1])}</span></button>`).join('');
+sub.querySelectorAll('.subtab').forEach(b=>b.onclick=()=>openModule(b.dataset.id))}
+// wireNavSearch powers the rail search box: type to filter every module by name
+// and jump straight to it, regardless of which group it lives in.
+function wireNavSearch(){const inp=$('#navSearch'),res=$('#navResults');if(!inp||!res)return;
+const hide=()=>{res.classList.add('hidden');res.innerHTML=''};
+const run=()=>{const q=inp.value.trim().toLowerCase();if(!q){hide();return}
+const hits=modules.filter(m=>!modHidden(m[0])&&(m[1].toLowerCase().includes(q)||m[0].includes(q))).slice(0,8);
+if(!hits.length){res.innerHTML='<div class="navres-empty">Nema rezultata</div>';res.classList.remove('hidden');return}
+res.innerHTML=hits.map(m=>`<button type="button" class="navres" data-id="${m[0]}"><span class="nav-ico">${ICONS[m[0]]||ICONS._default}</span><span>${escapeHtml(m[1])}</span></button>`).join('');
+res.classList.remove('hidden');
+res.querySelectorAll('.navres').forEach(b=>b.onclick=()=>{inp.value='';hide();openModule(b.dataset.id)})};
+inp.oninput=run;
+inp.onkeydown=e=>{if(e.key==='Escape'){inp.value='';hide()}else if(e.key==='Enter'){const first=res.querySelector('.navres');if(first){inp.value='';hide();openModule(first.dataset.id)}}};
+inp.onblur=()=>setTimeout(hide,150)}
 function stClass(s){return({healthy:'st-healthy',error:'st-error',unknown:'st-unknown','not-configured':'st-muted'})[s]||''}
-async function openModule(id){if(dashTimer){clearInterval(dashTimer);dashTimer=null}current=id;renderNav();const m=modules.find(x=>x[0]===id);$('#title').textContent=m[1];$('#description').textContent=m[2];$('#content').innerHTML='<div class="panel muted">Učitavanje…</div>';try{id==='dashboard'?await dashboard():id==='interfaces'?await interfacesPage():id==='audit'?await audit():id==='monitoring'?await monitoring():id==='mail'?await mailPage():id==='dns'?await dnsPage():id==='dhcp'?await dhcpPage():id==='users'?await usersPage():id==='gateway'?await gatewayPage():id==='routing'?await routingPage():id==='fwrules'?await fwRulesPage():id==='webproxy'?await webproxyPage():id==='ids'?await idsPage():id==='rpz'?await rpzPage():id==='proxy'?await proxyPage():id==='certificates'?await certsPage():id==='vpn'?await vpnPage():id==='backup'?await backupPage():id==='multiwan'?await multiwanPage():id==='siem'?await siemPage():id==='sitevpn'?await s2sPage():id==='ipsec'?await ipsecPage():id==='system'?await systemPage():id==='services'?await servicesCtlPage():id==='packages'?await packagesPage():id==='conflicts'?await conflictsPage():id==='tools'?await toolsPage():($('#content').innerHTML=`<div class="panel muted">Nepoznat modul: ${escapeHtml(id)}</div>`)}catch(e){$('#content').innerHTML=`<div class="panel error">${escapeHtml(e.message)}</div>`}}
+async function openModule(id){if(dashTimer){clearInterval(dashTimer);dashTimer=null}current=id;
+const gi=groupIndexOf(id);if(gi>=0){currentGroup=gi;lastByGroup[gi]=id}
+renderNav();const m=modules.find(x=>x[0]===id);$('#title').textContent=m[1];$('#description').textContent=m[2];$('#content').innerHTML='<div class="panel muted">Učitavanje…</div>';try{id==='dashboard'?await dashboard():id==='interfaces'?await interfacesPage():id==='audit'?await audit():id==='monitoring'?await monitoring():id==='mail'?await mailPage():id==='dns'?await dnsPage():id==='dhcp'?await dhcpPage():id==='users'?await usersPage():id==='gateway'?await gatewayPage():id==='routing'?await routingPage():id==='fwrules'?await fwRulesPage():id==='webproxy'?await webproxyPage():id==='ids'?await idsPage():id==='rpz'?await rpzPage():id==='proxy'?await proxyPage():id==='certificates'?await certsPage():id==='vpn'?await vpnPage():id==='backup'?await backupPage():id==='multiwan'?await multiwanPage():id==='siem'?await siemPage():id==='sitevpn'?await s2sPage():id==='ipsec'?await ipsecPage():id==='system'?await systemPage():id==='services'?await servicesCtlPage():id==='packages'?await packagesPage():id==='conflicts'?await conflictsPage():id==='tools'?await toolsPage():($('#content').innerHTML=`<div class="panel muted">Nepoznat modul: ${escapeHtml(id)}</div>`)}catch(e){$('#content').innerHTML=`<div class="panel error">${escapeHtml(e.message)}</div>`}}
 function fmtRate(bps){if(!isFinite(bps)||bps<0)bps=0;if(bps>=1e9)return (bps/1e9).toFixed(2)+' Gb/s';if(bps>=1e6)return (bps/1e6).toFixed(1)+' Mb/s';if(bps>=1e3)return (bps/1e3).toFixed(0)+' kb/s';return Math.round(bps)+' b/s'}
 function fmtUptime(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'d ':'')+h+'h '+m+'m'}
 function barPct(p){const cl=p>=85?'var(--err)':p>=60?'var(--warn)':'var(--brand)';return `<div class="bar"><i style="width:${Math.min(100,Math.max(0,p))}%;background:${cl}"></i></div>`}

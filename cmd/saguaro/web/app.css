@@ -133,6 +133,30 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .nav-group{color:var(--faint);font-size:10.5px;font-weight:700;text-transform:uppercase;
   letter-spacing:.09em;padding:15px 12px 5px}
 .nav-group:first-child{padding-top:2px}
+.nav-cat{gap:11px}
+
+/* ---------- rail search ---------- */
+.navsearch{position:relative;margin:0 0 10px}
+.navsearch input{padding:8px 11px;font-size:13px}
+.navsearch input:focus{border-color:var(--brand)}
+.navresults{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:45;
+  background:var(--panel);border:1px solid var(--line2);border-radius:9px;padding:5px;
+  box-shadow:0 12px 30px #0000002a;display:flex;flex-direction:column;gap:2px;max-height:60vh;overflow:auto}
+.navres{background:transparent;color:var(--fg);justify-content:flex-start;width:100%;
+  padding:8px 10px;border-radius:7px;font-weight:500;font-size:13px;gap:9px}
+.navres:hover{background:#eef2f6;filter:none}
+.navres .nav-ico,.navres .nav-ico svg{width:16px;height:16px}
+.navres-empty{padding:9px 10px;color:var(--faint);font-size:13px}
+
+/* ---------- top sub-nav (Sophos-style module tabs) ---------- */
+.subnav{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line2);
+  margin:-4px 0 18px;overflow-x:auto}
+.subtab{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);
+  padding:10px 15px;font-weight:600;font-size:13.5px;cursor:pointer;border-radius:0;margin-bottom:-1px;
+  display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.subtab:hover{color:var(--fg);background:#f6f8fa;filter:none}
+.subtab.active{color:var(--brand);border-bottom-color:var(--brand)}
+.subtab-ico,.subtab-ico svg{display:inline-flex;width:16px;height:16px;flex:0 0 auto}
 
 /* ---------- services ---------- */
 .services{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:13px;margin-top:12px}

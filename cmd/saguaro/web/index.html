@@ -4,14 +4,16 @@
 <body>
 <div id="login" class="login"><form id="loginForm"><div class="brand">Saguaro</div><h1>Network Manager</h1><label>Korisnik<input id="username" autocomplete="username" value="admin" required></label><label>Lozinka<input id="password" type="password" autocomplete="current-password" required></label><button>Prijava</button><p id="loginError" class="error"></p></form></div>
 <div id="shell" class="shell hidden">
-  <aside><div class="brand">Saguaro</div><div class="subtitle">Network Manager</div><nav id="nav"></nav><button id="logout" class="logout">Odjava</button></aside>
+  <aside><div class="brand">Saguaro</div><div class="subtitle">Network Manager</div>
+  <div class="navsearch"><input id="navSearch" type="search" placeholder="Traži modul…" autocomplete="off" aria-label="Traži modul"><div id="navResults" class="navresults hidden"></div></div>
+  <nav id="nav"></nav><button id="logout" class="logout">Odjava</button></aside>
   <main><header><div><h1 id="title">Dashboard</h1><p id="description">Pregled mrežne infrastrukture</p></div>
   <div class="devmenu"><button id="devBtn" class="devbtn"><span class="devbrand">Saguaro</span><span class="caret">▾</span></button>
   <div id="devMenu" class="menu hidden">
     <button id="mLogout">Odjava</button>
     <button id="mReboot" class="hidden">Restart uređaja</button>
     <button id="mPoweroff" class="danger hidden">Isključi uređaj</button>
-  </div></div></header><section id="content"></section></main>
+  </div></div></header><div id="subnav" class="subnav hidden"></div><section id="content"></section></main>
 </div>
 <script src="/app.js"></script>
 </body></html>
