@@ -652,7 +652,7 @@ $('#content').innerHTML=`${pend}
 ${help('<b>1.</b> Napravi <b>alias</b>: ime (počinje slovom, a-z 0-9 _), tip <code>host</code> (jedan/više IP-a), <code>network</code> (CIDR) ili <code>range</code> (<code>192.168.1.10-192.168.1.20</code>), i vrijednosti odvojene zarezom. <b>2.</b> Napravi <b>pravilo</b> koje povuče alias po imenu: akcija (accept/drop/reject), protokol, izvorni i odredišni alias (prazno = bilo koji) i opcionalno port. <b>3.</b> Klikni <b>Primijeni</b> — ruleset se učita s 120 s prozorom za potvrdu (ako izgubiš pristup, vraća se stara konfiguracija). Redoslijed pravila mijenjaj strelicama ↑↓. Pravila rade u <b>Gateway</b> modu.')}
 ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgmt/klijentska mreža) da bi mogao primijeniti pravila.</div>'}
 <div class="wizRow"><button id="fwApply">Primijeni firewall (120 s potvrda)</button></div><div id="fwMsg" class="muted"></div></div>
-${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCount],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['test','Test pravila']])}
+${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCount],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['log','Log'],['test','Test pravila']])}
 <div class="tabpane active" data-pane="fwTabs" data-tabkey="pravila">
 <div class="panel"><h3>Pravila (${rules.length})</h3>
 <div class="filterbar">
@@ -717,13 +717,25 @@ ${(hasVlan||hasInternalZone)?`<div class="wizRow">${hasVlan?'<button id="znVlanA
 <label>Protokol <select id="tsProto"><option value="any">any</option><option value="tcp">tcp</option><option value="udp">udp</option></select></label>
 <label>Odredišni port (0 = bilo koji) <input id="tsPort" type="number" min="0" max="65535" value="0"></label>
 <div><button type="submit">Testiraj</button></div></form>
-<div id="tsOut" style="margin-top:10px"></div></div></div>`;
+<div id="tsOut" style="margin-top:10px"></div></div></div>
+<div class="tabpane" data-pane="fwTabs" data-tabkey="log">
+<div class="panel"><h3>Firewall log (SNA)</h3>
+<p class="muted small">Zapisi koje generiraju pravila s uključenim <b>LOG</b>-om, blokade i završna odbacivanja (netfilter LOG iz kernela) — vremenska crta <b>tko → kome</b>. Klikni <b>Blokiraj</b> da odmah zabraniš izvor.</p>
+<div class="filterbar"><input id="fwlSearch" type="search" placeholder="Traži po IP-u / portu…"><button type="button" id="fwlReload" class="ghost">Osvježi</button></div>
+<div id="fwlBody" class="muted">Učitavanje…</div></div></div>`;
 wireTabs('fwTabs');
 // Live per-rule traffic counters, mapped by rule name (best effort).
 (async()=>{try{const cn=(await api('/api/firewall/counters')).counters||{};document.querySelectorAll('#ruTbody [data-cnt]').forEach(td=>{const c=cn[td.dataset.cnt];if(c)td.textContent=`${fmtBytes(c.bytes)} · ${(+c.packets).toLocaleString('hr-HR')} pkt`})}catch(e){}})();
 const renderBlk=async()=>{const el=$('#blkList');if(!el)return;try{const ips=(await api('/api/firewall/blocklist')).ips||[];el.innerHTML=ips.length?`<table class="compact"><thead><tr><th>Blokirani IP</th><th></th></tr></thead><tbody>${ips.map(ip=>`<tr><td><b>${e(ip)}</b></td><td class="rowacts"><button class="blkDel danger" data-ip="${e(ip)}">Odblokiraj</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema blokiranih IP adresa.</p>';el.querySelectorAll('.blkDel').forEach(b=>b.onclick=async()=>{try{await api('/api/firewall/unblock-ip',{method:'POST',body:JSON.stringify({ip:b.dataset.ip})});renderBlk()}catch(err){$('#blkMsg').textContent=err.message}})}catch(err){el.innerHTML='<span class="muted">—</span>'}};
 renderBlk();
 const blkAddBtn=$('#blkAdd');if(blkAddBtn)blkAddBtn.onclick=async()=>{const ip=$('#blkIP').value.trim();const m=$('#blkMsg');if(!isIPv4(ip)){m.textContent='Upiši ispravnu IPv4 adresu.';return}m.textContent='Blokiram…';try{await api('/api/firewall/block-ip',{method:'POST',body:JSON.stringify({ip})});$('#blkIP').value='';m.textContent='Blokirano: '+ip;renderBlk()}catch(err){m.textContent=err.message}};
+let fwlData=[];
+const renderFwl=()=>{const el=$('#fwlBody');if(!el)return;const q=($('#fwlSearch').value||'').toLowerCase().trim();
+const rows=fwlData.filter(x=>!q||(x.src||'').includes(q)||(x.dst||'').includes(q)||(x.dport||'').includes(q)||(x.sport||'').includes(q)||(x.rule||'').toLowerCase().includes(q));
+el.innerHTML=rows.length?`<table class="compact"><thead><tr><th>Vrijeme</th><th>Pravilo</th><th>Izvor</th><th>Odredište</th><th>Proto</th><th>Portovi</th><th></th></tr></thead><tbody>${rows.slice(0,300).map(x=>`<tr><td class="muted small">${e((x.time||'').replace('T',' ').slice(0,19))}</td><td><span class="chip chip-log">${e(x.rule||'')}</span></td><td>${e(x.src||'')}</td><td class="muted">${e(x.dst||'')}</td><td class="muted">${e(x.proto||'')}</td><td class="muted">${e(x.sport||'')}→${e(x.dport||'')}</td><td class="rowacts">${x.src?`<button class="fwlBlk danger" data-ip="${e(x.src)}">Blokiraj</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema zapisa (uključi LOG na pravilu ili pričekaj promet).</p>';
+el.querySelectorAll('.fwlBlk').forEach(b=>b.onclick=async()=>{if(!confirm('Blokirati sav proslijeđeni promet s '+b.dataset.ip+'?'))return;b.disabled=true;b.textContent='…';try{await api('/api/firewall/block-ip',{method:'POST',body:JSON.stringify({ip:b.dataset.ip})});b.textContent='Blokiran';renderBlk()}catch(err){b.disabled=false;b.textContent='Blokiraj';alert(err.message)}})};
+const loadFwl=async()=>{const el=$('#fwlBody');if(el)el.innerHTML='<span class="muted">Učitavanje…</span>';try{fwlData=(await api('/api/firewall/log')).entries||[]}catch(err){fwlData=[]}renderFwl()};
+loadFwl();const fwlS=$('#fwlSearch');if(fwlS)fwlS.oninput=renderFwl;const fwlR=$('#fwlReload');if(fwlR)fwlR.onclick=loadFwl;
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
 $('#fwApply').onclick=async()=>{if(!confirm('Primijeniti firewall? Bez potvrde u 120 s vraća se stara konfiguracija.'))return;const m=$('#fwMsg');m.textContent='Primjena…';try{await api('/api/firewall/apply',{method:'POST',body:'{}'});fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);fwRulesPage()}catch(err){alert(err.message)}});

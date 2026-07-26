@@ -19,7 +19,7 @@ FLAG=$RUNDIR/firewall-pending
 TIMER_UNIT=saguaro-fw-rollback
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
-[ $# -eq 1 ] || { echo "usage: saguaro-firewall check|apply|confirm|rollback|rollback-if-pending|counters" >&2; exit 2; }
+[ $# -eq 1 ] || { echo "usage: saguaro-firewall check|apply|confirm|rollback|rollback-if-pending|counters|log" >&2; exit 2; }
 
 do_check() {
   [ -s "$STAGED" ] || { echo "no staged ruleset at $STAGED" >&2; exit 1; }
@@ -89,6 +89,11 @@ case "$1" in
     # Read-only: dump the live ruleset as JSON so the control plane can map each
     # rule's packet/byte counter to its rule (by the sna-rule: comment).
     nft -j list table inet saguaro 2>/dev/null || echo '{"nftables":[]}'
+    ;;
+  log)
+    # Read-only: the most recent netfilter LOG lines the SNA rules emit (per-rule
+    # "Log" flag, the block rule, and the catch-all drops), for the Log Viewer.
+    journalctl -k -o short-iso --no-pager -n 8000 2>/dev/null | grep -E "SNA[:-]" | tail -300 || true
     ;;
   rollback)
     systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
