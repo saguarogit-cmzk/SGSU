@@ -31,6 +31,11 @@ case "${1:-}" in
     # The verify helper OpenVPN calls: hand the creds file to the Saguaro binary.
     printf "#!/bin/sh\nexec /usr/lib/saguaro/saguaro openvpn-authverify \"\$@\"\n" > "$DEST/saguaro-authverify"
     chmod 0755 "$DEST/saguaro-authverify"
+    # Per-client fixed-IP files (client-config-dir).
+    rm -rf "$DEST/saguaro-ccd"; install -d -m 0755 "$DEST/saguaro-ccd"
+    if [ -d "$STAGED/ccd" ]; then
+      for f in "$STAGED/ccd"/*; do [ -f "$f" ] && install -m 0644 "$f" "$DEST/saguaro-ccd/$(basename "$f")"; done
+    fi
     rm -rf "$STAGED"
     systemctl enable "$UNIT" >/dev/null 2>&1 || true
     systemctl restart "$UNIT"

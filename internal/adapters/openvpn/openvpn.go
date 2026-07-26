@@ -26,16 +26,26 @@ const DefaultPort = 1194
 
 var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]{0,30}[a-z0-9])?$`)
 
+// AccessRule limits where a VPN user may go: to a destination (IP/CIDR),
+// optionally only a protocol and port (e.g. only RDP tcp/3389 to one server).
+type AccessRule struct {
+	Dest  string `json:"dest"`  // IPv4 or CIDR
+	Proto string `json:"proto"` // any | tcp | udp
+	Port  int    `json:"port"`  // 0 = all ports
+}
+
 // Client is one issued VPN user. The private key is never stored; only the
 // certificate and serial are kept so the CRL can revoke it.
 type Client struct {
-	Name      string    `json:"name"`
-	Serial    string    `json:"serial"`             // hex
-	CertPEM   string    `json:"certPem"`            //
-	PassHash  string    `json:"passHash,omitempty"` // argon2 PHC; user+password auth on top of the cert
-	Revoked   bool      `json:"revoked,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	Name      string       `json:"name"`
+	Serial    string       `json:"serial"`             // hex
+	CertPEM   string       `json:"certPem"`            //
+	PassHash  string       `json:"passHash,omitempty"` // argon2 PHC; user+password auth on top of the cert
+	VPNAddr   string       `json:"vpnAddr,omitempty"`  // fixed tunnel IP, so firewall rules can match by source
+	Access    []AccessRule `json:"access,omitempty"`   // empty = reach everything the split routes allow
+	Revoked   bool         `json:"revoked,omitempty"`
+	CreatedAt time.Time    `json:"createdAt"`
+	ExpiresAt time.Time    `json:"expiresAt,omitempty"`
 }
 
 // Config is the persisted OpenVPN configuration. The private keys are held
@@ -67,6 +77,47 @@ func (c Config) PortOrDefault() int {
 func validCIDR4(s string) bool {
 	ip, _, err := net.ParseCIDR(strings.TrimSpace(s))
 	return err == nil && ip.To4() != nil
+}
+
+// NextFreeAddr returns the next unused host address in the VPN subnet, skipping
+// the server (.1) and any address already in use.
+func (c Config) NextFreeAddr() string {
+	ip, ipnet, err := net.ParseCIDR(strings.TrimSpace(c.Subnet))
+	if err != nil {
+		return ""
+	}
+	used := map[string]bool{}
+	base := ip.Mask(ipnet.Mask).To4()
+	used[incIP(base, 1)] = true // server holds .1
+	for _, cl := range c.Clients {
+		if cl.VPNAddr != "" && !cl.Revoked {
+			used[cl.VPNAddr] = true
+		}
+	}
+	for i := 2; i < 254; i++ {
+		cand := incIP(base, i)
+		if cand == "" || !ipnet.Contains(net.ParseIP(cand)) {
+			break
+		}
+		if !used[cand] {
+			return cand
+		}
+	}
+	return ""
+}
+
+func incIP(base net.IP, n int) string {
+	v := (uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])) + uint32(n)
+	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v)).String()
+}
+
+// GenerateCCD renders a client-config-dir file pinning the client's tunnel IP.
+func (c Config) GenerateCCD(cl Client) string {
+	_, ipnet, err := net.ParseCIDR(strings.TrimSpace(c.Subnet))
+	if err != nil || cl.VPNAddr == "" {
+		return ""
+	}
+	return fmt.Sprintf("ifconfig-push %s %s\n", cl.VPNAddr, net.IP(ipnet.Mask).String())
 }
 
 func (c Config) Validate() error {
@@ -286,8 +337,10 @@ func (c Config) GenerateServerConf() (string, error) {
 	b.WriteString("# Managed by Saguaro (generated). Manual edits are overwritten on apply.\n")
 	fmt.Fprintf(&b, "port %d\n", c.PortOrDefault())
 	b.WriteString("proto udp\n")
-	b.WriteString("dev tun\n")
+	b.WriteString("dev ovpn-saguaro\n")
+	b.WriteString("dev-type tun\n")
 	b.WriteString("topology subnet\n")
+	b.WriteString("client-config-dir /etc/openvpn/server/saguaro-ccd\n")
 	fmt.Fprintf(&b, "server %s %s\n", server.String(), mask.String())
 	b.WriteString("ca /etc/openvpn/server/saguaro-ca.crt\n")
 	b.WriteString("cert /etc/openvpn/server/saguaro-server.crt\n")

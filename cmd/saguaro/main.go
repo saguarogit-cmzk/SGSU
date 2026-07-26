@@ -163,7 +163,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.83.0"
+const appVersion = "0.84.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -454,6 +454,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/openvpn/apply", a.authz(permFirewall, a.apiOpenVPNApply))
 	mux.HandleFunc("POST /api/openvpn/clients", a.authz(permFirewall, a.apiOpenVPNAddClient))
 	mux.HandleFunc("DELETE /api/openvpn/clients/{name}", a.authz(permFirewall, a.apiOpenVPNDelClient))
+	mux.HandleFunc("PUT /api/openvpn/clients/{name}/access", a.authz(permFirewall, a.apiOpenVPNClientAccess))
 	mux.HandleFunc("GET /api/certs", a.auth(a.apiCertsList))
 	mux.HandleFunc("POST /api/certs/issue", a.authz(permCerts, a.apiCertIssue))
 	mux.HandleFunc("POST /api/certs/{name}/deploy-gui", a.authz(permCerts, a.apiCertDeployGUI))

@@ -73,7 +73,27 @@ func (a *app) firewallConfig() (nftgen.Config, bool) {
 	cfg.PBRUplinks = a.pbrUplinks()
 	cfg.GeoCIDRs = geoCIDRsForCodes(cfg.GeoCountries)
 	cfg.VPNPorts = a.vpnPorts()
+	cfg.OpenVPNIface, cfg.OpenVPNSubnet, cfg.OpenVPNAccess = a.openvpnFirewall()
 	return cfg, ok
+}
+
+// openvpnFirewall builds the per-client OpenVPN forward policy for the firewall.
+func (a *app) openvpnFirewall() (iface, subnet string, access []nftgen.OVPNAccess) {
+	o := a.getOpenVPN()
+	if !o.Enabled {
+		return "", "", nil
+	}
+	for _, c := range o.Clients {
+		if c.Revoked || c.VPNAddr == "" {
+			continue
+		}
+		oa := nftgen.OVPNAccess{Addr: c.VPNAddr, AllowAll: len(c.Access) == 0}
+		for _, r := range c.Access {
+			oa.Rules = append(oa.Rules, nftgen.OVPNRule{Dest: r.Dest, Proto: r.Proto, Port: r.Port})
+		}
+		access = append(access, oa)
+	}
+	return "ovpn-saguaro", o.Subnet, access
 }
 
 // vpnPorts lists the UDP ports the enabled VPN servers listen on, so the input

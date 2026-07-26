@@ -165,6 +165,26 @@ type Config struct {
 	// VPNPorts are UDP ports the input chain must accept so remote VPN clients can
 	// reach the server (WireGuard / OpenVPN). Populated at generate time.
 	VPNPorts []int `json:"-"`
+	// OpenVPN per-client forward policy: OpenVPNIface is the tun device, and each
+	// OVPNAccess is one client's source address with its allowed destinations (or
+	// AllowAll). OpenVPNSubnet is masqueraded onto the LAN. Populated at gen time.
+	OpenVPNIface  string       `json:"-"`
+	OpenVPNSubnet string       `json:"-"`
+	OpenVPNAccess []OVPNAccess `json:"-"`
+}
+
+// OVPNRule is one allowed destination for a VPN user (port 0 = all ports).
+type OVPNRule struct {
+	Dest  string
+	Proto string
+	Port  int
+}
+
+// OVPNAccess is a VPN user's fixed tunnel address and what it may reach.
+type OVPNAccess struct {
+	Addr     string
+	AllowAll bool
+	Rules    []OVPNRule
 }
 
 // TunnelNet is one tunnel's local and remote subnets.
@@ -767,6 +787,30 @@ func (c Config) Generate() (string, error) {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s ct state new accept\n", c.WANInterface, n.IntIP)
 		}
 	}
+	// OpenVPN per-client access: allow each user's fixed source to only its
+	// permitted destinations (all, or specific IP+proto+port), then drop the rest
+	// from the tunnel so an unlisted user reaches nothing.
+	if c.OpenVPNIface != "" && len(c.OpenVPNAccess) > 0 {
+		for _, ac := range c.OpenVPNAccess {
+			if ac.Addr == "" {
+				continue
+			}
+			if ac.AllowAll {
+				fmt.Fprintf(&b, "    iifname %q ip saddr %s ct state new accept\n", c.OpenVPNIface, ac.Addr)
+				continue
+			}
+			for _, r := range ac.Rules {
+				line := fmt.Sprintf("iifname %q ip saddr %s ip daddr %s", c.OpenVPNIface, ac.Addr, r.Dest)
+				if (r.Proto == "tcp" || r.Proto == "udp") && r.Port > 0 {
+					line += fmt.Sprintf(" %s dport %d", r.Proto, r.Port)
+				} else if r.Proto == "tcp" || r.Proto == "udp" {
+					line += " meta l4proto " + r.Proto
+				}
+				fmt.Fprintf(&b, "    %s ct state new accept\n", line)
+			}
+		}
+		fmt.Fprintf(&b, "    iifname %q counter drop\n", c.OpenVPNIface)
+	}
 	if forwardActive {
 		b.WriteString("    counter log prefix \"SNA-FWD-DROP \" drop\n")
 	}
@@ -785,7 +829,7 @@ func (c Config) Generate() (string, error) {
 	}
 	b.WriteString("}\n")
 	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
-	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0 || len(c.NAT11) > 0) {
+	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0 || len(c.NAT11) > 0 || c.OpenVPNSubnet != "") {
 		b.WriteString("\ntable ip saguaro-nat {\n")
 		if len(c.PortForwards) > 0 || len(c.NAT11) > 0 {
 			b.WriteString("  chain prerouting {\n")
@@ -827,6 +871,11 @@ func (c Config) Generate() (string, error) {
 			}
 			if c.NATEnabled {
 				fmt.Fprintf(&b, "    oifname %q masquerade\n", c.WANInterface)
+			}
+			// VPN clients reaching the LAN appear as the appliance's LAN address so
+			// internal hosts can reply without a route back to the VPN subnet.
+			if c.OpenVPNSubnet != "" && c.LANInterface != "" {
+				fmt.Fprintf(&b, "    oifname %q ip saddr %s masquerade\n", c.LANInterface, c.OpenVPNSubnet)
 			}
 			// Hairpin: masquerade the reflected flows so the internal host
 			// replies via the appliance (source becomes the appliance LAN IP).

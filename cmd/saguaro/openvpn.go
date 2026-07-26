@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -50,7 +51,8 @@ func (a *app) apiOpenVPNGet(w http.ResponseWriter, _ *http.Request) {
 		if c.Revoked {
 			continue
 		}
-		clients = append(clients, map[string]any{"name": c.Name, "createdAt": c.CreatedAt, "expiresAt": c.ExpiresAt})
+		clients = append(clients, map[string]any{"name": c.Name, "createdAt": c.CreatedAt,
+			"expiresAt": c.ExpiresAt, "vpnAddr": c.VPNAddr, "access": c.Access})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": cfg.Enabled, "subnet": cfg.Subnet, "port": cfg.PortOrDefault(),
@@ -106,8 +108,32 @@ func (a *app) stageAndApplyOpenVPN(ctx context.Context, cfg openvpn.Config) erro
 			return err
 		}
 	}
+	// Per-client fixed tunnel IPs (client-config-dir), so firewall rules can match
+	// each user by source address.
+	ccdDir := filepath.Join(dir, "ccd")
+	if err := os.MkdirAll(ccdDir, 0700); err != nil {
+		return err
+	}
+	for _, cl := range cfg.Clients {
+		if cl.Revoked || cl.VPNAddr == "" {
+			continue
+		}
+		if ccd := cfg.GenerateCCD(cl); ccd != "" {
+			if err := os.WriteFile(filepath.Join(ccdDir, cl.Name), []byte(ccd), 0600); err != nil {
+				return err
+			}
+		}
+	}
 	_, err = a.runOpenVPN(ctx, "apply")
 	return err
+}
+
+// syncOpenVPNFirewall regenerates the firewall so per-client tunnel access rules
+// (and the VPN masquerade) match the current OpenVPN state.
+func (a *app) syncOpenVPNFirewall(r *http.Request) {
+	if _, ok := a.firewallConfig(); ok {
+		_ = a.applyAndConfirm(r)
+	}
 }
 
 func (a *app) apiOpenVPNApply(w http.ResponseWriter, r *http.Request) {
@@ -257,17 +283,19 @@ func (a *app) apiOpenVPNAddClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Clients = append(cfg.Clients, openvpn.Client{Name: in.Name, Serial: serial, CertPEM: certPEM,
-		PassHash: phc, CreatedAt: time.Now(), ExpiresAt: notAfter})
+		PassHash: phc, VPNAddr: cfg.NextFreeAddr(), CreatedAt: time.Now(), ExpiresAt: notAfter})
 	if err := a.setOpenVPN(cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist client")
 		return
 	}
-	// Reload the server so its auth file knows the new user's password.
+	// Reload the server so its auth file + fixed IP know the new user, and the
+	// firewall so the user's access rules take effect.
 	if cfg.Enabled {
 		if err := a.stageAndApplyOpenVPN(r.Context(), cfg); err != nil {
 			writeError(w, http.StatusBadGateway, "reload failed: "+truncate(err.Error(), 200))
 			return
 		}
+		a.syncOpenVPNFirewall(r)
 	}
 	tlsCrypt, err := mailmod.Decrypt(a.mailKey, cfg.TLSCryptEnc)
 	if err != nil {
@@ -279,6 +307,54 @@ func (a *app) apiOpenVPNAddClient(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-openvpn-profile")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+in.Name+".ovpn\"")
 	_, _ = w.Write([]byte(ovpn))
+}
+
+func (a *app) apiOpenVPNClientAccess(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var in struct {
+		Rules []openvpn.AccessRule `json:"rules"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	for _, ru := range in.Rules {
+		if net.ParseIP(ru.Dest) == nil {
+			if _, _, err := net.ParseCIDR(ru.Dest); err != nil {
+				writeError(w, http.StatusBadRequest, "each rule needs a destination IP or CIDR")
+				return
+			}
+		}
+		if ru.Proto != "any" && ru.Proto != "tcp" && ru.Proto != "udp" {
+			writeError(w, http.StatusBadRequest, "protocol must be any, tcp or udp")
+			return
+		}
+		if ru.Port < 0 || ru.Port > 65535 {
+			writeError(w, http.StatusBadRequest, "port out of range")
+			return
+		}
+	}
+	a.mutateMu.Lock()
+	defer a.mutateMu.Unlock()
+	cfg := a.getOpenVPN()
+	found := false
+	for i := range cfg.Clients {
+		if cfg.Clients[i].Name == name && !cfg.Clients[i].Revoked {
+			cfg.Clients[i].Access = in.Rules
+			found = true
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "client not found")
+		return
+	}
+	if err := a.setOpenVPN(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist access rules")
+		return
+	}
+	a.syncOpenVPNFirewall(r)
+	a.recordSev(r, a.actor(r), "openvpn-client-access", "openvpn", "success", "security",
+		map[string]any{"name": name, "rules": len(in.Rules)})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *app) apiOpenVPNDelClient(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +379,7 @@ func (a *app) apiOpenVPNDelClient(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, "reload failed: "+truncate(err.Error(), 200))
 			return
 		}
+		a.syncOpenVPNFirewall(r)
 	}
 	if err := a.setOpenVPN(cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot persist revocation")
