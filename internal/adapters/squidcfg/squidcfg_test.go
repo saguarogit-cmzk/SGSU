@@ -75,4 +75,37 @@ func TestValidate(t *testing.T) {
 	if (Config{FilterPort: 0}).FilterPortOrDefault() != 8080 {
 		t.Fatal("default filter port wrong")
 	}
+	// an unknown category key is rejected
+	if err := (Config{Enabled: true, AllowedNetwork: "192.168.10.0/24", Categories: []string{"nope"}}).Validate(); err == nil {
+		t.Fatal("unknown category should be rejected")
+	}
+}
+
+func TestCategories(t *testing.T) {
+	// The catalog is non-empty and every key resolves to domains.
+	cat := Categories()
+	if len(cat) == 0 {
+		t.Fatal("category catalog is empty")
+	}
+	for _, c := range cat {
+		if c.Count == 0 {
+			t.Errorf("category %q has no domains", c.Key)
+		}
+	}
+	// Enabling a category folds its domains into the banned list, de-duplicated
+	// with the custom list.
+	c := Config{Enabled: true, AllowedNetwork: "192.168.10.0/24",
+		BannedSites: []string{"doubleclick.net", "custom.example"}, Categories: []string{"ads", "social"}}
+	b, err := c.GenerateBanned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"doubleclick.net", "custom.example", "facebook.com", "google-analytics.com"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("banned list missing %q:\n%s", want, b)
+		}
+	}
+	if n := strings.Count(b, "doubleclick.net\n"); n != 1 {
+		t.Errorf("doubleclick.net should appear once (deduped), got %d", n)
+	}
 }

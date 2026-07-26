@@ -110,7 +110,12 @@ func (a *app) applyWebProxy(ctx context.Context, cfg squidcfg.Config) error {
 }
 
 func (a *app) apiWebProxyGet(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.getWebProxy())
+	// Flatten the stored config and add the catalog of built-in categories so the
+	// GUI can render a toggle per category alongside the enabled keys.
+	writeJSON(w, http.StatusOK, struct {
+		squidcfg.Config
+		CategoryCatalog []squidcfg.Category `json:"categoryCatalog"`
+	}{a.getWebProxy(), squidcfg.Categories()})
 }
 
 func (a *app) apiWebProxyPut(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +131,9 @@ func (a *app) apiWebProxyPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.SpliceSites == nil {
 		in.SpliceSites = []string{}
+	}
+	if in.Categories == nil {
+		in.Categories = []string{}
 	}
 	if err := in.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

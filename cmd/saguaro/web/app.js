@@ -775,10 +775,11 @@ ${help('<b>ping</b> — dostupnost + latencija. <b>nslookup</b> — DNS razluči
 $('#tlForm').onsubmit=async ev=>{ev.preventDefault();const o=$('#tlOut');const host=$('#tlHost').value.trim();if(!host){o.textContent='Upiši cilj (host ili IP).';return}o.textContent='Izvršavam… (može potrajati par sekundi)';try{const r=await api('/api/tools',{method:'POST',body:JSON.stringify({tool:$('#tlTool').value,host,iface:$('#tlIface').value,server:$('#tlServer').value.trim()})});o.textContent=r.output||'(nema izlaza)'}catch(err){o.textContent=err.message}}}
 async function webproxyPage(){const s=await api('/api/webproxy');const e=escapeHtml;
 const banN=(s.bannedSites||[]).length,excN=(s.exceptionSites||[]).length,splN=(s.spliceSites||[]).length;
+const cats=s.categoryCatalog||[],catOn=new Set(s.categories||[]),catN=(s.categories||[]).length;
 $('#content').innerHTML=`<div class="panel"><h2>Web proxy i filtriranje ${s.enabled?'<span class="badge">aktivan</span>':'<span class="badge">isključen</span>'}</h2>
 <p class="muted">Squid (caching proxy) + e2guardian (filtriranje URL-ova). Klijenti postave proxy na IP appliancea (LAN) : port. Postavke su podijeljene u kartice — na kraju klikni <b>Spremi i primijeni</b>.</p>
 ${help('<b>Explicit proxy</b>: na klijentu postaviš proxy = IP appliancea (LAN) : <b>port</b> (default 8080). Squid kešira, a <b>e2guardian</b> filtrira po <b>URL grupama</b> (blokirane/iznimke). <b>Dozvoljena mreža</b> ograničava tko smije koristiti proxy. Sinergija: <b>RPZ (DNS filtering)</b> već blokira domene jeftino na DNS razini — proxy dodaje keš i per-URL kontrolu. <b>SSL-bump</b> otključava filtriranje HTTPS <b>sadržaja</b>: Squid dešifrira TLS vlastitim CA-om (klijenti ga MORAJU imati u trustu). Osjetljive domene (banke, zdravlje) stavi u <b>Splice</b> listu da se NE dešifriraju.')}</div>
-${tabBar('wpTabs',[['general','Općenito'],['urls','URL grupe',banN+excN],['https','HTTPS (SSL-bump)',splN]])}
+${tabBar('wpTabs',[['general','Općenito'],['cat','Kategorije',catN],['urls','URL grupe',banN+excN],['https','HTTPS (SSL-bump)',splN]])}
 <form id="wpForm">
 <div class="tabpane active" data-pane="wpTabs" data-tabkey="general"><div class="panel"><h3>Općenito</h3>
 ${toggle('wpEn',s.enabled,'Uključi web proxy')}
@@ -786,6 +787,10 @@ ${toggle('wpFilter',s.filtering,'Filtriranje URL-ova (e2guardian)')}
 <label>Port (klijentski, e2guardian) <input id="wpPort" type="number" min="1" max="65535" value="${s.filterPort||8080}"></label>
 <label>Dozvoljena mreža (CIDR) <input id="wpNet" value="${e(s.allowedNetwork||'')}" placeholder="192.168.10.0/24"></label>
 <p class="muted small">Klijent: postavi HTTP proxy na <code>IP-appliancea:${s.filterPort||8080}</code>. Samo uređaji iz „dozvoljene mreže" smiju koristiti proxy.</p>
+</div></div>
+<div class="tabpane" data-pane="wpTabs" data-tabkey="cat"><div class="panel"><h3>Kategorije <span class="badge">${catN} uključeno</span></h3>
+<p class="muted small">Uključi gotovu kategoriju da blokiraš cijelu klasu stranica jednim klikom (kao Sophos web kategorije). Domene se dodaju na blok-listu pri primjeni. Za finiju kontrolu dodaj vlastite domene u karticu <b>URL grupe</b>. Popis je početni skup — proširi ga po potrebi.</p>
+${cats.length?cats.map(c=>toggle('wpCat_'+c.key,catOn.has(c.key),e(c.label)+' <span class="muted small">('+c.count+' domena)</span>')).join(''):'<p class="muted">Nema dostupnih kategorija.</p>'}
 </div></div>
 <div class="tabpane" data-pane="wpTabs" data-tabkey="urls">
 <div class="panel"><h3>Blokirane domene <span class="badge">${banN}</span></h3>
@@ -808,7 +813,8 @@ $('#wpCa').onclick=()=>{window.open('/api/webproxy/ca','_blank')};
 $('#wpForm').onsubmit=async ev=>{ev.preventDefault();const m=$('#wpMsg');const en=$('#wpEn').checked;
 const lines=id=>$('#'+id).value.split(/[\n,]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
 const bump=$('#wpBump').checked;
-const body={enabled:en,filterPort:parseInt($('#wpPort').value,10)||8080,allowedNetwork:$('#wpNet').value.trim(),filtering:$('#wpFilter').checked,bannedSites:lines('wpBan'),exceptionSites:lines('wpExc'),sslBump:bump,sslBumpPort:parseInt($('#wpBumpPort').value,10)||3130,spliceSites:lines('wpSplice')};
+const categories=(s.categoryCatalog||[]).map(c=>c.key).filter(k=>{const el=$('#wpCat_'+k);return el&&el.checked});
+const body={enabled:en,filterPort:parseInt($('#wpPort').value,10)||8080,allowedNetwork:$('#wpNet').value.trim(),filtering:$('#wpFilter').checked,bannedSites:lines('wpBan'),exceptionSites:lines('wpExc'),categories,sslBump:bump,sslBumpPort:parseInt($('#wpBumpPort').value,10)||3130,spliceSites:lines('wpSplice')};
 if(en&&!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(body.allowedNetwork)){m.textContent='Dozvoljena mreža mora biti CIDR (npr. 192.168.10.0/24).';return}
 if(en&&bump&&!confirm('SSL-bump dešifrira HTTPS promet korisnika. Klijenti moraju imati naš CA. Nastaviti?'))return;
 m.textContent='Primjena…';try{await api('/api/webproxy',{method:'PUT',body:JSON.stringify(body)});m.textContent=en?'Primijenjeno. Proxy = IP:'+body.filterPort+(bump?' · SSL-bump port '+body.sslBumpPort+' (instaliraj CA na klijente!)':'')+'.':'Web proxy isključen.'}catch(err){m.textContent=err.message}}}

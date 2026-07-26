@@ -38,6 +38,76 @@ type Config struct {
 	SSLBump     bool     `json:"sslBump"`
 	SSLBumpPort int      `json:"sslBumpPort"`
 	SpliceSites []string `json:"spliceSites"`
+	// Categories holds the keys of enabled built-in blocklists (see Categories()).
+	// Their domains are merged into the banned list at generate time, so an admin
+	// can switch off "social media" or "adult content" without curating domains.
+	Categories []string `json:"categories"`
+}
+
+// Category is a built-in, curated blocklist the GUI offers as a single toggle.
+type Category struct {
+	Key     string   `json:"key"`
+	Label   string   `json:"label"`
+	Domains []string `json:"-"`
+	Count   int      `json:"count"`
+}
+
+// builtinCategories are starter blocklists. They are intentionally short, well
+// known seeds -- an admin extends coverage via the custom banned list or DNS RPZ;
+// the point is a one-click on/off for common classes of sites, like Sophos's
+// web categories. Keys are stable identifiers persisted in the config.
+var builtinCategories = []Category{
+	{Key: "ads", Label: "Oglasi i praćenje", Domains: []string{"doubleclick.net", "googlesyndication.com", "google-analytics.com", "adservice.google.com", "ads.yahoo.com", "taboola.com", "outbrain.com", "criteo.com", "scorecardresearch.com"}},
+	{Key: "social", Label: "Društvene mreže", Domains: []string{"facebook.com", "instagram.com", "tiktok.com", "twitter.com", "x.com", "snapchat.com", "reddit.com", "pinterest.com"}},
+	{Key: "adult", Label: "Odrasli sadržaj", Domains: []string{"pornhub.com", "xvideos.com", "xnxx.com", "redtube.com", "youporn.com", "xhamster.com"}},
+	{Key: "gambling", Label: "Kockanje i klađenje", Domains: []string{"bet365.com", "pokerstars.com", "williamhill.com", "betway.com", "888casino.com", "unibet.com"}},
+	{Key: "streaming", Label: "Streaming i video", Domains: []string{"youtube.com", "netflix.com", "twitch.tv", "hulu.com", "disneyplus.com"}},
+}
+
+// Categories returns the catalog of built-in blocklists with their domain counts,
+// for the GUI to render as toggles.
+func Categories() []Category {
+	out := make([]Category, len(builtinCategories))
+	for i, c := range builtinCategories {
+		out[i] = Category{Key: c.Key, Label: c.Label, Count: len(c.Domains)}
+	}
+	return out
+}
+
+// categoryDomains returns the domains for an enabled category key, or nil.
+func categoryDomains(key string) []string {
+	for _, c := range builtinCategories {
+		if c.Key == key {
+			return c.Domains
+		}
+	}
+	return nil
+}
+
+// effectiveBanned merges the custom banned list with every enabled category's
+// domains, de-duplicated, so both feed one e2guardian list.
+func (c Config) effectiveBanned() ([]string, error) {
+	d, err := normDomains(c.BannedSites)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(d))
+	for _, x := range d {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, key := range c.Categories {
+		for _, dom := range categoryDomains(key) {
+			if !seen[dom] {
+				seen[dom] = true
+				out = append(out, dom)
+			}
+		}
+	}
+	return out, nil
 }
 
 // BumpPortOrDefault returns the configured SSL-bump port or the default.
@@ -91,6 +161,11 @@ func (c Config) Validate() error {
 	if _, err := normDomains(c.ExceptionSites); err != nil {
 		return err
 	}
+	for _, key := range c.Categories {
+		if categoryDomains(key) == nil {
+			return fmt.Errorf("unknown web category %q", key)
+		}
+	}
 	if c.SSLBump {
 		p := c.BumpPortOrDefault()
 		if p < 1 || p > 65535 {
@@ -142,7 +217,7 @@ func (c Config) GenerateSquidDropIn() (string, error) {
 
 // GenerateBanned / GenerateExceptions render the e2guardian domain lists.
 func (c Config) GenerateBanned() (string, error) {
-	d, err := normDomains(c.BannedSites)
+	d, err := c.effectiveBanned()
 	if err != nil {
 		return "", err
 	}
