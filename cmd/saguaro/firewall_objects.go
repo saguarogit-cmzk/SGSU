@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"saguaro.local/network-manager/internal/adapters/dnszones"
@@ -81,6 +83,60 @@ func (a *app) apiFirewallTest(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := a.getGateway()
 	writeJSON(w, http.StatusOK, cfg.EvaluateForward(in))
+}
+
+// apiFirewallCounters reads live packet/byte counters from the running ruleset
+// and maps them to each custom rule by its comment (the rule name, which the
+// generator writes as `comment "<name> [category]"`). Best effort: if the
+// ruleset is not loaded yet it returns an empty map, not an error.
+func (a *app) apiFirewallCounters(w http.ResponseWriter, r *http.Request) {
+	empty := map[string]any{"counters": map[string]any{}}
+	out, err := a.runFirewall(r.Context(), "counters")
+	if err != nil {
+		writeJSON(w, http.StatusOK, empty)
+		return
+	}
+	var dump struct {
+		Nftables []map[string]json.RawMessage `json:"nftables"`
+	}
+	if json.Unmarshal(out, &dump) != nil {
+		writeJSON(w, http.StatusOK, empty)
+		return
+	}
+	counters := map[string]map[string]int64{}
+	for _, entry := range dump.Nftables {
+		raw, ok := entry["rule"]
+		if !ok {
+			continue
+		}
+		var rule struct {
+			Comment string                       `json:"comment"`
+			Expr    []map[string]json.RawMessage `json:"expr"`
+		}
+		if json.Unmarshal(raw, &rule) != nil || rule.Comment == "" {
+			continue
+		}
+		// The generator appends " [category]" to the rule name in the comment;
+		// strip it back off to recover the name the GUI keys counters by.
+		name := rule.Comment
+		if i := strings.Index(name, " ["); i >= 0 {
+			name = name[:i]
+		}
+		for _, ex := range rule.Expr {
+			craw, ok := ex["counter"]
+			if !ok {
+				continue
+			}
+			var c struct {
+				Packets int64 `json:"packets"`
+				Bytes   int64 `json:"bytes"`
+			}
+			if json.Unmarshal(craw, &c) == nil {
+				counters[name] = map[string]int64{"packets": c.Packets, "bytes": c.Bytes}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"counters": counters})
 }
 
 func (a *app) apiFirewallGet(w http.ResponseWriter, _ *http.Request) {
