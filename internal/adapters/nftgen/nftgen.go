@@ -162,6 +162,9 @@ type Config struct {
 	// GeoCIDRs holds the resolved IPv4 CIDRs for GeoCountries, injected at
 	// generate time from the downloaded per-country lists (like TunnelNets).
 	GeoCIDRs []string `json:"-"`
+	// VPNPorts are UDP ports the input chain must accept so remote VPN clients can
+	// reach the server (WireGuard / OpenVPN). Populated at generate time.
+	VPNPorts []int `json:"-"`
 }
 
 // TunnelNet is one tunnel's local and remote subnets.
@@ -671,6 +674,12 @@ func (c Config) Generate() (string, error) {
 	}
 	b.WriteString("    ip saddr @clients4 udp dport 53 accept\n")
 	b.WriteString("    ip saddr @clients4 tcp dport 53 accept\n")
+	// Remote VPN clients connect from the WAN, so accept the VPN UDP ports here.
+	for _, p := range c.VPNPorts {
+		if p > 0 && p <= 65535 {
+			fmt.Fprintf(&b, "    udp dport %d accept\n", p)
+		}
+	}
 	if c.DHCPInterface != "" {
 		fmt.Fprintf(&b, "    iifname %q udp dport 67 accept\n", c.DHCPInterface)
 	}

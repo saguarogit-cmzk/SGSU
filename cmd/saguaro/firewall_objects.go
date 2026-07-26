@@ -72,7 +72,21 @@ func (a *app) firewallConfig() (nftgen.Config, bool) {
 	cfg.TunnelNets = a.tunnelNets()
 	cfg.PBRUplinks = a.pbrUplinks()
 	cfg.GeoCIDRs = geoCIDRsForCodes(cfg.GeoCountries)
+	cfg.VPNPorts = a.vpnPorts()
 	return cfg, ok
+}
+
+// vpnPorts lists the UDP ports the enabled VPN servers listen on, so the input
+// chain lets remote clients reach them.
+func (a *app) vpnPorts() []int {
+	var out []int
+	if v := a.getVPN(); v.Enabled && v.ListenPort > 0 {
+		out = append(out, v.ListenPort)
+	}
+	if o := a.getOpenVPN(); o.Enabled {
+		out = append(out, o.PortOrDefault())
+	}
+	return out
 }
 
 // apiFirewallTest simulates a packet against the custom rules and reports which

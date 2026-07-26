@@ -9,6 +9,7 @@ saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-dns zone-access-apply, /usr/sbin/
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-proxy apply, /usr/sbin/saguaro-proxy disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-cert issue, /usr/sbin/saguaro-cert acme *, /usr/sbin/saguaro-cert acme-dns *, /usr/sbin/saguaro-cert renew-all, /usr/sbin/saguaro-cert remove *, /usr/sbin/saguaro-cert deploy-gui *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-vpn apply, /usr/sbin/saguaro-vpn disable
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-openvpn apply, /usr/sbin/saguaro-openvpn disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-s2s apply, /usr/sbin/saguaro-s2s disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ipsec apply, /usr/sbin/saguaro-ipsec disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-svc statusall, /usr/sbin/saguaro-svc status *, /usr/sbin/saguaro-svc start *, /usr/sbin/saguaro-svc stop *, /usr/sbin/saguaro-svc restart *

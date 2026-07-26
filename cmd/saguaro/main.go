@@ -27,6 +27,7 @@ import (
 	"saguaro.local/network-manager/internal/adapters/multiwan"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/nginxgen"
+	"saguaro.local/network-manager/internal/adapters/openvpn"
 	routesmod "saguaro.local/network-manager/internal/adapters/routes"
 	rpzmod "saguaro.local/network-manager/internal/adapters/rpz"
 	"saguaro.local/network-manager/internal/adapters/s2s"
@@ -71,6 +72,7 @@ type state struct {
 	ProxyApps []nginxgen.App    `json:"proxyApps,omitempty"`
 	Certs     []certRecord      `json:"certs,omitempty"`
 	VPN       *wireguard.Config `json:"vpn,omitempty"`
+	OpenVPN   *openvpn.Config   `json:"openvpn,omitempty"`
 	Backup    *backupConfig     `json:"backup,omitempty"`
 	MultiWAN  *multiwan.Config  `json:"multiWan,omitempty"`
 	Routes    *routesmod.Config `json:"routes,omitempty"`
@@ -121,6 +123,7 @@ type app struct {
 	probeUpstream     func(ctx context.Context, addr string) error
 	runCert           func(ctx context.Context, args ...string) ([]byte, error)
 	runVPN            func(ctx context.Context, action string) ([]byte, error)
+	runOpenVPN        func(ctx context.Context, action string) ([]byte, error)
 	runBackupCfg      func(ctx context.Context, action string) ([]byte, error)
 	runWAN            func(ctx context.Context, action string) ([]byte, error)
 	runRoute          func(ctx context.Context, action string) ([]byte, error)
@@ -160,7 +163,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.81.0"
+const appVersion = "0.82.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -272,6 +275,7 @@ func main() {
 		probeUpstream:     defaultProbeUpstream,
 		runCert:           defaultRunCert,
 		runVPN:            defaultRunVPN,
+		runOpenVPN:        defaultRunOpenVPN,
 		runBackupCfg:      defaultRunBackupCfg,
 		runWAN:            defaultRunWAN,
 		runRoute:          defaultRunRoute,
@@ -446,6 +450,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/vpn/apply", a.authz(permFirewall, a.serialized(a.apiVPNApply)))
 	mux.HandleFunc("POST /api/vpn/peers", a.authz(permFirewall, a.serialized(a.apiVPNPeerAdd)))
 	mux.HandleFunc("DELETE /api/vpn/peers/{name}", a.authz(permFirewall, a.serialized(a.apiVPNPeerDelete)))
+	mux.HandleFunc("GET /api/openvpn", a.auth(a.apiOpenVPNGet))
+	mux.HandleFunc("POST /api/openvpn/apply", a.authz(permFirewall, a.apiOpenVPNApply))
+	mux.HandleFunc("POST /api/openvpn/clients", a.authz(permFirewall, a.apiOpenVPNAddClient))
+	mux.HandleFunc("DELETE /api/openvpn/clients/{name}", a.authz(permFirewall, a.apiOpenVPNDelClient))
 	mux.HandleFunc("GET /api/certs", a.auth(a.apiCertsList))
 	mux.HandleFunc("POST /api/certs/issue", a.authz(permCerts, a.apiCertIssue))
 	mux.HandleFunc("POST /api/certs/{name}/deploy-gui", a.authz(permCerts, a.apiCertDeployGUI))
