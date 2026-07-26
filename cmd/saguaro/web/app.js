@@ -121,18 +121,25 @@ renderNav();const m=modules.find(x=>x[0]===id);$('#title').textContent=m[1];$('#
 function fmtRate(bps){if(!isFinite(bps)||bps<0)bps=0;if(bps>=1e9)return (bps/1e9).toFixed(2)+' Gb/s';if(bps>=1e6)return (bps/1e6).toFixed(1)+' Mb/s';if(bps>=1e3)return (bps/1e3).toFixed(0)+' kb/s';return Math.round(bps)+' b/s'}
 function fmtUptime(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'d ':'')+h+'h '+m+'m'}
 function barPct(p){const cl=p>=85?'var(--err)':p>=60?'var(--warn)':'var(--brand)';return `<div class="bar"><i style="width:${Math.min(100,Math.max(0,p))}%;background:${cl}"></i></div>`}
-async function dashboard(){const services=await api('/api/services').catch(()=>[]);
-$('#content').innerHTML=`<div class="cards">
+async function dashboard(){const services=await api('/api/services').catch(()=>[]);const nics=await api('/api/interfaces').catch(()=>[]);const eh=escapeHtml;
+const nicHw=nics.map(n=>`<tr><td><b>${eh(n.label||n.name)}</b> <span class="muted small">${eh(n.name)}</span></td><td>${n.role?`<span class="badge">${eh(n.role)}</span>`:'<span class="muted">—</span>'}</td><td>${n.carrier?`<span class="status st-healthy">Spojen${n.speedMb?' · '+n.speedMb+' Mbps':''}</span>`:'<span class="status st-muted">Nije spojen</span>'}</td><td class="muted">${eh((n.addresses||[]).join(', ')||'—')}</td><td class="muted small">${eh(n.sysName||'')}${n.driver?' · '+eh(n.driver):''}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Nema podataka.</td></tr>';
+$('#content').innerHTML=`${tabBar('dashViews',[['hw','Stanje i hardver'],['std','Standard'],['sec','Sigurnost']])}
+<div class="tabpane active" data-pane="dashViews" data-tabkey="hw">
+<div class="cards">
 <div class="card"><div class="muted">CPU</div><div class="metric" id="mCpu">—</div><div id="mCpuBar"></div><div class="muted" id="mLoad" style="font-size:12px;margin-top:6px"></div></div>
 <div class="card"><div class="muted">Memorija</div><div class="metric" id="mMem">—</div><div id="mMemBar"></div><div class="muted" id="mMemSub" style="font-size:12px;margin-top:6px"></div></div>
 <div class="card"><div class="muted">Conntrack sesije</div><div class="metric" id="mCt">—</div><div id="mCtBar"></div><div class="muted" id="mCtSub" style="font-size:12px;margin-top:6px"></div></div>
 <div class="card"><div class="muted">Uptime</div><div class="metric" id="mUp" style="font-size:22px">—</div><div class="muted" id="mSvc" style="font-size:12px;margin-top:10px"></div></div></div>
 <div class="panel"><h2>CPU po jezgrama</h2><div id="mCores" class="cores"></div></div>
+<div class="panel"><h2>Mrežni portovi (hardver)</h2><table class="compact"><thead><tr><th>Port</th><th>Uloga</th><th>Status / brzina</th><th>IP</th><th>Hardver</th></tr></thead><tbody>${nicHw}</tbody></table></div></div>
+<div class="tabpane" data-pane="dashViews" data-tabkey="std">
 <div class="panel"><h2>Mrežni promet (uživo)</h2><table class="compact"><thead><tr><th>Sučelje</th><th>Uloga</th><th>Link</th><th>↓ Prijem</th><th>↑ Slanje</th></tr></thead><tbody id="mIf"></tbody></table></div>
 <div class="panel"><h2>DNS resolver (Unbound)</h2><div id="dnsStat" class="muted">Učitavanje…</div></div>
-<div class="panel scroll"><h2>IDS/IPS alarmi (Suricata)</h2><div id="idsAlerts" class="muted">Učitavanje…</div></div>
-<div class="panel"><h2>Čarobnjaci</h2><div class="wizRow"><button id="wzNet">DHCP mreža (W2)</button> <button id="wzRes">DHCP rezervacija (W3)</button> <button id="wzZone">DNS zona (W4)</button> <button id="wzGw">Gateway (W8)</button> <button id="wzMail">Mail alarmi (W10)</button></div></div>
-<div class="panel"><h2>Komponente</h2><div class="services">${services.map(s=>`<div class="card service"><div><h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(s.description)}</p></div><div><span class="status ${stClass(s.status)}">${escapeHtml(s.status)}</span><button class="svcCheck" data-id="${escapeHtml(s.id)}">Provjeri</button></div></div>`).join('')}</div></div>`;
+<div class="panel"><h2>Komponente</h2><div class="services">${services.map(s=>`<div class="card service"><div><h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(s.description)}</p></div><div><span class="status ${stClass(s.status)}">${escapeHtml(s.status)}</span><button class="svcCheck" data-id="${escapeHtml(s.id)}">Provjeri</button></div></div>`).join('')}</div></div>
+<div class="panel"><h2>Čarobnjaci</h2><div class="wizRow"><button id="wzNet">DHCP mreža (W2)</button> <button id="wzRes">DHCP rezervacija (W3)</button> <button id="wzZone">DNS zona (W4)</button> <button id="wzGw">Gateway (W8)</button> <button id="wzMail">Mail alarmi (W10)</button></div></div></div>
+<div class="tabpane" data-pane="dashViews" data-tabkey="sec">
+<div class="panel scroll"><h2>IDS/IPS alarmi (Suricata)</h2><div id="idsAlerts" class="muted">Učitavanje…</div></div></div>`;
+wireTabs('dashViews');
 document.querySelectorAll('.svcCheck').forEach(b=>b.onclick=()=>checkService(b.dataset.id));
 $('#wzNet').onclick=wizDhcpNet;$('#wzRes').onclick=wizReservation;$('#wzZone').onclick=wizDnsZone;$('#wzGw').onclick=()=>wizGateway().catch(e=>alert(e.message));$('#wzMail').onclick=()=>openModule('mail');
 const healthy=services.filter(s=>s.status==='healthy').length;$('#mSvc').textContent=`${healthy}/${services.length} servisa zdravo`;
