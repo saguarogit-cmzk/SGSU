@@ -1,4 +1,4 @@
-const modules=[['dashboard','Dashboard','Pregled mrežne infrastrukture'],['interfaces','Interfaces','Mrežni NIC-evi — status i identifikacija porta'],['dns','DNS','PowerDNS zone i zapisi'],['dhcp','DHCP','Kea subneti, rezervacije i leaseovi'],['gateway','Gateway','WAN/LAN, NAT i port forwarding'],['routing','Routing','Statičke rute — mreža do gatewaya/interfacea'],['fwrules','Firewall pravila','Aliasi (host/mreža) i custom pravila'],['ids','IDS/IPS','Suricata detekcija i prevencija upada'],['rpz','DNS filtering','RPZ blokiranje domena (radi i na slabom hardveru)'],['webproxy','Web proxy','Squid cache + e2guardian filtriranje URL-ova'],['vpn','VPN','WireGuard pristup na daljinu'],['sitevpn','Site-to-Site','WireGuard net-to-net tuneli između lokacija'],['ipsec','IPsec IKEv2','Site-to-site s trećim uređajima (Sophos, Fortinet…)'],['certificates','Certificates','Step CA i javni ACME certifikati'],['proxy','Reverse Proxy','Nginx aplikacije i TLS'],['monitoring','Monitoring','Zdravlje servisa i upozorenja'],['services','Servisi','Start / stop / restart servisa za troubleshooting'],['conflicts','Konflikti','Preklapanja subneta/poolova i duplikati'],['tools','Alati','Mrežni alati: ping, nslookup, traceroute, mtr'],['backup','Backup','Sigurne kopije, cilj i restore drill'],['multiwan','Multi-WAN','Više WAN veza, težine i failover'],['system','Sustav','Način rada: Gateway/UTM ili lokalni router'],['packages','Ažuriranja','Verzije servisa i sigurnosna ažuriranja'],['mail','Mail','SMTP alarmi i agregacija događaja'],['siem','SIEM / Logovi','Prosljeđivanje događaja na vanjski SIEM (syslog/CEF)'],['users','Users','Korisnici, MFA i ovlasti'],['audit','Audit log','Evidencija administratorskih promjena']];
+const modules=[['dashboard','Dashboard','Pregled mrežne infrastrukture'],['interfaces','Interfaces','Mrežni NIC-evi — status i identifikacija porta'],['dns','DNS','PowerDNS zone i zapisi'],['dhcp','DHCP','Kea subneti, rezervacije i leaseovi'],['gateway','Gateway','WAN/LAN, NAT i port forwarding'],['routing','Routing','Statičke rute — mreža do gatewaya/interfacea'],['fwrules','Firewall pravila','Aliasi (host/mreža) i custom pravila'],['ids','IDS/IPS','Suricata detekcija i prevencija upada'],['rpz','DNS filtering','RPZ blokiranje domena (radi i na slabom hardveru)'],['webproxy','Web proxy','Squid cache + e2guardian filtriranje URL-ova'],['vpn','VPN','WireGuard pristup na daljinu'],['sitevpn','Site-to-Site','WireGuard net-to-net tuneli između lokacija'],['ipsec','IPsec IKEv2','Site-to-site s trećim uređajima (Fortinet, MikroTik, Cisco…)'],['certificates','Certificates','Step CA i javni ACME certifikati'],['proxy','Reverse Proxy','Nginx aplikacije i TLS'],['monitoring','Monitoring','Zdravlje servisa i upozorenja'],['services','Servisi','Start / stop / restart servisa za troubleshooting'],['conflicts','Konflikti','Preklapanja subneta/poolova i duplikati'],['tools','Alati','Mrežni alati: ping, nslookup, traceroute, mtr'],['backup','Backup','Sigurne kopije, cilj i restore drill'],['multiwan','Multi-WAN','Više WAN veza, težine i failover'],['system','Sustav','Način rada: Gateway/UTM ili lokalni router'],['packages','Ažuriranja','Verzije servisa i sigurnosna ažuriranja'],['mail','Mail','SMTP alarmi i agregacija događaja'],['siem','SIEM / Logovi','Prosljeđivanje događaja na vanjski SIEM (syslog/CEF)'],['users','Users','Korisnici, MFA i ovlasti'],['audit','Audit log','Evidencija administratorskih promjena']];
 const $=s=>document.querySelector(s); let current='dashboard'; let dashTimer=null; let lastMetric=null; let dashTick=0;
 function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)saguaro_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):''}
 async function api(path,options={}){const headers={'Content-Type':'application/json'};const method=(options.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD'){headers['X-CSRF-Token']=csrfToken()}const r=await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});if(r.status===401){showLogin();throw Error('Prijava je istekla.')}const body=await r.json();if(!r.ok)throw Error(body.error||'Greška zahtjeva');return body}
@@ -431,7 +431,7 @@ $('#content').innerHTML=`<div class="panel"><h2>Način rada uređaja</h2>
 <label class="radio"><input type="radio" name="prof" value="router" ${p==='router'?'checked':''}> <span><b>Lokalni router</b> — samo DHCP, DNS i routing između lokalnih mreža. Bez NAT-a i perimetar firewalla; uređaj stoji iza postojećeg gatewaya.</span></label>
 <div><button type="submit">Spremi način rada</button></div>
 <div id="spMsg" class="muted">Trenutno: <b>${p==='gateway'?'Gateway / UTM':'Lokalni router'}</b></div></form>
-${help('Odaberi <b>Gateway/UTM</b> kad je Saguaro glavni ulaz u mrežu (spojen na internet/WAN) i treba raditi firewall, NAT i VPN. Odaberi <b>Lokalni router</b> kad već imaš drugi firewall/gateway (npr. postojeći ruter ili Sophos), a Saguaro služi samo kao interni DHCP/DNS poslužitelj i router između lokalnih segmenata. Prije prelaska u Router mod isključi Gateway (WAN/NAT) u modulu Gateway ako je aktivan — inače prebacivanje neće proći.')}
+${help('Odaberi <b>Gateway/UTM</b> kad je Saguaro glavni ulaz u mrežu (spojen na internet/WAN) i treba raditi firewall, NAT i VPN. Odaberi <b>Lokalni router</b> kad već imaš drugi firewall/gateway (npr. postojeći ruter ili firewall), a Saguaro služi samo kao interni DHCP/DNS poslužitelj i router između lokalnih segmenata. Prije prelaska u Router mod isključi Gateway (WAN/NAT) u modulu Gateway ako je aktivan — inače prebacivanje neće proći.')}
 </div>`;
 $('#spForm').onsubmit=async e=>{e.preventDefault();const v=document.querySelector('input[name=prof]:checked').value;$('#spMsg').textContent='Spremam…';try{await api('/api/system/profile',{method:'PUT',body:JSON.stringify({profile:v})});sysProfile=await api('/api/system');renderNav();$('#spMsg').innerHTML='Spremljeno. Način rada: <b>'+(v==='gateway'?'Gateway / UTM':'Lokalni router')+'</b>'}catch(err){$('#spMsg').textContent=err.message}}}
 function isWgKey(s){return /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(s)}
@@ -485,14 +485,14 @@ const dike=s.defaultIke||'aes256-sha256-modp2048',desp=s.defaultEsp||'aes256-sha
 const authOk=c=>(c.auth==='cert')?(c.hasCert&&c.hasKey&&c.hasCa):c.hasPsk;
 const rows=conns.length?conns.map(c=>`<tr><td><b>${e(c.name)}</b></td><td>${e(c.remoteAddr)}</td><td class="muted">${e((c.localSubnets||[]).join(', '))} → ${e((c.remoteSubnets||[]).join(', '))}</td><td class="muted">${c.initiate?'start':'on-demand'}</td><td><span class="badge">${e(c.auth||'psk')}</span>${authOk(c)?'':' <span class="st-error">⚠</span>'}</td><td><button class="ipDel danger" data-n="${e(c.name)}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="6" class="muted">Nema tunela.</td></tr>';
 $('#content').innerHTML=`<div class="panel"><h2>IPsec IKEv2 ${s.enabled?'<span class="badge">aktivan</span>':''}</h2>
-<p class="muted">Site-to-site tunel prema uređajima koji ne koriste WireGuard (Sophos, FortiGate, MikroTik, Cisco…). IKEv2 s preshared ključem.</p>
-${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>, iste <b>proposal</b> algoritme (default <code>'+e(dike)+'</code>) i <b>zrcalne</b> mreže — naše <b>Lokalne mreže</b> su njihove udaljene i obrnuto. <b>Remote adresa</b> je javni IP/FQDN drugog uređaja. <b>Initiate</b> uključi na strani koja prva uspostavlja tunel (druga strana čeka); ako obje imaju stalni IP, može bilo koja. <b>ID</b> ostavi prazno da se koristi IP, ili upiši npr. FQDN/@ime ako to peer traži. Na Sophos XGS: IPsec → IKEv2, Authentication Preshared key, Local/Remote subnets zrcalno, isti algoritmi. Potreban je otvoren UDP 500/4500 prema nama i dozvoljen forwarding.')}
+<p class="muted">Site-to-site tunel prema uređajima koji ne koriste WireGuard (FortiGate, MikroTik, Cisco…). IKEv2 s preshared ključem.</p>
+${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>, iste <b>proposal</b> algoritme (default <code>'+e(dike)+'</code>) i <b>zrcalne</b> mreže — naše <b>Lokalne mreže</b> su njihove udaljene i obrnuto. <b>Remote adresa</b> je javni IP/FQDN drugog uređaja. <b>Initiate</b> uključi na strani koja prva uspostavlja tunel (druga strana čeka); ako obje imaju stalni IP, može bilo koja. <b>ID</b> ostavi prazno da se koristi IP, ili upiši npr. FQDN/@ime ako to peer traži. Na drugom uređaju: IPsec → IKEv2, Authentication = Preshared key, Local/Remote subnets zrcalno, isti algoritmi. Potreban je otvoren UDP 500/4500 prema nama i dozvoljen forwarding.')}
 <div class="wizRow">${conns.length?`<button id="ipToggle">${s.enabled?'Isključi IPsec':'Uključi IPsec'}</button>`:'<span class="muted">Dodaj barem jedan tunel pa ga možeš uključiti.</span>'}</div>
 <div id="ipMsg" class="muted"></div></div>
 <div class="panel"><h3>Tuneli (${conns.length})</h3>
 <table><thead><tr><th>Naziv</th><th>Remote</th><th>Lokalno → Udaljeno</th><th>Način</th><th>Auth</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
 <div class="panel"><h3>Dodaj / uredi tunel</h3><form id="ipAdd" class="stack">
-<label>Naziv <input id="ipName" placeholder="sophos-hq" required></label>
+<label>Naziv <input id="ipName" placeholder="ured-hq" required></label>
 <label>Remote adresa (IP ili FQDN) <input id="ipRemote" placeholder="203.0.113.5" required></label>
 <label>Naše lokalne mreže (CIDR, zarezom) <input id="ipLocal" placeholder="192.168.10.0/24" required></label>
 <label>Udaljene mreže (CIDR, zarezom) <input id="ipRemNets" placeholder="192.168.20.0/24" required></label>
@@ -653,7 +653,7 @@ ${toggle('ruEnabled',true,'Omogućeno')}
 <div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="nat">
 <div class="panel"><h3>NAT pravila (${natCount})</h3>
-<p class="muted">Prijevod adresa: <b>Masquerade/SNAT</b> (klijenti izlaze preko WAN adrese) i <b>DNAT / port-forward</b> (vanjski port → interni poslužitelj). NAT se <b>uređuje u Gateway stranici</b> — ovo je pregled svih pravila na jednom mjestu (kao Sophos NAT rules).</p>
+<p class="muted">Prijevod adresa: <b>Masquerade/SNAT</b> (klijenti izlaze preko WAN adrese) i <b>DNAT / port-forward</b> (vanjski port → interni poslužitelj). NAT se <b>uređuje u Gateway stranici</b> — ovo je pregled svih NAT pravila na jednom mjestu.</p>
 <table><thead><tr><th>#</th><th>Tip</th><th>Original</th><th>Prevedeno</th><th>Sučelje</th></tr></thead><tbody>${natBody}</tbody></table>
 <div class="btnrow"><button type="button" id="fwNatEdit" class="ghost">Uredi u Gateway →</button></div></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="aliasi">
@@ -776,6 +776,7 @@ $('#tlForm').onsubmit=async ev=>{ev.preventDefault();const o=$('#tlOut');const h
 async function webproxyPage(){const s=await api('/api/webproxy');const e=escapeHtml;
 const banN=(s.bannedSites||[]).length,excN=(s.exceptionSites||[]).length,splN=(s.spliceSites||[]).length;
 const cats=s.categoryCatalog||[],catOn=new Set(s.categories||[]),catN=(s.categories||[]).length;
+const groups=(s.urlGroups||[]).map(g=>({name:g.name,action:g.action,domains:g.domains||[]}));
 $('#content').innerHTML=`<div class="panel"><h2>Web proxy i filtriranje ${s.enabled?'<span class="badge">aktivan</span>':'<span class="badge">isključen</span>'}</h2>
 <p class="muted">Squid (caching proxy) + e2guardian (filtriranje URL-ova). Klijenti postave proxy na IP appliancea (LAN) : port. Postavke su podijeljene u kartice — na kraju klikni <b>Spremi i primijeni</b>.</p>
 ${help('<b>Explicit proxy</b>: na klijentu postaviš proxy = IP appliancea (LAN) : <b>port</b> (default 8080). Squid kešira, a <b>e2guardian</b> filtrira po <b>URL grupama</b> (blokirane/iznimke). <b>Dozvoljena mreža</b> ograničava tko smije koristiti proxy. Sinergija: <b>RPZ (DNS filtering)</b> već blokira domene jeftino na DNS razini — proxy dodaje keš i per-URL kontrolu. <b>SSL-bump</b> otključava filtriranje HTTPS <b>sadržaja</b>: Squid dešifrira TLS vlastitim CA-om (klijenti ga MORAJU imati u trustu). Osjetljive domene (banke, zdravlje) stavi u <b>Splice</b> listu da se NE dešifriraju.')}</div>
@@ -789,10 +790,17 @@ ${toggle('wpFilter',s.filtering,'Filtriranje URL-ova (e2guardian)')}
 <p class="muted small">Klijent: postavi HTTP proxy na <code>IP-appliancea:${s.filterPort||8080}</code>. Samo uređaji iz „dozvoljene mreže" smiju koristiti proxy.</p>
 </div></div>
 <div class="tabpane" data-pane="wpTabs" data-tabkey="cat"><div class="panel"><h3>Kategorije <span class="badge">${catN} uključeno</span></h3>
-<p class="muted small">Uključi gotovu kategoriju da blokiraš cijelu klasu stranica jednim klikom (kao Sophos web kategorije). Domene se dodaju na blok-listu pri primjeni. Za finiju kontrolu dodaj vlastite domene u karticu <b>URL grupe</b>. Popis je početni skup — proširi ga po potrebi.</p>
+<p class="muted small">Uključi gotovu kategoriju sadržaja da blokiraš cijelu klasu stranica jednim klikom. Domene se dodaju na blok-listu pri primjeni. Za finiju kontrolu dodaj vlastite domene u karticu <b>URL grupe</b>. Popis je početni skup — proširi ga po potrebi.</p>
 ${cats.length?cats.map(c=>toggle('wpCat_'+c.key,catOn.has(c.key),e(c.label)+' <span class="muted small">('+c.count+' domena)</span>')).join(''):'<p class="muted">Nema dostupnih kategorija.</p>'}
 </div></div>
 <div class="tabpane" data-pane="wpTabs" data-tabkey="urls">
+<div class="panel"><h3>Imenovane URL grupe <span class="badge" id="wpGrpCount">${groups.length}</span></h3>
+<p class="muted small">Imenovane liste domena, svaka postavljena na <b>Blokiraj</b> ili <b>Dozvoli</b>. Blok-grupe se dodaju u blokirane, dozvoli-grupe u iznimke — za organizaciju po namjeni (npr. „gosti-blokirano", „marketing-dozvoljeno").</p>
+<div id="wpGrpList"></div>
+<h4>Dodaj grupu</h4>
+<div class="filterbar"><input id="wpGName" placeholder="naziv grupe (npr. gosti-blokirano)"><select id="wpGAction"><option value="block">Blokiraj</option><option value="allow">Dozvoli</option></select><button type="button" id="wpGAdd" class="ghost">Dodaj grupu</button></div>
+<label>Domene za grupu (po retku) <textarea id="wpGDomains" rows="3" placeholder="example.com&#10;news.example.com"></textarea></label>
+<div id="wpGMsg" class="muted"></div></div>
 <div class="panel"><h3>Blokirane domene <span class="badge">${banN}</span></h3>
 <p class="muted small">Domene koje se <b>blokiraju</b> (npr. oglasi, društvene mreže, neprikladan sadržaj). Jedna po retku, npr. <code>ads.example.com</code>, <code>facebook.com</code>.</p>
 <textarea id="wpBan" rows="8" placeholder="ads.example.com&#10;facebook.com">${e((s.bannedSites||[]).join('\n'))}</textarea></div>
@@ -809,12 +817,21 @@ ${toggle('wpBump',s.sslBump,'Uključi SSL-bump (dešifrira HTTPS)')}
 <div class="panel"><div class="btnrow"><button type="submit">Spremi i primijeni</button></div><div id="wpMsg" class="muted"></div></div>
 </form>`;
 wireTabs('wpTabs');
+const renderGrpList=()=>{const el=$('#wpGrpList');if(!el)return;$('#wpGrpCount').textContent=groups.length;
+el.innerHTML=groups.length?`<table class="compact"><thead><tr><th>Naziv</th><th>Akcija</th><th>Domene</th><th></th></tr></thead><tbody>${groups.map((g,i)=>`<tr><td><b>${e(g.name)}</b></td><td><span class="status ${g.action==='block'?'st-error':'st-healthy'}">${g.action==='block'?'Blokiraj':'Dozvoli'}</span></td><td class="muted">${g.domains.length} · ${e(g.domains.slice(0,3).join(', '))}${g.domains.length>3?'…':''}</td><td class="rowacts"><button type="button" class="wpGDel danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema imenovanih grupa.</p>';
+el.querySelectorAll('.wpGDel').forEach(b=>b.onclick=()=>{groups.splice(+b.dataset.i,1);renderGrpList()})};
+renderGrpList();
+$('#wpGAdd').onclick=()=>{const m=$('#wpGMsg');const name=$('#wpGName').value.trim();const action=$('#wpGAction').value;const domains=$('#wpGDomains').value.split(/[\n,]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
+if(!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/.test(name)){m.textContent='Naziv grupe: 1-40 znakova (slova, brojke, razmak _ -), počni slovom/brojem.';return}
+if(groups.some(g=>g.name===name)){m.textContent='Grupa s tim nazivom već postoji.';return}
+if(!domains.length){m.textContent='Upiši barem jednu domenu.';return}
+groups.push({name,action,domains});renderGrpList();$('#wpGName').value='';$('#wpGDomains').value='';m.textContent='Grupa dodana — klikni „Spremi i primijeni" na dnu.'};
 $('#wpCa').onclick=()=>{window.open('/api/webproxy/ca','_blank')};
 $('#wpForm').onsubmit=async ev=>{ev.preventDefault();const m=$('#wpMsg');const en=$('#wpEn').checked;
 const lines=id=>$('#'+id).value.split(/[\n,]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
 const bump=$('#wpBump').checked;
 const categories=(s.categoryCatalog||[]).map(c=>c.key).filter(k=>{const el=$('#wpCat_'+k);return el&&el.checked});
-const body={enabled:en,filterPort:parseInt($('#wpPort').value,10)||8080,allowedNetwork:$('#wpNet').value.trim(),filtering:$('#wpFilter').checked,bannedSites:lines('wpBan'),exceptionSites:lines('wpExc'),categories,sslBump:bump,sslBumpPort:parseInt($('#wpBumpPort').value,10)||3130,spliceSites:lines('wpSplice')};
+const body={enabled:en,filterPort:parseInt($('#wpPort').value,10)||8080,allowedNetwork:$('#wpNet').value.trim(),filtering:$('#wpFilter').checked,bannedSites:lines('wpBan'),exceptionSites:lines('wpExc'),categories,urlGroups:groups,sslBump:bump,sslBumpPort:parseInt($('#wpBumpPort').value,10)||3130,spliceSites:lines('wpSplice')};
 if(en&&!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(body.allowedNetwork)){m.textContent='Dozvoljena mreža mora biti CIDR (npr. 192.168.10.0/24).';return}
 if(en&&bump&&!confirm('SSL-bump dešifrira HTTPS promet korisnika. Klijenti moraju imati naš CA. Nastaviti?'))return;
 m.textContent='Primjena…';try{await api('/api/webproxy',{method:'PUT',body:JSON.stringify(body)});m.textContent=en?'Primijenjeno. Proxy = IP:'+body.filterPort+(bump?' · SSL-bump port '+body.sslBumpPort+' (instaliraj CA na klijente!)':'')+'.':'Web proxy isključen.'}catch(err){m.textContent=err.message}}}

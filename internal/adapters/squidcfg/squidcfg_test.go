@@ -109,3 +109,32 @@ func TestCategories(t *testing.T) {
 		t.Errorf("doubleclick.net should appear once (deduped), got %d", n)
 	}
 }
+
+func TestURLGroups(t *testing.T) {
+	c := Config{Enabled: true, AllowedNetwork: "192.168.10.0/24",
+		URLGroups: []URLGroup{
+			{Name: "gosti-blokirano", Action: "block", Domains: []string{"games.example"}},
+			{Name: "marketing-ok", Action: "allow", Domains: []string{"newsletter.example"}},
+		}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid groups rejected: %v", err)
+	}
+	b, _ := c.GenerateBanned()
+	if !strings.Contains(b, "games.example") {
+		t.Errorf("block group domain missing from banned list:\n%s", b)
+	}
+	x, _ := c.GenerateExceptions()
+	if !strings.Contains(x, "newsletter.example") {
+		t.Errorf("allow group domain missing from exceptions:\n%s", x)
+	}
+	// Bad action and bad name are rejected.
+	bad := []Config{
+		{Enabled: true, AllowedNetwork: "192.168.10.0/24", URLGroups: []URLGroup{{Name: "x", Action: "nope", Domains: []string{"a.example"}}}},
+		{Enabled: true, AllowedNetwork: "192.168.10.0/24", URLGroups: []URLGroup{{Name: "", Action: "block", Domains: []string{"a.example"}}}},
+	}
+	for i, bc := range bad {
+		if err := bc.Validate(); err == nil {
+			t.Errorf("bad group case %d should be rejected", i)
+		}
+	}
+}

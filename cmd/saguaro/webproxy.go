@@ -135,6 +135,9 @@ func (a *app) apiWebProxyPut(w http.ResponseWriter, r *http.Request) {
 	if in.Categories == nil {
 		in.Categories = []string{}
 	}
+	if in.URLGroups == nil {
+		in.URLGroups = []squidcfg.URLGroup{}
+	}
 	if err := in.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

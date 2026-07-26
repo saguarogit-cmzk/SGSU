@@ -42,7 +42,20 @@ type Config struct {
 	// Their domains are merged into the banned list at generate time, so an admin
 	// can switch off "social media" or "adult content" without curating domains.
 	Categories []string `json:"categories"`
+	// URLGroups are named domain lists the admin defines, each set to block or
+	// allow. Block groups fold into the banned list, allow groups into the
+	// exceptions -- organising rules by purpose (e.g. "guest-blocked").
+	URLGroups []URLGroup `json:"urlGroups"`
 }
+
+// URLGroup is a named list of domains with a block/allow action.
+type URLGroup struct {
+	Name    string   `json:"name"`
+	Action  string   `json:"action"` // block | allow
+	Domains []string `json:"domains"`
+}
+
+var urlGroupNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$`)
 
 // Category is a built-in, curated blocklist the GUI offers as a single toggle.
 type Category struct {
@@ -101,6 +114,55 @@ func (c Config) effectiveBanned() ([]string, error) {
 	}
 	for _, key := range c.Categories {
 		for _, dom := range categoryDomains(key) {
+			if !seen[dom] {
+				seen[dom] = true
+				out = append(out, dom)
+			}
+		}
+	}
+	// Block-action URL groups contribute to the banned list too.
+	for _, g := range c.URLGroups {
+		if g.Action != "block" {
+			continue
+		}
+		gd, err := normDomains(g.Domains)
+		if err != nil {
+			return nil, err
+		}
+		for _, dom := range gd {
+			if !seen[dom] {
+				seen[dom] = true
+				out = append(out, dom)
+			}
+		}
+	}
+	return out, nil
+}
+
+// effectiveExceptions merges the custom exception list with every allow-action
+// URL group, de-duplicated.
+func (c Config) effectiveExceptions() ([]string, error) {
+	d, err := normDomains(c.ExceptionSites)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(d))
+	for _, x := range d {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, g := range c.URLGroups {
+		if g.Action != "allow" {
+			continue
+		}
+		gd, err := normDomains(g.Domains)
+		if err != nil {
+			return nil, err
+		}
+		for _, dom := range gd {
 			if !seen[dom] {
 				seen[dom] = true
 				out = append(out, dom)
@@ -166,6 +228,22 @@ func (c Config) Validate() error {
 			return fmt.Errorf("unknown web category %q", key)
 		}
 	}
+	names := map[string]bool{}
+	for _, g := range c.URLGroups {
+		if !urlGroupNameRe.MatchString(g.Name) {
+			return fmt.Errorf("URL group name %q is invalid", g.Name)
+		}
+		if names[g.Name] {
+			return fmt.Errorf("duplicate URL group %q", g.Name)
+		}
+		names[g.Name] = true
+		if g.Action != "block" && g.Action != "allow" {
+			return fmt.Errorf("URL group %q action must be block or allow", g.Name)
+		}
+		if _, err := normDomains(g.Domains); err != nil {
+			return err
+		}
+	}
 	if c.SSLBump {
 		p := c.BumpPortOrDefault()
 		if p < 1 || p > 65535 {
@@ -225,7 +303,7 @@ func (c Config) GenerateBanned() (string, error) {
 }
 
 func (c Config) GenerateExceptions() (string, error) {
-	d, err := normDomains(c.ExceptionSites)
+	d, err := c.effectiveExceptions()
 	if err != nil {
 		return "", err
 	}
