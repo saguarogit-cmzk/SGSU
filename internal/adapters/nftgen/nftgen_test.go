@@ -171,11 +171,12 @@ func TestNATPerIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// per-IP DNAT, then 1:1 inbound DNAT, outbound SNAT and forward accept.
 	for _, want := range []string{
-		`iifname "enp1s0" ip daddr 203.0.113.5 tcp dport 8443 dnat to 192.168.10.5:443`, // per-IP DNAT
-		`iifname "enp1s0" ip daddr 203.0.113.7 dnat to 192.168.10.7`,                   // 1:1 inbound
-		`oifname "enp1s0" ip saddr 192.168.10.7 snat to 203.0.113.7`,                   // 1:1 outbound
-		`iifname "enp1s0" ip daddr 192.168.10.7 ct state new accept`,                   // 1:1 forward accept
+		`iifname "enp1s0" ip daddr 203.0.113.5 tcp dport 8443 dnat to 192.168.10.5:443`,
+		`iifname "enp1s0" ip daddr 203.0.113.7 dnat to 192.168.10.7`,
+		`oifname "enp1s0" ip saddr 192.168.10.7 snat to 203.0.113.7`,
+		`iifname "enp1s0" ip daddr 192.168.10.7 ct state new accept`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, text)

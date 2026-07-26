@@ -116,6 +116,15 @@ func (a *app) apiVPNApply(w http.ResponseWriter, r *http.Request) {
 	if cfg.ListenPort == 0 {
 		cfg.ListenPort = 51820
 	}
+	// Split-brain by default: with no split networks given, route the LAN (client
+	// network) through the tunnel so VPN users reach internal resources while
+	// their internet keeps going out their own connection. Nobody should carry
+	// all their traffic over the VPN by accident.
+	if len(cfg.SplitNetworks) == 0 {
+		if gw, ok := a.getGateway(); ok && gw.ClientNetwork != "" {
+			cfg.SplitNetworks = []string{gw.ClientNetwork}
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
