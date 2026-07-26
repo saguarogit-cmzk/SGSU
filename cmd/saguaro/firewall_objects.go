@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"saguaro.local/network-manager/internal/adapters/dnszones"
 	"saguaro.local/network-manager/internal/adapters/nftgen"
 	"saguaro.local/network-manager/internal/adapters/vlangen"
 )
@@ -286,36 +285,15 @@ func (a *app) apiFirewallVLANsApply(w http.ResponseWriter, r *http.Request) {
 // (Unbound already listens on all interfaces, so only an access-control allow is
 // needed). With no eligible zones it removes the drop-in.
 func (a *app) apiFirewallDNSApply(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := a.getGateway()
-	eligible := 0
-	for _, z := range cfg.Zones {
-		if z.Kind != "wan" && z.Network != "" {
-			eligible++
-		}
-	}
-	if eligible == 0 {
-		if out, err := a.runDNSZones(r.Context(), "zone-access-disable"); err != nil {
-			writeError(w, http.StatusBadGateway, "disable failed: "+truncate(string(out), 300))
-			return
-		}
-		a.record(r, a.actor(r), "zone-dns", "unbound", "success", map[string]any{"zones": 0})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": 0})
-		return
-	}
-	conf := dnszones.GenerateAccessConf(cfg.Zones)
-	staged := filepath.Join(filepath.Dir(a.store.path), stagedDNSZonesName)
-	if err := os.WriteFile(staged, []byte(conf), 0600); err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot write staged DNS zones drop-in")
-		return
-	}
-	if out, err := a.runDNSZones(r.Context(), "zone-access-apply"); err != nil {
+	zones, _, out, err := a.applyDNSDropin(r.Context())
+	if err != nil {
 		a.recordSev(r, a.actor(r), "zone-dns", "unbound", "failed", "warning",
 			map[string]any{"error": err.Error(), "output": truncate(string(out), 300)})
 		writeError(w, http.StatusBadGateway, "apply failed: "+truncate(string(out), 300))
 		return
 	}
-	a.record(r, a.actor(r), "zone-dns", "unbound", "success", map[string]any{"zones": eligible})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": eligible})
+	a.record(r, a.actor(r), "zone-dns", "unbound", "success", map[string]any{"zones": zones})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": zones})
 }
 
 func (a *app) apiFirewallAliasesPut(w http.ResponseWriter, r *http.Request) {

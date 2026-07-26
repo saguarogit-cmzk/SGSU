@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"saguaro.local/network-manager/internal/adapters/dnszones"
 	"saguaro.local/network-manager/internal/adapters/ipsec"
 	"saguaro.local/network-manager/internal/adapters/kea"
 	"saguaro.local/network-manager/internal/adapters/multiwan"
@@ -93,6 +94,9 @@ type state struct {
 	WebProxy *squidcfg.Config `json:"webProxy,omitempty"`
 	// NICLabels maps a kernel interface name to an operator-friendly alias.
 	NICLabels map[string]string `json:"nicLabels,omitempty"`
+	// SplitDNS are split-horizon overrides: internal clients get the internal
+	// answer, everyone else the external (public) one. Served by Unbound views.
+	SplitDNS []dnszones.SplitRecord `json:"splitDns,omitempty"`
 }
 
 type store struct {
@@ -163,7 +167,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.85.0"
+const appVersion = "0.86.0"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -380,6 +384,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/dns/zones/{zone}", a.auth(a.apiDNSZoneGet))
 	mux.HandleFunc("DELETE /api/dns/zones/{zone}", a.authz(permDNSWrite, a.apiDNSZoneDelete))
 	mux.HandleFunc("PUT /api/dns/zones/{zone}/records", a.authz(permDNSWrite, a.apiDNSRecordPut))
+	mux.HandleFunc("GET /api/dns/split", a.auth(a.apiDNSSplitGet))
+	mux.HandleFunc("PUT /api/dns/split", a.authz(permDNSWrite, a.apiDNSSplitPut))
 	mux.HandleFunc("GET /api/dhcp/status", a.auth(a.apiDHCPStatus))
 	mux.HandleFunc("GET /api/dhcp/subnets", a.auth(a.apiDHCPSubnets))
 	mux.HandleFunc("POST /api/dhcp/subnets", a.authz(permDHCPWrite, a.apiDHCPSubnetAdd))

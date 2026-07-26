@@ -17,7 +17,7 @@ case "${1:-}" in
   zone-access-apply)
     [ -s "$STAGED_CONF" ] || { echo "no staged DNS zones drop-in at $STAGED_CONF" >&2; exit 1; }
     # The control plane validates every value; keep the file to a safe charset.
-    if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$STAGED_CONF"; then
+    if grep -qvE '^[A-Za-z0-9 ._:/#(),"-]*$' "$STAGED_CONF"; then
       echo "staged DNS zones drop-in contains unexpected characters; refusing" >&2
       exit 1
     fi
