@@ -89,7 +89,7 @@ func (a *app) openvpnFirewall() (iface, subnet string, access []nftgen.OVPNAcces
 		}
 		oa := nftgen.OVPNAccess{Addr: c.VPNAddr, AllowAll: len(c.Access) == 0}
 		for _, r := range c.Access {
-			oa.Rules = append(oa.Rules, nftgen.OVPNRule{Dest: r.Dest, Proto: r.Proto, Port: r.Port})
+			oa.Rules = append(oa.Rules, nftgen.OVPNRule{Dest: r.Dest, DestAlias: r.DestAlias, Proto: r.Proto, Port: r.Port})
 		}
 		access = append(access, oa)
 	}

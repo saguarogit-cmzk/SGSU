@@ -317,10 +317,21 @@ func (a *app) apiOpenVPNClientAccess(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
 	}
+	aliases := map[string]bool{}
+	if gw, ok := a.getGateway(); ok {
+		for _, al := range gw.Aliases {
+			aliases[al.Name] = true
+		}
+	}
 	for _, ru := range in.Rules {
-		if net.ParseIP(ru.Dest) == nil {
+		if ru.DestAlias != "" {
+			if !aliases[ru.DestAlias] {
+				writeError(w, http.StatusBadRequest, "unknown alias "+ru.DestAlias)
+				return
+			}
+		} else if net.ParseIP(ru.Dest) == nil {
 			if _, _, err := net.ParseCIDR(ru.Dest); err != nil {
-				writeError(w, http.StatusBadRequest, "each rule needs a destination IP or CIDR")
+				writeError(w, http.StatusBadRequest, "each rule needs a destination alias, IP or CIDR")
 				return
 			}
 		}

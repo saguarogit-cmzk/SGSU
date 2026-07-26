@@ -173,11 +173,14 @@ type Config struct {
 	OpenVPNAccess []OVPNAccess `json:"-"`
 }
 
-// OVPNRule is one allowed destination for a VPN user (port 0 = all ports).
+// OVPNRule is one allowed destination for a VPN user (port 0 = all ports). Dest
+// is a literal IP/CIDR; DestAlias, when set, references a named firewall alias
+// (rendered as @alias_<name>) so users pick servers by name, not address.
 type OVPNRule struct {
-	Dest  string
-	Proto string
-	Port  int
+	Dest      string
+	DestAlias string
+	Proto     string
+	Port      int
 }
 
 // OVPNAccess is a VPN user's fixed tunnel address and what it may reach.
@@ -800,7 +803,11 @@ func (c Config) Generate() (string, error) {
 				continue
 			}
 			for _, r := range ac.Rules {
-				line := fmt.Sprintf("iifname %q ip saddr %s ip daddr %s", c.OpenVPNIface, ac.Addr, r.Dest)
+				daddr := r.Dest
+				if r.DestAlias != "" {
+					daddr = "@alias_" + r.DestAlias
+				}
+				line := fmt.Sprintf("iifname %q ip saddr %s ip daddr %s", c.OpenVPNIface, ac.Addr, daddr)
 				if (r.Proto == "tcp" || r.Proto == "udp") && r.Port > 0 {
 					line += fmt.Sprintf(" %s dport %d", r.Proto, r.Port)
 				} else if r.Proto == "tcp" || r.Proto == "udp" {

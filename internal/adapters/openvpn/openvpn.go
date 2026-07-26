@@ -29,9 +29,10 @@ var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]{0,30}[a-z0-9])?$`)
 // AccessRule limits where a VPN user may go: to a destination (IP/CIDR),
 // optionally only a protocol and port (e.g. only RDP tcp/3389 to one server).
 type AccessRule struct {
-	Dest  string `json:"dest"`  // IPv4 or CIDR
-	Proto string `json:"proto"` // any | tcp | udp
-	Port  int    `json:"port"`  // 0 = all ports
+	Dest      string `json:"dest"`                // IPv4 or CIDR (empty when DestAlias is used)
+	DestAlias string `json:"destAlias,omitempty"` // named firewall alias, picked instead of an IP
+	Proto     string `json:"proto"`               // any | tcp | udp
+	Port      int    `json:"port"`                // 0 = all ports
 }
 
 // Client is one issued VPN user. The private key is never stored; only the
