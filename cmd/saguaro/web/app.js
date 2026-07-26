@@ -586,6 +586,17 @@ const un2=$('#pkgUnat');if(un2)un2.onchange=async()=>{const msg=$('#pkgUnMsg');u
 function isRange(s){const p=s.split('-');return p.length===2&&isIPv4(p[0].trim())&&isIPv4(p[1].trim())}
 async function fwRulesPage(){const f=await api('/api/firewall');const aliases=f.aliases||[],rules=f.rules||[],zones=f.zones||[];const e=escapeHtml;
 const nics=await api('/api/interfaces').catch(()=>[]);
+const gw=((await api('/api/gateway').catch(()=>({config:{}}))).config)||{};
+// NAT rules are configured on the Gateway page; surface them here read-only in a
+// Sophos-style Original -> Translated view so all rule types live in one place.
+const gwWan=gw.wanInterface||'wan1',pf=gw.portForwards||[],sn=gw.snatRules||[];
+const masq=!!(gw.gatewayEnabled&&gw.natEnabled!==false);
+const natCount=(masq?1:0)+pf.length+sn.length;
+let natBody='',nIdx=0;
+if(masq){nIdx++;natBody+=`<tr><td>${nIdx}</td><td><b>Masquerade</b><div class="muted small">SNAT · LAN→WAN</div></td><td class="muted">izvor: LAN · odredište: bilo koje</td><td class="muted">izvor → WAN adresa</td><td class="muted">izlaz: ${e(nlabel(gwWan))}</td></tr>`}
+pf.forEach(p=>{nIdx++;natBody+=`<tr><td>${nIdx}</td><td><b>Port forward</b><div class="muted small">DNAT</div></td><td class="muted">${e(nlabel(gwWan))} : ${p.extPort}/${e(p.proto)}</td><td class="muted">${e(p.destIp)} : ${p.destPort}</td><td class="muted">ulaz: ${e(nlabel(gwWan))}</td></tr>`});
+sn.forEach(x=>{nIdx++;natBody+=`<tr><td>${nIdx}</td><td><b>SNAT</b><div class="muted small">po izvoru</div></td><td class="muted">izvor: ${e(x.source)}</td><td class="muted">→ ${e(x.toAddress)}</td><td class="muted">izlaz: ${e(nlabel(gwWan))}</td></tr>`});
+if(!natBody)natBody=`<tr><td colspan="5" class="muted">Nema NAT pravila. Uključi NAT (masquerade) ili dodaj port-forward/SNAT u Gateway stranici.</td></tr>`;
 const putAliases=list=>api('/api/firewall/aliases',{method:'PUT',body:JSON.stringify({aliases:list})});
 const putRules=list=>api('/api/firewall/rules',{method:'PUT',body:JSON.stringify({rules:list})});
 const putZones=list=>api('/api/firewall/zones',{method:'PUT',body:JSON.stringify({zones:list})});
@@ -606,7 +617,7 @@ const catLabel=c=>{const f=CATS.find(x=>x[0]===c);return f?f[1]:c};
 const catOpts=sel=>CATS.map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');
 const actClass=a=>a==='accept'?'st-healthy':(a==='drop'||a==='reject')?'st-error':'';
 const ruleRows=rules.length?rules.map((r,i)=>{const acts=`<div class="rowacts">${iconBtn('up','Pomakni gore','',`data-i="${i}"${i===0?' disabled':''}`).replace('iconbtn','iconbtn ruUp')}${iconBtn('down','Pomakni dolje','',`data-i="${i}"${i===rules.length-1?' disabled':''}`).replace('iconbtn','iconbtn ruDown')}${iconBtn('test','Testiraj ovo pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruTestBtn')}${iconBtn('del','Obriši pravilo','danger',`data-i="${i}"`).replace('iconbtn','iconbtn ruDel')}</div>`;
-const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td>${acts}</td></tr>`;
+const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}" data-action="${e(r.action||'')}" data-enabled="${r.enabled?'1':'0'}" data-name="${e((r.name||'').toLowerCase())}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b></td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td>${acts}</td></tr>`;
 const dl=(t,d)=>`<dl><dt>${t}</dt><dd>${d}</dd></dl>`;
 const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="7"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}${(r.fromZone||r.toZone)?dl('Zona',e(r.fromZone||'bilo koja')+' → '+e(r.toZone||'bilo koja')):''}</div></td></tr>`;
 return main+detail}).join(''):'<tr><td colspan="7" class="muted">Nema pravila.</td></tr>';
@@ -616,10 +627,16 @@ $('#content').innerHTML=`${pend}
 ${help('<b>1.</b> Napravi <b>alias</b>: ime (počinje slovom, a-z 0-9 _), tip <code>host</code> (jedan/više IP-a), <code>network</code> (CIDR) ili <code>range</code> (<code>192.168.1.10-192.168.1.20</code>), i vrijednosti odvojene zarezom. <b>2.</b> Napravi <b>pravilo</b> koje povuče alias po imenu: akcija (accept/drop/reject), protokol, izvorni i odredišni alias (prazno = bilo koji) i opcionalno port. <b>3.</b> Klikni <b>Primijeni</b> — ruleset se učita s 120 s prozorom za potvrdu (ako izgubiš pristup, vraća se stara konfiguracija). Redoslijed pravila mijenjaj strelicama ↑↓. Pravila rade u <b>Gateway</b> modu.')}
 ${f.configured?'':'<div class="panel error">Najprije postavi <b>Gateway</b> (mgmt/klijentska mreža) da bi mogao primijeniti pravila.</div>'}
 <div class="wizRow"><button id="fwApply">Primijeni firewall (120 s potvrda)</button></div><div id="fwMsg" class="muted"></div></div>
-${tabBar('fwTabs',[['pravila','Pravila',rules.length],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['test','Test pravila']])}
+${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCount],['aliasi','Aliasi',aliases.length],['zone','Zone',zones.length],['test','Test pravila']])}
 <div class="tabpane active" data-pane="fwTabs" data-tabkey="pravila">
 <div class="panel"><h3>Pravila (${rules.length})</h3>
-<label style="max-width:280px">Filtriraj po kategoriji <select id="ruFilter"><option value="__all">Sve kategorije</option>${catOpts('')}</select></label>
+<div class="filterbar">
+<input id="ruSearch" type="search" placeholder="Traži po nazivu…" autocomplete="off">
+<select id="ruFilter"><option value="__all">Sve kategorije</option>${catOpts('')}</select>
+<select id="ruFAction"><option value="__all">Sve akcije</option><option value="accept">accept</option><option value="drop">drop</option><option value="reject">reject</option></select>
+<select id="ruFStatus"><option value="__all">Sva stanja</option><option value="1">Omogućena</option><option value="0">Onemogućena</option></select>
+<button type="button" id="ruFReset" class="ghost">Poništi filtre</button>
+</div>
 <table><thead><tr><th>#</th><th>Naziv</th><th>Kategorija</th><th>Akcija</th><th>Proto</th><th>Izvor → Odredište</th><th>Akcije</th></tr></thead><tbody id="ruTbody">${ruleRows}</tbody></table>
 <p class="muted">Klikni redak za detalje. Redoslijed određuje prioritet — pravila se primjenjuju odozgo; pomiči ikonama ↑↓. Kategorija je za grupiranje/filtriranje (LAN→WAN, WAN→LAN, VPN, Local…).</p>
 <form id="ruAdd" class="stack">
@@ -634,6 +651,11 @@ ${tabBar('fwTabs',[['pravila','Pravila',rules.length],['aliasi','Aliasi',aliases
 <label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
 ${toggle('ruEnabled',true,'Omogućeno')}
 <div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div></div>
+<div class="tabpane" data-pane="fwTabs" data-tabkey="nat">
+<div class="panel"><h3>NAT pravila (${natCount})</h3>
+<p class="muted">Prijevod adresa: <b>Masquerade/SNAT</b> (klijenti izlaze preko WAN adrese) i <b>DNAT / port-forward</b> (vanjski port → interni poslužitelj). NAT se <b>uređuje u Gateway stranici</b> — ovo je pregled svih pravila na jednom mjestu (kao Sophos NAT rules).</p>
+<table><thead><tr><th>#</th><th>Tip</th><th>Original</th><th>Prevedeno</th><th>Sučelje</th></tr></thead><tbody>${natBody}</tbody></table>
+<div class="btnrow"><button type="button" id="fwNatEdit" class="ghost">Uredi u Gateway →</button></div></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="aliasi">
 <div class="panel"><h3>Aliasi (${aliases.length})</h3>
 <table><thead><tr><th>Naziv</th><th>Tip</th><th>Vrijednosti</th><th>Akcije</th></tr></thead><tbody>${aliasRows}</tbody></table>
@@ -680,7 +702,12 @@ document.querySelectorAll('.ruDel').forEach(el=>el.onclick=async()=>{const list=
 const move=async(i,d)=>{const j=i+d;if(j<0||j>=rules.length)return;const list=rules.slice();const t=list[i];list[i]=list[j];list[j]=t;try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}};
 document.querySelectorAll('.ruUp').forEach(el=>el.onclick=()=>move(+el.dataset.i,-1));
 document.querySelectorAll('.ruDown').forEach(el=>el.onclick=()=>move(+el.dataset.i,1));
-$('#ruFilter').onchange=()=>{const v=$('#ruFilter').value;document.querySelectorAll('#ruTbody tr').forEach(tr=>{tr.style.display=(v==='__all'||(tr.dataset.cat||'')===v)?'':'none'})};
+const applyRuFilter=()=>{const q=($('#ruSearch').value||'').toLowerCase().trim();const cat=$('#ruFilter').value,act=$('#ruFAction').value,st=$('#ruFStatus').value;
+document.querySelectorAll('#ruTbody tr.expandable').forEach(tr=>{const ok=(cat==='__all'||(tr.dataset.cat||'')===cat)&&(act==='__all'||tr.dataset.action===act)&&(st==='__all'||tr.dataset.enabled===st)&&(!q||(tr.dataset.name||'').includes(q));
+tr.style.display=ok?'':'none';const d=document.querySelector(`#ruTbody tr[data-detail="${tr.dataset.i}"]`);if(d)d.style.display=ok?'':'none'})};
+['ruSearch','ruFilter','ruFAction','ruFStatus'].forEach(id=>{const el=$('#'+id);if(el){el.oninput=applyRuFilter;el.onchange=applyRuFilter}});
+$('#ruFReset').onclick=()=>{$('#ruSearch').value='';$('#ruFilter').value='__all';$('#ruFAction').value='__all';$('#ruFStatus').value='__all';applyRuFilter()};
+const fwNatEdit=$('#fwNatEdit');if(fwNatEdit)fwNatEdit.onclick=()=>openModule('gateway');
 document.querySelectorAll('#ruTbody tr.expandable').forEach(tr=>tr.onclick=ev=>{if(ev.target.closest('.iconbtn'))return;tr.classList.toggle('open');const d=document.querySelector(`#ruTbody tr[data-detail="${tr.dataset.i}"]`);if(d)d.classList.toggle('hidden')});
 document.querySelectorAll('.ruTestBtn').forEach(el=>el.onclick=()=>{const r=rules[+el.dataset.i];$('#tsSrc').value=r.srcAlias?firstVal(r.srcAlias):'';$('#tsDst').value=r.dstAlias?firstVal(r.dstAlias):'';$('#tsProto').value=r.proto||'any';$('#tsPort').value=r.dstPort||0;const tb=document.querySelector('#fwTabs .tab[data-tab="test"]');if(tb)tb.click();$('#tsSrc').focus()});
 $('#ruAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ruMsg');m.textContent='';const name=$('#ruName').value.trim(),proto=$('#ruProto').value,port=parseInt($('#ruPort').value,10)||0;

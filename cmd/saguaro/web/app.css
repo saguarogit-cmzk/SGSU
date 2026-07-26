@@ -121,6 +121,9 @@ header p{margin:0;color:var(--muted);font-size:14px}
 .ifname{display:flex;align-items:center;gap:8px}
 .ifname .nav-ico{color:var(--faint);flex:0 0 auto}
 .btnrow{display:flex;gap:9px;flex-wrap:wrap;margin-top:8px}
+.filterbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:2px 0 14px}
+.filterbar input,.filterbar select{width:auto;min-width:150px}
+.filterbar input[type=search]{min-width:200px;flex:1 1 220px}
 .panel{margin-top:16px;overflow-x:auto}
 .panel h2{margin:0 0 6px;font-size:16px;font-weight:700}
 .panel h3{margin:16px 0 4px;font-size:14px;font-weight:700;color:var(--fg)}
