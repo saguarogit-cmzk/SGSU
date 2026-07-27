@@ -12,6 +12,8 @@ set -eu
 
 STAGED=/var/lib/saguaro/staged-wan.spec
 SPEC=/etc/saguaro/wan.spec
+STAGED_MODE=/var/lib/saguaro/staged-wan.mode
+MODE_FILE=/etc/saguaro/wan.mode
 PBR_PREF=20000
 FLAG=/run/saguaro/wan-pending
 TIMER_UNIT=saguaro-wan-rollback
@@ -64,18 +66,36 @@ setup_pbr() {
   logger -t saguaro-wan "pbr rules installed ($i uplinks)"
 }
 
+# uplink_healthy pings HC via IFACE; empty/"-" HC or missing ping => assumed up.
+uplink_healthy() {
+  _iface=$1; _hc=$2
+  [ "$_hc" = "-" ] && return 0
+  command -v ping >/dev/null 2>&1 || return 0
+  ping -c1 -W2 -I "$_iface" "$_hc" >/dev/null 2>&1
+}
+
 build_route() {
+  mode=loadbalance
+  [ -s "$MODE_FILE" ] && mode=$(cat "$MODE_FILE")
+  if [ "$mode" = failover ]; then
+    # Failover: exactly one active uplink — the FIRST healthy one in spec order
+    # (top of the file = primary). Single-nexthop default route, no weight.
+    while read -r name iface gw weight hc; do
+      case "$name" in ''|\#*) continue ;; esac
+      if uplink_healthy "$iface" "$hc"; then
+        ip route replace default via "$gw" dev "$iface"
+        logger -t saguaro-wan "failover: active uplink $name ($iface via $gw)"
+        return 0
+      fi
+    done <"$SPEC"
+    logger -t saguaro-wan "failover: all uplinks down"
+    return 1
+  fi
   args="route replace default"
   up=0
   while read -r name iface gw weight hc; do
     case "$name" in ''|\#*) continue ;; esac
-    healthy=1
-    # Skip the probe when ping is unavailable (minimized images) so the uplink
-    # is assumed up and the multipath route is still built.
-    if [ "$hc" != "-" ] && command -v ping >/dev/null 2>&1; then
-      ping -c1 -W2 -I "$iface" "$hc" >/dev/null 2>&1 || healthy=0
-    fi
-    if [ "$healthy" = 1 ]; then
+    if uplink_healthy "$iface" "$hc"; then
       args="$args nexthop via $gw dev $iface weight $weight"
       up=$((up+1))
     fi
@@ -96,6 +116,15 @@ case "${1:-}" in
     fi
     install -m 0644 -o root -g root "$STAGED" "$SPEC"
     rm -f "$STAGED"
+    # Install the routing mode (loadbalance|failover). Strict single-word guard so
+    # nothing but those two values can reach build_route's control flow.
+    if [ -f "$STAGED_MODE" ]; then
+      grep -qxE '(failover|loadbalance)' "$STAGED_MODE" || { echo "staged WAN mode invalid" >&2; exit 1; }
+      install -m 0644 -o root -g root "$STAGED_MODE" "$MODE_FILE"
+      rm -f "$STAGED_MODE"
+    else
+      printf 'loadbalance\n' >"$MODE_FILE"
+    fi
     printf 'net.ipv4.ip_forward=1\n' >/etc/sysctl.d/99-saguaro-forward.conf
     sysctl -q -w net.ipv4.ip_forward=1
     build_route || true
@@ -126,7 +155,7 @@ case "${1:-}" in
     rm -f "$FLAG"
     systemctl stop "$TIMER_UNIT.timer" 2>/dev/null || true
     cleanup_pbr
-    rm -f "$SPEC"
+    rm -f "$SPEC" "$MODE_FILE"
     # Restore the addresses' own DHCP/static routes that the multipath default
     # replaced, so egress returns to normal immediately.
     networkctl reload >/dev/null 2>&1 || true
@@ -137,7 +166,7 @@ case "${1:-}" in
     systemctl disable --now saguaro-wan-check.timer 2>/dev/null || true
     rm -f "$FLAG"
     cleanup_pbr
-    rm -f "$SPEC"
+    rm -f "$SPEC" "$MODE_FILE"
     networkctl reload >/dev/null 2>&1 || true
     logger -t saguaro-wan "multi-WAN auto-rolled back (unconfirmed)"
     ;;

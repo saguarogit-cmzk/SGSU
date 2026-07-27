@@ -19,9 +19,25 @@ type Uplink struct {
 }
 
 type Config struct {
-	Enabled bool     `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Mode is "loadbalance" (weighted multipath across all healthy uplinks, the
+	// default) or "failover" (exactly one active uplink at a time — the first
+	// healthy uplink in list order, list[0] = primary).
+	Mode    string   `json:"mode"`
 	Uplinks []Uplink `json:"uplinks"`
 }
+
+// mode returns the normalized mode ("loadbalance" when unset/unknown).
+func (c Config) mode() string {
+	if c.Mode == "failover" {
+		return "failover"
+	}
+	return "loadbalance"
+}
+
+// GenerateMode returns the single word written to /etc/saguaro/wan.mode so the
+// root adapter's failover loop knows which routing strategy to build.
+func (c Config) GenerateMode() string { return c.mode() }
 
 func validIface(name string) bool {
 	if name == "" || len(name) > 15 {
@@ -38,6 +54,11 @@ func validIface(name string) bool {
 func (c Config) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	switch c.Mode {
+	case "", "loadbalance", "failover":
+	default:
+		return fmt.Errorf("mode must be loadbalance or failover")
 	}
 	if len(c.Uplinks) < 2 {
 		return fmt.Errorf("multi-WAN requires at least two uplinks")
@@ -70,6 +91,17 @@ func (c Config) Validate() error {
 func (c Config) DefaultRouteArgs(healthy map[string]bool) ([]string, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
+	}
+	// Failover: exactly one active uplink — the first healthy one in list order
+	// (list[0] is the primary). Single-nexthop route, no weight.
+	if c.mode() == "failover" {
+		for _, u := range c.Uplinks {
+			if healthy != nil && !healthy[u.Name] {
+				continue
+			}
+			return []string{"route", "replace", "default", "via", u.Gateway, "dev", u.Interface}, nil
+		}
+		return nil, fmt.Errorf("no healthy uplinks")
 	}
 	args := []string{"route", "replace", "default"}
 	count := 0

@@ -62,6 +62,53 @@ func TestDefaultRouteArgs(t *testing.T) {
 	}
 }
 
+func TestFailoverRouteArgs(t *testing.T) {
+	c := cfgOK()
+	c.Mode = "failover"
+	// All healthy → single nexthop via the primary (list[0] = wan1), no weight.
+	all, err := c.DefaultRouteArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(all, " ")
+	if j != "route replace default via 192.0.2.1 dev enp1s0" {
+		t.Fatalf("failover primary route wrong: %s", j)
+	}
+	if strings.Contains(j, "nexthop") || strings.Contains(j, "weight") {
+		t.Fatalf("failover must be single-nexthop, no weight: %s", j)
+	}
+	// Primary down → switch to the secondary (wan2).
+	sec, err := c.DefaultRouteArgs(map[string]bool{"wan2": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(sec, " ") != "route replace default via 198.51.100.1 dev enp3s0" {
+		t.Fatalf("failover secondary route wrong: %v", sec)
+	}
+	// All down → error.
+	if _, err := c.DefaultRouteArgs(map[string]bool{}); err == nil {
+		t.Fatal("all down must error")
+	}
+	// Bad mode rejected.
+	bad := cfgOK()
+	bad.Mode = "roundrobin"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("invalid mode must error")
+	}
+	// Empty and explicit loadbalance both validate and keep multipath.
+	for _, mode := range []string{"", "loadbalance"} {
+		lb := cfgOK()
+		lb.Mode = mode
+		args, err := lb.DefaultRouteArgs(nil)
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		if !strings.Contains(strings.Join(args, " "), "nexthop") {
+			t.Fatalf("mode %q should stay multipath", mode)
+		}
+	}
+}
+
 func TestGenerateSpec(t *testing.T) {
 	spec, err := cfgOK().GenerateSpec()
 	if err != nil {

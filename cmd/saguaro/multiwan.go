@@ -12,6 +12,7 @@ import (
 )
 
 const stagedWANName = "staged-wan.spec"
+const stagedWANModeName = "staged-wan.mode"
 
 func defaultRunWAN(ctx context.Context, action string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -42,7 +43,7 @@ func (a *app) apiWANGet(w http.ResponseWriter, _ *http.Request) {
 	if cfg.Uplinks == nil {
 		cfg.Uplinks = []multiwan.Uplink{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Enabled, "uplinks": cfg.Uplinks,
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Enabled, "mode": cfg.GenerateMode(), "uplinks": cfg.Uplinks,
 		"pending": wanPending()})
 }
 
@@ -86,6 +87,11 @@ func (a *app) apiWANApply(w http.ResponseWriter, r *http.Request) {
 	staged := filepath.Join(filepath.Dir(a.store.path), stagedWANName)
 	if err := os.WriteFile(staged, []byte(spec), 0644); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot write staged spec")
+		return
+	}
+	stagedMode := filepath.Join(filepath.Dir(a.store.path), stagedWANModeName)
+	if err := os.WriteFile(stagedMode, []byte(in.GenerateMode()+"\n"), 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot write staged mode")
 		return
 	}
 	if out, err := a.runWAN(r.Context(), "apply"); err != nil {
