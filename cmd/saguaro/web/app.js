@@ -59,6 +59,24 @@ const AICON={
 };
 // iconBtn renders a titled square icon button; cls adds e.g. "danger", attrs carries data-*.
 function iconBtn(icon,title,cls,attrs){return `<button type="button" class="iconbtn${cls?' '+cls:''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"${attrs?' '+attrs:''}>${AICON[icon]||''}</button>`}
+// drawerStyle is the shared inline style for a hidden add/edit form panel (the
+// "list-first" pattern: the form is a drawer that opens on +Dodaj / Uredi and
+// hides on Spremi/Odustani, instead of sitting open under the list).
+const drawerStyle="display:none;border:1px solid var(--line,#394150);border-radius:8px;padding:.7rem .9rem;margin:.5rem 0";
+// makeDrawer wires that panel: it handles show/hide, the title text, and the
+// "+ Dodaj" / "Odustani" buttons. The caller supplies reset() (clear the form to
+// add-defaults) and, when editing a row, prefills the fields then calls edit(title).
+// All ids are element ids WITHOUT the leading '#'. Returns {add, edit, close}.
+function makeDrawer({form,title,newBtn,cancel,addTitle,reset,focus}){
+  const f=document.getElementById(form),t=title&&document.getElementById(title);
+  const foc=()=>{if(focus){const x=document.getElementById(focus);if(x)x.focus()}};
+  const open=txt=>{f.style.display='';if(t)t.textContent=txt;foc();f.scrollIntoView({block:'nearest'})};
+  const close=()=>{f.style.display='none';if(reset)reset();if(t)t.textContent=addTitle||''};
+  const add=()=>{if(reset)reset();open(addTitle||'')};
+  if(newBtn){const b=document.getElementById(newBtn);if(b)b.onclick=add}
+  if(cancel){const c=document.getElementById(cancel);if(c)c.onclick=close}
+  return {add,edit:open,close};
+}
 // tabBar + wireTabs drive in-module tabs; panes are <div class="tabpane" data-pane="ID" data-tabkey="KEY">.
 function tabBar(id,tabs){return `<div class="tabs" id="${id}">${tabs.map((t,i)=>`<button type="button" class="tab${i===0?' active':''}" data-tab="${escapeHtml(t[0])}">${escapeHtml(t[1])}${t[2]!=null?`<span class="badge">${t[2]}</span>`:''}</button>`).join('')}</div>`}
 function wireTabs(id){const bar=document.getElementById(id);if(!bar)return;bar.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{bar.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll(`[data-pane="${id}"]`).forEach(p=>p.classList.toggle('active',p.dataset.tabkey===b.dataset.tab))})}
@@ -907,11 +925,10 @@ const geoApplyBtn=$('#geoApply');if(geoApplyBtn)geoApplyBtn.onclick=()=>{const a
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
 $('#fwApply').onclick=async()=>{if(!confirm('Primijeniti firewall? Bez potvrde u 120 s vraća se stara konfiguracija.'))return;const m=$('#fwMsg');m.textContent='Primjena…';try{await api('/api/firewall/apply',{method:'POST',body:'{}'});fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);fwRulesPage()}catch(err){alert(err.message)}});
-let alEdit=-1;const alAddBtn=$('#alAddBtn'),alCancel=$('#alCancel');
-const alEndEdit=()=>{alEdit=-1;$('#alAdd').reset();$('#alAdd').style.display='none';if(alAddBtn)alAddBtn.textContent='Dodaj alias';$('#alFormTitle').textContent='Novi alias';$('#alMsg').textContent=''};
-if(alCancel)alCancel.onclick=alEndEdit;
-$('#alNew').onclick=()=>{alEndEdit();$('#alAdd').style.display='';$('#alName').focus();$('#alAdd').scrollIntoView({block:'nearest'})};
-document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';$('#alAdd').style.display='';$('#alFormTitle').textContent='Uredi alias — '+(a.name||'');$('#alMsg').textContent='';$('#alName').focus();$('#alAdd').scrollIntoView({block:'nearest'})});
+let alEdit=-1;const alAddBtn=$('#alAddBtn');
+const alReset=()=>{alEdit=-1;$('#alAdd').reset();if(alAddBtn)alAddBtn.textContent='Dodaj alias';$('#alMsg').textContent=''};
+const alDrawer=makeDrawer({form:'alAdd',title:'alFormTitle',newBtn:'alNew',cancel:'alCancel',addTitle:'Novi alias',reset:alReset,focus:'alName'});
+document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';$('#alMsg').textContent='';alDrawer.edit('Uredi alias — '+(a.name||''))});
 $('#alAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#alMsg');m.textContent='';const name=$('#alName').value.trim(),type=$('#alType').value,vals=$('#alVals').value.split(',').map(x=>x.trim()).filter(Boolean);
 if(!/^[a-z][a-z0-9_]{0,30}$/.test(name)){m.textContent='Naziv: počni slovom, dozvoljeno a-z 0-9 _ (bez crtice).';return}
 if(!vals.length){m.textContent='Upiši barem jednu vrijednost.';return}
@@ -920,13 +937,12 @@ if(aliases.some((a,j)=>a.name===name&&j!==alEdit)){m.textContent='Alias s tim im
 const list=aliases.slice();if(alEdit>=0){list[alEdit]={name,type,values:vals}}else{list.push({name,type,values:vals})}
 try{await putAliases(list);fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.ruDel').forEach(el=>el.onclick=async()=>{const list=rules.filter((_,j)=>j!==+el.dataset.i);try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}});
-let ruEdit=-1;const ruAddBtn=$('#ruAddBtn'),ruCancel=$('#ruCancel');
-const ruEndEdit=()=>{ruEdit=-1;$('#ruAdd').reset();$('#ruEnabled').checked=true;$('#ruAdd').style.display='none';if(ruAddBtn)ruAddBtn.textContent='Dodaj pravilo';$('#ruFormTitle').textContent='Novo pravilo';$('#ruMsg').textContent=''};
-if(ruCancel)ruCancel.onclick=ruEndEdit;
-$('#ruNew').onclick=()=>{ruEndEdit();$('#ruAdd').style.display='';$('#ruName').focus();$('#ruAdd').scrollIntoView({block:'nearest'})};
+let ruEdit=-1;const ruAddBtn=$('#ruAddBtn');
+const ruReset=()=>{ruEdit=-1;$('#ruAdd').reset();$('#ruEnabled').checked=true;if(ruAddBtn)ruAddBtn.textContent='Dodaj pravilo';$('#ruMsg').textContent=''};
+const ruDrawer=makeDrawer({form:'ruAdd',title:'ruFormTitle',newBtn:'ruNew',cancel:'ruCancel',addTitle:'Novo pravilo',reset:ruReset,focus:'ruName'});
 document.querySelectorAll('.ruEdit').forEach(el=>el.onclick=()=>{const r=rules[+el.dataset.i];ruEdit=+el.dataset.i;
 $('#ruName').value=r.name||'';$('#ruAction').value=r.action||'accept';$('#ruProto').value=r.proto||'any';$('#ruSrc').value=r.srcAlias||'';$('#ruDst').value=r.dstAlias||'';$('#ruPort').value=r.dstPort||0;$('#ruFromZone').value=r.fromZone||'';$('#ruToZone').value=r.toZone||'';$('#ruCat').value=r.category||'';$('#ruLog').checked=!!r.log;$('#ruEnabled').checked=r.enabled!==false;
-if(ruAddBtn)ruAddBtn.textContent='Spremi izmjene';$('#ruAdd').style.display='';$('#ruFormTitle').textContent=`Uredi pravilo #${ruEdit+1} — ${r.name||''}`;$('#ruMsg').textContent='';$('#ruName').focus();$('#ruAdd').scrollIntoView({block:'nearest'})});
+if(ruAddBtn)ruAddBtn.textContent='Spremi izmjene';$('#ruMsg').textContent='';ruDrawer.edit(`Uredi pravilo #${ruEdit+1} — ${r.name||''}`)});
 const move=async(i,d)=>{const j=i+d;if(j<0||j>=rules.length)return;const list=rules.slice();const t=list[i];list[i]=list[j];list[j]=t;try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}};
 document.querySelectorAll('.ruUp').forEach(el=>el.onclick=()=>move(+el.dataset.i,-1));
 document.querySelectorAll('.ruDown').forEach(el=>el.onclick=()=>move(+el.dataset.i,1));
@@ -960,9 +976,7 @@ if(zones.some(z=>z.name===name)){m.textContent='Zona s tim imenom već postoji.'
 if(zones.some(z=>(z.vlanId?z.interface+'.'+z.vlanId:z.interface)===ifn)){m.textContent='To je sučelje ('+ifn+') već dodijeljeno drugoj zoni.';return}
 const zone={name,kind,interface:iface,network:net};if(vlan>0){zone.vlanId=vlan;zone.address=addr}
 try{await putZones(zones.concat([zone]));fwRulesPage()}catch(err){m.textContent=err.message}};
-const znReset=()=>{$('#znAdd').reset();$('#znAdd').style.display='none';$('#znMsg').textContent=''};
-const znCancel=$('#znCancel');if(znCancel)znCancel.onclick=znReset;
-const znNew=$('#znNew');if(znNew)znNew.onclick=()=>{znReset();$('#znAdd').style.display='';$('#znName').focus();$('#znAdd').scrollIntoView({block:'nearest'})};
+makeDrawer({form:'znAdd',title:'znFormTitle',newBtn:'znNew',cancel:'znCancel',addTitle:'Nova zona',reset:()=>{$('#znAdd').reset();$('#znMsg').textContent=''},focus:'znName'});
 $('#ruTest').onsubmit=async ev=>{ev.preventDefault();const o=$('#tsOut');const src=$('#tsSrc').value.trim(),dst=$('#tsDst').value.trim();
 if(src&&!isIPv4(src)){o.innerHTML='<span class="error">Izvor mora biti IPv4 adresa.</span>';return}
 if(dst&&!isIPv4(dst)){o.innerHTML='<span class="error">Odredište mora biti IPv4 adresa.</span>';return}
@@ -1116,7 +1130,7 @@ async function dhcpPage(){const get=p=>api(p).catch(e=>({err:e.message}));const 
 const blocked=(block&&block.blocked)||[];const isBlocked=m=>blocked.includes((m||'').toLowerCase());
 const quar=new Set((fwblock&&fwblock.ips)||[]);const isQ=ip=>quar.has(ip);
 const sub=subnets.err?`<p class="muted">${escapeHtml(subnets.err)}</p>`:`<table><thead><tr><th>ID</th><th>Subnet</th><th>Poolovi</th><th></th></tr></thead><tbody>${subnets.map(s=>`<tr><td>${s.id}</td><td>${escapeHtml(s.subnet)}</td><td>${escapeHtml((s.pools||[]).join(', '))}</td><td><button class="subEdit" data-id="${s.id}" data-subnet="${escapeHtml(s.subnet)}" data-pool="${escapeHtml((s.pools||[])[0]||'')}">Uredi</button> <button class="subDel" data-id="${s.id}">Obriši</button></td></tr>`).join('')}</tbody></table>`;
-const subForm=`<form id="subForm" class="stack"><h3 id="subFormTitle">Novi subnet</h3><input type="hidden" id="subId" value="">
+const subForm=`<form id="subForm" class="stack" style="${drawerStyle}"><h3 id="subFormTitle" style="margin:.1rem 0 .3rem">Novi subnet</h3><input type="hidden" id="subId" value="">
 <label>Subnet (CIDR) <input id="subCidr" placeholder="192.168.20.0/24" required></label>
 <label>Pool od <input id="subPoolStart" placeholder="192.168.20.100" required></label>
 <label>Pool do <input id="subPoolEnd" placeholder="192.168.20.200" required></label>
@@ -1124,7 +1138,7 @@ const subForm=`<form id="subForm" class="stack"><h3 id="subFormTitle">Novi subne
 <label>DNS serveri (zarezom) <input id="subDns" placeholder="192.168.20.1"></label>
 <label>Domena <input id="subDomain" placeholder="example.internal"></label>
 <label>Sučelje (opcionalno — veže DHCP na zonu/VLAN, npr. enp2.20) <input id="subIface" placeholder=""></label>
-<div><button type="submit">Spremi subnet</button> <button type="button" id="subReset">Poništi</button></div>
+<div class="btnrow"><button type="submit">Spremi subnet</button> <button type="button" id="subCancel" class="ghost">Odustani</button></div>
 <p class="muted">Promjena ide kroz transakciju: config-test → config-set → provjera → config-write (uz automatski rollback na grešku).</p>
 <div id="subMsg" class="muted"></div></form>`;
 const lea=leases.err?`<p class="muted">${escapeHtml(leases.err)}</p>`:`<table><thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Subnet</th><th>Istječe</th><th></th></tr></thead><tbody>${leases.map(l=>`<tr><td>${escapeHtml(l.ip)}</td><td>${escapeHtml(l.mac)}</td><td>${escapeHtml(l.hostname||'')}</td><td>${l.subnetId}</td><td>${l.expires?new Date(l.expires*1000).toLocaleString():''}</td><td class="rowacts">${isBlocked(l.mac)?'<span class="badge">MAC blokiran</span>':`<button class="leaseBlock danger" data-mac="${escapeHtml(l.mac)}" title="Kea odbija DHCP lease za ovaj MAC (samo novi zahtjevi)">Blokiraj</button>`} ${isQ(l.ip)?`<span class="badge">karantena</span> <button class="leaseUnq ghost" data-ip="${escapeHtml(l.ip)}">Ukloni</button>`:`<button class="leaseQuar danger" data-ip="${escapeHtml(l.ip)}" title="Trenutni firewall cutoff — blokira sav promet ovog IP-a odmah">Karantena</button>`}</td></tr>`).join('')}</tbody></table>`;
@@ -1132,19 +1146,21 @@ const macInfo={};(leases.err?[]:leases).forEach(l=>{if(l.mac)macInfo[l.mac.toLow
 const blk=`<table><thead><tr><th>MAC</th><th>IP</th><th>Naziv uređaja</th><th></th></tr></thead><tbody>${blocked.length?blocked.map(m=>{const info=macInfo[m.toLowerCase()]||{};return `<tr><td>${escapeHtml(m)}</td><td class="muted">${escapeHtml(info.ip||'—')}</td><td class="muted">${escapeHtml(info.host||'—')}</td><td><button class="blkDel" data-mac="${escapeHtml(m)}">Odblokiraj</button></td></tr>`}).join(''):'<tr><td colspan="4" class="muted">Nema blokiranih klijenata.</td></tr>'}</tbody></table>`;
 const res=resv.err?`<p class="muted">${escapeHtml(resv.err)}</p>`:`<table><thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Subnet</th><th></th></tr></thead><tbody>${resv.map(x=>`<tr><td>${escapeHtml(x.ip)}</td><td>${escapeHtml(x.mac)}</td><td>${escapeHtml(x.hostname||'')}</td><td>${x.subnetId}</td><td><button class="resDel" data-id="${x.id}">Obriši</button></td></tr>`).join('')}</tbody></table>`;
 const subOpts=subnets.err?'<option value="1">1</option>':subnets.map(s=>`<option value="${s.id}">${s.id} — ${escapeHtml(s.subnet)}</option>`).join('');
-$('#content').innerHTML=`<div class="panel"><h2>Subneti</h2>
-${help('<b>Subnet</b> = mreža koju poslužuje DHCP (CIDR) + <b>pool</b> raspon adresa koje se dodjeljuju dinamički. <b>Router</b> je gateway koji se dijeli klijentima, <b>DNS serveri</b> i <b>domena</b> se također guraju. <b>Rezervacija</b> vezuje MAC na fiksni IP (stavi ga IZVAN poola). <b>Blokirani klijenti</b> (po MAC-u) ne dobivaju lease. Promjene idu kroz transakciju s validacijom i auto-rollbackom. Provjeri preklapanja u modulu <b>Konflikti</b>.')}${sub}${subForm}</div><div class="panel scroll"><h2>Aktivni leaseovi (${leases.err?'—':leases.length})</h2>${lea}</div><div class="panel"><h2>Rezervacije</h2>${res}
-<form id="resAdd" class="stack"><h3>Nova rezervacija</h3><label>MAC <input id="resMac" placeholder="aa:bb:cc:dd:ee:ff" required></label><label>IP <input id="resIp" placeholder="192.168.10.50" required></label><label>Hostname <input id="resHost"></label><label>Subnet <select id="resSub">${subOpts}</select></label><div><button type="submit">Dodaj rezervaciju</button></div><div id="resMsg" class="muted"></div></form></div>
+$('#content').innerHTML=`<div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Subneti</h2><button type="button" id="subNew">+ Dodaj subnet</button></div>
+${help('<b>Subnet</b> = mreža koju poslužuje DHCP (CIDR) + <b>pool</b> raspon adresa koje se dodjeljuju dinamički. <b>Router</b> je gateway koji se dijeli klijentima, <b>DNS serveri</b> i <b>domena</b> se također guraju. <b>Rezervacija</b> vezuje MAC na fiksni IP (stavi ga IZVAN poola). <b>Blokirani klijenti</b> (po MAC-u) ne dobivaju lease. Promjene idu kroz transakciju s validacijom i auto-rollbackom. Provjeri preklapanja u modulu <b>Konflikti</b>.')}${sub}${subForm}</div><div class="panel scroll"><h2>Aktivni leaseovi (${leases.err?'—':leases.length})</h2>${lea}</div><div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Rezervacije</h2><button type="button" id="resNew">+ Dodaj rezervaciju</button></div>${res}
+<form id="resAdd" class="stack" style="${drawerStyle}"><h3 id="resFormTitle" style="margin:.1rem 0 .3rem">Nova rezervacija</h3><label>MAC <input id="resMac" placeholder="aa:bb:cc:dd:ee:ff" required></label><label>IP <input id="resIp" placeholder="192.168.10.50" required></label><label>Hostname <input id="resHost"></label><label>Subnet <select id="resSub">${subOpts}</select></label><div class="btnrow"><button type="submit">Dodaj rezervaciju</button> <button type="button" id="resCancel" class="ghost">Odustani</button></div><div id="resMsg" class="muted"></div></form></div>
 <div class="panel"><h2>Blokirani klijenti (${blocked.length})</h2>
 <p class="muted">Blokiran MAC ne dobiva DHCP lease — Kea odbacuje njegov zahtjev (DROP klasa), ali postojeći lease vrijedi do isteka. Za <b>trenutni</b> prekid mreže koristi <b>Karantenu</b> na leaseu (firewall cutoff odmah blokira sav promet tog IP-a).</p>
 ${blk}
 <form id="blkAdd" class="stack"><label>MAC za blokiranje <input id="blkMac" placeholder="aa:bb:cc:dd:ee:ff" required></label><div><button type="submit" class="danger">Blokiraj MAC</button></div><div id="blkMsg" class="muted"></div></form></div>`;
 const subPayload=()=>({subnet:$('#subCidr').value.trim(),poolStart:$('#subPoolStart').value.trim(),poolEnd:$('#subPoolEnd').value.trim(),router:$('#subRouter').value.trim(),domain:$('#subDomain').value.trim(),dnsServers:$('#subDns').value.split(',').map(s=>s.trim()).filter(Boolean),interface:$('#subIface').value.trim()});
+const subReset=()=>{$('#subId').value='';['subCidr','subPoolStart','subPoolEnd','subRouter','subDns','subDomain','subIface'].forEach(i=>$('#'+i).value='');$('#subCidr').disabled=false;$('#subMsg').textContent=''};
+const subDrawer=makeDrawer({form:'subForm',title:'subFormTitle',newBtn:'subNew',cancel:'subCancel',addTitle:'Novi subnet',reset:subReset,focus:'subCidr'});
+makeDrawer({form:'resAdd',title:'resFormTitle',newBtn:'resNew',cancel:'resCancel',addTitle:'Nova rezervacija',reset:()=>{$('#resAdd').reset();$('#resMsg').textContent=''},focus:'resMac'});
 // Prefill the subnet form from a zone (per-zone DHCP shortcut from the Firewall page).
-if(window.__zoneDhcp){const z=window.__zoneDhcp;window.__zoneDhcp=null;$('#subCidr').value=z.subnet||'';$('#subRouter').value=z.router||'';$('#subIface').value=z.iface||'';if(z.router)$('#subDns').value=z.router;$('#subFormTitle').textContent='DHCP za zonu'+(z.name?' “'+z.name+'”':'');$('#subMsg').textContent='Provjeri/dopuni pool raspon pa spremi.';$('#subPoolStart').focus()}
+if(window.__zoneDhcp){const z=window.__zoneDhcp;window.__zoneDhcp=null;$('#subCidr').value=z.subnet||'';$('#subRouter').value=z.router||'';$('#subIface').value=z.iface||'';if(z.router)$('#subDns').value=z.router;$('#subMsg').textContent='Provjeri/dopuni pool raspon pa spremi.';subDrawer.edit('DHCP za zonu'+(z.name?' “'+z.name+'”':''));$('#subPoolStart').focus()}
 $('#subForm').onsubmit=async e=>{e.preventDefault();$('#subMsg').textContent='Primjena…';const id=$('#subId').value;try{if(id){await api(`/api/dhcp/subnets/${id}`,{method:'PUT',body:JSON.stringify(subPayload())})}else{await api('/api/dhcp/subnets',{method:'POST',body:JSON.stringify(subPayload())})}dhcpPage()}catch(err){$('#subMsg').textContent=err.message}};
-$('#subReset').onclick=()=>{$('#subId').value='';$('#subFormTitle').textContent='Novi subnet';['subCidr','subPoolStart','subPoolEnd','subRouter','subDns','subDomain','subIface'].forEach(i=>$('#'+i).value='');$('#subCidr').disabled=false};
-document.querySelectorAll('.subEdit').forEach(el=>el.onclick=()=>{$('#subId').value=el.dataset.id;$('#subFormTitle').textContent=`Uredi subnet ${el.dataset.subnet} (ID ${el.dataset.id})`;$('#subCidr').value=el.dataset.subnet;$('#subCidr').disabled=true;const p=(el.dataset.pool||'').split('-').map(s=>s.trim());$('#subPoolStart').value=p[0]||'';$('#subPoolEnd').value=p[1]||'';$('#subMsg').textContent='CIDR se ne mijenja — za promjenu CIDR-a obrišite pa dodajte subnet.'});
+document.querySelectorAll('.subEdit').forEach(el=>el.onclick=()=>{$('#subId').value=el.dataset.id;$('#subCidr').value=el.dataset.subnet;$('#subCidr').disabled=true;const p=(el.dataset.pool||'').split('-').map(s=>s.trim());$('#subPoolStart').value=p[0]||'';$('#subPoolEnd').value=p[1]||'';$('#subMsg').textContent='CIDR se ne mijenja — za promjenu CIDR-a obriši pa dodaj subnet.';subDrawer.edit(`Uredi subnet ${el.dataset.subnet} (ID ${el.dataset.id})`)});
 document.querySelectorAll('.subDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati subnet ID ${el.dataset.id}? DHCP za taj segment prestaje raditi.`))return;try{await api(`/api/dhcp/subnets/${el.dataset.id}`,{method:'DELETE'});dhcpPage()}catch(err){if(err.message.includes('force=true')&&confirm(err.message+'\n\nObrisati zajedno s rezervacijama?')){try{await api(`/api/dhcp/subnets/${el.dataset.id}?force=true`,{method:'DELETE'});dhcpPage()}catch(e2){alert(e2.message)}}else{alert(err.message)}}});
 document.querySelectorAll('.resDel').forEach(el=>el.onclick=async()=>{if(!confirm('Obrisati rezervaciju?'))return;try{await api(`/api/dhcp/reservations/${el.dataset.id}`,{method:'DELETE'});dhcpPage()}catch(err){alert(err.message)}});
 $('#resAdd').onsubmit=async e=>{e.preventDefault();$('#resMsg').textContent='';try{await api('/api/dhcp/reservations',{method:'POST',body:JSON.stringify({mac:$('#resMac').value.trim(),ip:$('#resIp').value.trim(),hostname:$('#resHost').value.trim(),subnetId:parseInt($('#resSub').value,10),id:0})});$('#resMsg').textContent='Rezervacija dodana — aktivna je za nove DHCP zahtjeve.';dhcpPage()}catch(err){$('#resMsg').textContent=err.message}};
