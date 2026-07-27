@@ -16,6 +16,32 @@ valid_host()  { echo "$1" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,252})$'; }
 valid_iface() { echo "$1" | grep -Eq '^[A-Za-z0-9._-]{1,15}$' && [ -e "/sys/class/net/$1" ]; }
 valid_ip()    { echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
 
+# capture is dispatched here, before the generic host check below, because it has
+# its own positional args (IFACE COUNT PROTO HOST PORT) and no mandatory host.
+# Every value is charset-validated; the tcpdump FILTER is assembled from those
+# validated tokens as SEPARATE argv words (never an eval'd shell string), and the
+# run is header-only (-s 96), non-promiscuous (-p), packet-capped (-c) and
+# time-bounded (timeout). No -w/-z/-G so there is no file write or post-command.
+if [ "${1:-}" = capture ]; then
+  IFACE="${2:-}"; COUNT="${3:-}"; PROTO="${4:-any}"; CHOST="${5:-}"; CPORT="${6:-}"
+  [ "$CHOST" = "-" ] && CHOST=""
+  [ "$CPORT" = "-" ] && CPORT=""
+  command -v tcpdump >/dev/null || { echo "tcpdump is not installed" >&2; exit 1; }
+  valid_iface "$IFACE" || { echo "invalid interface" >&2; exit 1; }
+  echo "$COUNT" | grep -Eq '^[0-9]{1,3}$' && [ "$COUNT" -ge 1 ] && [ "$COUNT" -le 500 ] || { echo "count must be 1-500" >&2; exit 1; }
+  case "$PROTO" in any|tcp|udp|icmp) ;; *) echo "proto must be any|tcp|udp|icmp" >&2; exit 1 ;; esac
+  [ -z "$CHOST" ] || valid_ip "$CHOST" || { echo "invalid host (IPv4)" >&2; exit 1; }
+  if [ -n "$CPORT" ]; then
+    echo "$CPORT" | grep -Eq '^[0-9]{1,5}$' && [ "$CPORT" -ge 1 ] && [ "$CPORT" -le 65535 ] || { echo "invalid port" >&2; exit 1; }
+  fi
+  set -- -n -p -i "$IFACE" -c "$COUNT" -s 96 -tttt -q -K
+  need_and=0
+  [ "$PROTO" = any ] || { set -- "$@" "$PROTO"; need_and=1; }
+  if [ -n "$CHOST" ]; then [ "$need_and" = 1 ] && set -- "$@" and; set -- "$@" host "$CHOST"; need_and=1; fi
+  if [ -n "$CPORT" ]; then [ "$need_and" = 1 ] && set -- "$@" and; set -- "$@" port "$CPORT"; fi
+  exec timeout 25 tcpdump "$@"
+fi
+
 TOOL="${1:-}"
 HOST="${2:-}"
 ARG="${3:-}"

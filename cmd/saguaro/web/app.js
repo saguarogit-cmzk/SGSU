@@ -999,11 +999,13 @@ ${help('Ova stranica čita živu Kea konfiguraciju i rezervacije te javlja probl
 <table><thead><tr><th>Ozbiljnost</th><th>Vrsta</th><th>Opis</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 $('#cfRefresh').onclick=conflictsPage}
 async function diagPage(){const e=escapeHtml;
-const [logR,cntR,blkR,fwR]=await Promise.all([
+const [logR,cntR,blkR,fwR,nicsR]=await Promise.all([
   api('/api/firewall/log').catch(()=>({entries:[]})),
   api('/api/firewall/counters').catch(()=>({})),
   api('/api/firewall/blocklist').catch(()=>({ips:[]})),
-  api('/api/firewall').catch(()=>({rules:[]}))]);
+  api('/api/firewall').catch(()=>({rules:[]})),
+  api('/api/interfaces').catch(()=>[])]);
+const nics=Array.isArray(nicsR)?nicsR:[];
 const entries=(logR.entries||[]).slice();
 const rules=fwR.rules||[];const ruleByName=Object.fromEntries(rules.map(r=>[r.name,r]));
 const blocked=new Set(blkR.ips||[]);
@@ -1026,8 +1028,13 @@ ${empty?'<p class="muted">Nema zapisa u firewall logu. Uključi <b>LOG</b> na pr
 <div id="diagDetail"></div>
 <div class="panel"><h3>Cijeli firewall log (${entries.length})</h3>
 ${empty?'':searchBar('dgSearch','Traži po IP / portu / pravilu…')}
-${empty?'':`<table><thead><tr><th>Vrijeme</th><th>Pravilo/razlog</th><th>Izvor</th><th>Odredište</th><th>Proto</th><th>Portovi</th></tr></thead><tbody id="dgLogTbody">${entries.slice(0,300).map(x=>`<tr><td class="muted small">${e((x.time||'').replace('T',' ').slice(0,19))}</td><td>${x.rule?`<span class="chip chip-log">${e(x.rule)}</span>`:'<span class="muted">završni drop</span>'}</td><td>${e(x.src||'')}</td><td class="muted">${e(x.dst||'')}</td><td class="muted">${e(x.proto||'')}</td><td class="muted">${e(x.sport||'')}→${e(x.dport||'')}</td></tr>`).join('')}</tbody></table>`}</div>`;
+${empty?'':`<table><thead><tr><th>Vrijeme</th><th>Pravilo/razlog</th><th>Izvor</th><th>Odredište</th><th>Proto</th><th>Portovi</th></tr></thead><tbody id="dgLogTbody">${entries.slice(0,300).map(x=>`<tr><td class="muted small">${e((x.time||'').replace('T',' ').slice(0,19))}</td><td>${x.rule?`<span class="chip chip-log">${e(x.rule)}</span>`:'<span class="muted">završni drop</span>'}</td><td>${e(x.src||'')}</td><td class="muted">${e(x.dst||'')}</td><td class="muted">${e(x.proto||'')}</td><td class="muted">${e(x.sport||'')}→${e(x.dport||'')}</td></tr>`).join('')}</tbody></table>`}</div>
+<div class="panel"><h3>Packet capture (uživo) <span class="badge">napredno</span></h3>
+<p class="muted small">Kratki, ograničeni snimak <b>zaglavlja</b> paketa (bez sadržaja, snaplen 96 B, ne-promiskuitetno) na odabranom sučelju — vidiš tko s kim priča i prolazi li promet. Snima <b>do 500 paketa ili 25 s</b>, što prije dođe. Za dublju analizu od loga.</p>
+<div class="filterbar"><select id="capIf">${nics.map(n=>`<option value="${e(n.name)}">${e(nlabel(n.name))}</option>`).join('')||'<option value="">(nema sučelja)</option>'}</select><select id="capProto"><option value="any">svi protokoli</option><option value="tcp">tcp</option><option value="udp">udp</option><option value="icmp">icmp</option></select><input id="capHost" placeholder="host IP (opc.)" style="max-width:150px"><input id="capPort" type="number" min="1" max="65535" placeholder="port (opc.)" style="max-width:110px"><input id="capCount" type="number" min="1" max="500" value="50" title="max paketa" style="max-width:90px"><button type="button" id="capRun">Snimaj</button></div>
+<pre id="capOut" class="muted" style="white-space:pre-wrap;max-height:340px;overflow:auto;margin:.4rem 0 0"></pre></div>`;
 tableSearch('dgSearch','dgLogTbody');
+const capRun=$('#capRun');if(capRun)capRun.onclick=async()=>{const out=$('#capOut');const iface=$('#capIf').value;if(!iface){out.textContent='Odaberi sučelje.';return}const body={interface:iface,proto:$('#capProto').value,host:$('#capHost').value.trim(),port:parseInt($('#capPort').value,10)||0,count:parseInt($('#capCount').value,10)||50};capRun.disabled=true;out.textContent=`Snimam na ${nlabel(iface)}… (do ${body.count} paketa / 25 s)`;try{const rr=await api('/api/diag/capture',{method:'POST',body:JSON.stringify(body)});out.textContent=(rr.output&&rr.output.trim())?rr.output:'(nijedan paket nije uhvaćen u zadanom vremenu/filteru)'}catch(err){out.textContent=err.message}finally{capRun.disabled=false}};
 $('#diagReload').onclick=diagPage;
 document.querySelectorAll('.dgBlk').forEach(b=>b.onclick=async()=>{if(!confirm('Blokirati sav proslijeđeni promet s '+b.dataset.s+'?'))return;try{await api('/api/firewall/block-ip',{method:'POST',body:JSON.stringify({ip:b.dataset.s})});diagPage()}catch(err){alert(err.message)}});
 document.querySelectorAll('.dgInv').forEach(b=>b.onclick=()=>{const src=b.dataset.s;const rows=entries.filter(x=>(x.src||'')===src);const g=bySrc[src];

@@ -37,6 +37,43 @@ func TestToolRun(t *testing.T) {
 	}
 }
 
+func TestDiagCapture(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var calls []string
+	a.runTools = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return []byte("cap output"), nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// full filter: iface, count, proto, host, port
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/diag/capture", `{"interface":"enp2s0","proto":"tcp","host":"10.0.0.5","port":443,"count":20}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("capture: got %d", r.StatusCode)
+	}
+	// empty host/port become the "-" sentinel; empty proto defaults to any; count clamps to 500
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/diag/capture", `{"interface":"enp2s0","count":9000}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("capture defaults: got %d", r.StatusCode)
+	}
+	if len(calls) != 2 || calls[0] != "capture enp2s0 20 tcp 10.0.0.5 443" || calls[1] != "capture enp2s0 500 any - -" {
+		t.Fatalf("adapter calls wrong: %v", calls)
+	}
+	// invalid inputs are rejected before the adapter runs
+	for _, body := range []string{
+		`{"interface":"bad iface","count":10}`,
+		`{"interface":"enp2s0","proto":"raw"}`,
+		`{"interface":"enp2s0","host":"not-an-ip"}`,
+		`{"interface":"enp2s0","port":99999}`,
+	} {
+		if r := reqJSON(t, srv, c, http.MethodPost, "/api/diag/capture", body); r.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d", body, r.StatusCode)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("adapter ran on invalid input: %v", calls)
+	}
+}
+
 func TestToolRequiresRole(t *testing.T) {
 	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {
