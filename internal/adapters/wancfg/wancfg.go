@@ -52,6 +52,13 @@ func (w WAN) Validate() error {
 	}
 	switch w.Mode {
 	case "dhcp":
+		// A DHCP uplink may still carry extra static public IPs (e.g. an ISP /29
+		// block bound alongside the DHCP-assigned primary) for 1:1 NAT / SNAT.
+		for _, a := range w.Aliases {
+			if !validCIDR4(a) {
+				return fmt.Errorf("WAN alias %q must be an IPv4 CIDR", a)
+			}
+		}
 		return nil
 	case "static":
 		if !validCIDR4(w.Address) {
@@ -89,6 +96,13 @@ func (w WAN) ethernetBlock() string {
 	if w.Mode == "dhcp" {
 		b.WriteString("      dhcp4: true\n")
 		fmt.Fprintf(&b, "      dhcp4-overrides:\n        route-metric: %d\n", w.metric())
+		// Extra static public IPs sit alongside the DHCP primary on the same port.
+		if len(w.Aliases) > 0 {
+			b.WriteString("      addresses:\n")
+			for _, a := range w.Aliases {
+				fmt.Fprintf(&b, "        - %s\n", strings.TrimSpace(a))
+			}
+		}
 		return b.String()
 	}
 	b.WriteString("      dhcp4: false\n")

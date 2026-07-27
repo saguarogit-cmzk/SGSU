@@ -69,3 +69,21 @@ func TestNetplanAliases(t *testing.T) {
 		t.Error("expected invalid alias error")
 	}
 }
+
+func TestNetplanDHCPAliases(t *testing.T) {
+	// A DHCP uplink may still carry extra static public IPs on the same port.
+	w := WAN{Interface: "enp1s0", Mode: "dhcp", Aliases: []string{"203.0.113.6/24", "203.0.113.7/24"}}
+	out, err := w.GenerateNetplan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"dhcp4: true", "addresses:", "- 203.0.113.6/24", "- 203.0.113.7/24"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("dhcp+alias netplan missing %q:\n%s", s, out)
+		}
+	}
+	bad := WAN{Interface: "enp1s0", Mode: "dhcp", Aliases: []string{"nope"}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected invalid alias error on dhcp WAN")
+	}
+}

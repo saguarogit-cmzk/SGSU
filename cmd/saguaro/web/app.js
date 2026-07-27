@@ -186,12 +186,9 @@ const ROLES=['admin','network-operator','dns-operator','auditor','read-only'];
 // Port forward line: proto:extPort:IP:port  OR (bound to a public IP)
 // proto:extIP:extPort:IP:port. A 5th field (the extra IP) is the public address.
 const pfParse=t=>t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split(':');return p.length>=5?{proto:p[0],extIp:p[1],extPort:parseInt(p[2],10),destIp:p[3],destPort:parseInt(p[4],10)}:{proto:p[0],extPort:parseInt(p[1],10),destIp:p[2],destPort:parseInt(p[3],10)}});
-const pfFormat=l=>(l||[]).map(p=>p.extIp?`${p.proto}:${p.extIp}:${p.extPort}:${p.destIp}:${p.destPort}`:`${p.proto}:${p.extPort}:${p.destIp}:${p.destPort}`).join('\n');
-const snatParse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{source:(p[0]||'').trim(),toAddress:(p[1]||'').trim()}}).filter(r=>r.source&&r.toAddress);
-const snatFormat=l=>(l||[]).map(r=>`${r.source} -> ${r.toAddress}`).join('\n');
-const nat11Parse=t=>t.split(/\n/).map(s=>s.trim()).filter(Boolean).map(s=>{const p=s.split('->');return{extIp:(p[0]||'').trim(),intIp:(p[1]||'').trim()}}).filter(r=>r.extIp&&r.intIp);
-const nat11Format=l=>(l||[]).map(r=>`${r.extIp} -> ${r.intIp}`).join('\n');
 async function gatewayPage(){const g=await api('/api/gateway');const c=g.config||{};let wans=((await api('/api/wan').catch(()=>({wans:[]}))).wans)||[];const ew=escapeHtml;
+// NAT rules edited as structured rows (mutated in place, persisted on Spremi/Primijeni via payload()).
+let pf=(c.portForwards||[]).map(x=>({...x})),snat=(c.snatRules||[]).map(x=>({...x})),nat11=(c.nat11||[]).map(x=>({...x}));
 // Sensible defaults from the box's own ports (stable names lan0/wan1) so the
 // form is nearly one-click on a fresh gateway instead of empty.
 const nb=n=>(g.nics||[]).find(z=>z.name===n)||null;
@@ -216,8 +213,9 @@ ${help('Postavi JEDNU ili VIŠE WAN veza (npr. WAN1 + GSM WAN2). Svaka je <b>DHC
 <label>IP adresa (CIDR) <input id="wanAddr" placeholder="203.0.113.5/24"></label>
 <label>Gateway <input id="wanGw" placeholder="203.0.113.1"></label>
 <label>DNS serveri (zarezom) <input id="wanDns" placeholder="1.1.1.1, 8.8.8.8"></label>
-<label>Dodatne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" placeholder="203.0.113.6/24"></label>
 </div>
+<label>Dodatne javne IP adrese / aliasi (CIDR, zarezom) <input id="wanAliases" placeholder="203.0.113.6/24, 203.0.113.7/24"></label>
+<p class="muted small">Više javnih IP-ova na <b>istom</b> WAN portu (npr. ISP-ov /29 blok). Vrijedi i za <b>DHCP</b> i za <b>statički</b> WAN — dižu se kao dodatne adrese na portu. Koriste ih 1:1 NAT / SNAT / port-forward vezan za točnu javnu IP.</p>
 <div class="btnrow"><button type="submit" class="ghost">Dodaj u listu</button> <button type="button" id="wanApplyBtn">Primijeni WAN veze</button></div>
 <div id="wanMsg" class="muted"></div></form></div>`;
 const gwPanel=`<div class="panel"><h2>Gateway / NAT</h2>
@@ -236,12 +234,21 @@ ${toggle('gwMgmtWan',c.mgmtOnWan===true,'Dostupno s WAN strane')}
 <p class="muted small">Sivi tekst je samo primjer (placeholder) — ostavi prazno ako koristiš prekidače gore. Barem jedan pristup mora ostati uključen.</p>
 <h3>Napredno</h3>
 ${toggle('gwHairpin',c.hairpinNat,'Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)')}
-<label>Preusmjeravanje portova (port forward) <textarea id="gwPf" rows="3" placeholder="tcp:8443:192.168.10.5:443">${ew(pfFormat(c.portForwards))}</textarea></label>
-<p class="muted small">Otvara vanjski port prema unutarnjem poslužitelju. Jedan redak = jedno pravilo: <code>protokol:vanjski_port:unutarnja_IP:unutarnji_port</code> (npr. <code>tcp:8443:192.168.10.5:443</code>). Ako imaš <b>više javnih IP-ova</b> na WAN-u i želiš vezati port baš za jednu, dodaj je kao 2. polje: <code>tcp:<b>203.0.113.5</b>:8443:192.168.10.5:443</code> (tada <code>.5:8443</code> ide na taj server, a druga javna IP može isti port slati drugamo).</p>
-<label>Izlaz preko određene javne IP (SNAT) <textarea id="gwSnat" rows="2" placeholder="192.168.10.5 -> 203.0.113.6">${ew(snatFormat(c.snatRules))}</textarea></label>
-<p class="muted small">Neka <b>određeni</b> host ili mreža izlazi na internet pod točno određenom javnom adresom (umjesto zajedničke). Redak: <code>izvor -&gt; javna_IP</code> (npr. <code>192.168.10.5 -&gt; 203.0.113.6</code> = taj računalo se na internetu vidi kao <code>.6</code>). Javna IP mora biti dodana kao WAN alias.</p>
-<label>1:1 NAT — cijela javna IP ↔ jedan interni host <textarea id="gwNat11" rows="2" placeholder="203.0.113.7 -> 192.168.10.7">${ew(nat11Format(c.nat11))}</textarea></label>
-<p class="muted small">Puno mapiranje: sav <b>ulazni</b> promet na javnu IP ide na interni host, a taj host <b>izlazi</b> pod tom istom javnom IP — u oba smjera, svi portovi. Redak: <code>javna_IP -&gt; interna_IP</code>. Javnu IP dodaj i kao <b>WAN alias</b> (da kutija odgovara na nju). Za sigurnost dalje suzi firewall pravilima.</p>
+<h4>Preusmjeravanje portova (port forward · DNAT)</h4>
+<p class="muted small">Otvara vanjski port prema unutarnjem poslužitelju. Ako imaš <b>više javnih IP-ova</b> na WAN-u, upiši <b>javnu IP</b> da vežeš pravilo baš za nju (prazno = vrijedi za WAN adresu). Javnu IP dodaj i kao WAN alias.</p>
+<div id="pfList"></div>
+<div class="filterbar"><select id="pfProto"><option value="tcp">tcp</option><option value="udp">udp</option></select><input id="pfExtIp" placeholder="javna IP (opcionalno)" style="max-width:170px"><input id="pfExtPort" type="number" min="1" max="65535" placeholder="vanjski port" style="max-width:130px"><span class="muted">→</span><input id="pfDestIp" placeholder="interna IP" style="max-width:150px"><input id="pfDestPort" type="number" min="1" max="65535" placeholder="interni port" style="max-width:130px"><button type="button" id="pfAddBtn" class="ghost">Dodaj</button><button type="button" id="pfCancel" class="ghost" style="display:none">Odustani</button></div>
+<div id="pfMsg" class="muted small"></div>
+<h4>Izlaz preko određene javne IP (SNAT)</h4>
+<p class="muted small">Neka <b>određeni</b> host/mreža izlazi na internet pod točno određenom javnom adresom (umjesto zajedničke). Javna IP mora biti dodana kao WAN alias.</p>
+<div id="snList"></div>
+<div class="filterbar"><input id="snSrc" placeholder="izvor (IP ili CIDR)" style="max-width:200px"><span class="muted">→</span><input id="snTo" placeholder="javna IP" style="max-width:170px"><button type="button" id="snAddBtn" class="ghost">Dodaj</button><button type="button" id="snCancel" class="ghost" style="display:none">Odustani</button></div>
+<div id="snMsg" class="muted small"></div>
+<h4>1:1 NAT — cijela javna IP ↔ jedan interni host</h4>
+<p class="muted small">Sav <b>ulazni</b> promet na javnu IP ide na interni host, a taj host <b>izlazi</b> pod tom istom javnom IP — u oba smjera, svi portovi. Javnu IP dodaj i kao <b>WAN alias</b>. Za sigurnost dalje suzi firewall pravilima.</p>
+<div id="n11List"></div>
+<div class="filterbar"><input id="n11Ext" placeholder="javna IP" style="max-width:170px"><span class="muted">↔</span><input id="n11Int" placeholder="interna IP" style="max-width:170px"><button type="button" id="n11AddBtn" class="ghost">Dodaj</button><button type="button" id="n11Cancel" class="ghost" style="display:none">Odustani</button></div>
+<div id="n11Msg" class="muted small"></div>
 <div class="btnrow"><button type="submit">Spremi</button> <button type="button" id="gwPreview" class="ghost">Pregled pravila</button> <button type="button" id="gwApply">Primijeni (120 s potvrda)</button></div>
 <div id="gwMsg" class="muted"></div><pre id="gwRules" class="muted" style="white-space:pre-wrap"></pre></form></div>`;
 const pend=g.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Novi ruleset je aktivan. Bez potvrde unutar 120 sekundi vraća se prethodna konfiguracija.</p><div class="btnrow"><button id="gwConfirm">Potvrdi (zadrži)</button> <button id="gwRollback" class="ghost">Vrati odmah</button></div></div>`:'';
@@ -250,11 +257,11 @@ ${tabBar('gwTabs',[['wan','WAN veze'],['nat','Gateway / NAT']])}
 <div class="tabpane active" data-pane="gwTabs" data-tabkey="wan"><div class="panel"><h2>Mrežni portovi</h2>${nicsTable}</div>${wanPanel}</div>
 <div class="tabpane" data-pane="gwTabs" data-tabkey="nat">${gwPanel}</div>`;
 wireTabs('gwTabs');
-const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,mgmtOnLan:$('#gwMgmtLan').checked,mgmtOnWan:$('#gwMgmtWan').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pfParse($('#gwPf').value),snatRules:snatParse($('#gwSnat').value),nat11:nat11Parse($('#gwNat11').value)});
+const payload=()=>({adminNetwork:$('#gwAdmin').value.trim(),clientNetwork:$('#gwClient').value.trim(),dhcpInterface:$('#gwDhcpIf').value.trim(),gatewayEnabled:$('#gwEnabled').checked,wanInterface:$('#gwWan').value,lanInterface:$('#gwLan').value,natEnabled:$('#gwNat').checked,mgmtOnLan:$('#gwMgmtLan').checked,mgmtOnWan:$('#gwMgmtWan').checked,hairpinNat:$('#gwHairpin').checked,portForwards:pf,snatRules:snat,nat11:nat11});
 const save=async()=>{await api('/api/gateway',{method:'PUT',body:JSON.stringify(payload())})};
 const ipOf=name=>{const n=(g.nics||[]).find(z=>z.name===name);return (n&&(n.addresses||[])[0])||''};
 const modeLabel=m=>m==='static'?'Statička':'Dinamička (DHCP)';
-const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>WAN</th><th>Način</th><th>IP adresa (uživo)</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(nlabel(x.interface))}</b></td><td>${ew(modeLabel(x.mode))}</td><td class="muted">${ew(x.mode==='static'?(x.address||'—'):(ipOf(x.interface)||'—'))}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||'—'):'auto')}</td><td class="muted">${x.metric||100}</td><td class="rowacts"><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN veza.</p>';
+const renderWanList=()=>{$('#wanList').innerHTML=wans.length?`<table class="compact"><thead><tr><th>WAN</th><th>Način</th><th>IP adresa (uživo)</th><th>Gateway</th><th>Metrika</th><th></th></tr></thead><tbody>${wans.map((x,i)=>`<tr><td><b>${ew(nlabel(x.interface))}</b></td><td>${ew(modeLabel(x.mode))}</td><td class="muted">${ew(x.mode==='static'?(x.address||'—'):(ipOf(x.interface)||'—'))}${(x.aliases&&x.aliases.length)?` <span class="badge" title="${ew(x.aliases.join(', '))}">+${x.aliases.length} javnih IP</span>`:''}</td><td class="muted">${ew(x.mode==='static'?(x.gateway||'—'):'auto')}</td><td class="muted">${x.metric||100}</td><td class="rowacts"><button class="wanEdit ghost" data-i="${i}">Uredi</button> <button class="wanRm danger" data-i="${i}">Ukloni</button></td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nema konfiguriranih WAN veza.</p>';
 document.querySelectorAll('.wanRm').forEach(el=>el.onclick=()=>{wans.splice(+el.dataset.i,1);renderWanList()});
 document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+el.dataset.i];const sel=$('#wanIf');
 // A stored uplink can name a port this box no longer has (a NIC moved, or the
@@ -263,6 +270,40 @@ document.querySelectorAll('.wanEdit').forEach(el=>el.onclick=()=>{const x=wans[+
 if(x.interface&&![...sel.options].some(o=>o.value===x.interface)){sel.add(new Option(x.interface+' (nedostupan)',x.interface))}
 sel.value=x.interface;$('#wanMode').value=x.mode;$('#wanMetric').value=x.metric||100;$('#wanAddr').value=x.address||'';$('#wanGw').value=x.gateway||'';$('#wanDns').value=(x.dns||[]).join(', ');$('#wanAliases').value=(x.aliases||[]).join(', ');$('#wanStatic').style.display=x.mode==='static'?'':'none';wans.splice(+el.dataset.i,1);renderWanList()});};
 renderWanList();
+// Structured NAT editor: three in-place tables (port-forward / SNAT / 1:1) with
+// per-row edit + delete. Rows mutate pf/snat/nat11, persisted via payload() on Spremi/Primijeni.
+let pfEdit=-1,snEdit=-1,n11Edit=-1;
+const natActs=(cls,i)=>`<div class="rowacts">${iconBtn('edit','Uredi','',`data-i="${i}"`).replace('iconbtn','iconbtn '+cls+'E')}${iconBtn('del','Obriši','danger',`data-i="${i}"`).replace('iconbtn','iconbtn '+cls+'D')}</div>`;
+const renderNat=()=>{
+$('#pfList').innerHTML=pf.length?`<table class="compact"><thead><tr><th>Proto</th><th>Vanjski</th><th>Interno</th><th></th></tr></thead><tbody>${pf.map((p,i)=>`<tr><td>${ew(p.proto)}</td><td class="muted">${ew(p.extIp||nlabel(defWan))}:${ew(String(p.extPort))}</td><td class="muted">${ew(p.destIp)}:${ew(String(p.destPort))}</td><td>${natActs('pf',i)}</td></tr>`).join('')}</tbody></table>`:'<p class="muted small">Nema port-forward pravila.</p>';
+$('#snList').innerHTML=snat.length?`<table class="compact"><thead><tr><th>Izvor</th><th>Javna IP</th><th></th></tr></thead><tbody>${snat.map((r,i)=>`<tr><td>${ew(r.source)}</td><td class="muted">${ew(r.toAddress)}</td><td>${natActs('sn',i)}</td></tr>`).join('')}</tbody></table>`:'<p class="muted small">Nema SNAT pravila.</p>';
+$('#n11List').innerHTML=nat11.length?`<table class="compact"><thead><tr><th>Javna IP</th><th>Interna IP</th><th></th></tr></thead><tbody>${nat11.map((r,i)=>`<tr><td>${ew(r.extIp)}</td><td class="muted">${ew(r.intIp)}</td><td>${natActs('n11',i)}</td></tr>`).join('')}</tbody></table>`:'<p class="muted small">Nema 1:1 NAT pravila.</p>';
+document.querySelectorAll('.pfD').forEach(el=>el.onclick=()=>{pf.splice(+el.dataset.i,1);if(pfEdit>=0)pfReset();renderNat()});
+document.querySelectorAll('.snD').forEach(el=>el.onclick=()=>{snat.splice(+el.dataset.i,1);if(snEdit>=0)snReset();renderNat()});
+document.querySelectorAll('.n11D').forEach(el=>el.onclick=()=>{nat11.splice(+el.dataset.i,1);if(n11Edit>=0)n11Reset();renderNat()});
+document.querySelectorAll('.pfE').forEach(el=>el.onclick=()=>{const p=pf[+el.dataset.i];pfEdit=+el.dataset.i;$('#pfProto').value=p.proto||'tcp';$('#pfExtIp').value=p.extIp||'';$('#pfExtPort').value=p.extPort||'';$('#pfDestIp').value=p.destIp||'';$('#pfDestPort').value=p.destPort||'';$('#pfAddBtn').textContent='Spremi';$('#pfCancel').style.display='';$('#pfMsg').textContent='Uređuješ port-forward.'});
+document.querySelectorAll('.snE').forEach(el=>el.onclick=()=>{const r=snat[+el.dataset.i];snEdit=+el.dataset.i;$('#snSrc').value=r.source||'';$('#snTo').value=r.toAddress||'';$('#snAddBtn').textContent='Spremi';$('#snCancel').style.display='';$('#snMsg').textContent='Uređuješ SNAT.'});
+document.querySelectorAll('.n11E').forEach(el=>el.onclick=()=>{const r=nat11[+el.dataset.i];n11Edit=+el.dataset.i;$('#n11Ext').value=r.extIp||'';$('#n11Int').value=r.intIp||'';$('#n11AddBtn').textContent='Spremi';$('#n11Cancel').style.display='';$('#n11Msg').textContent='Uređuješ 1:1 NAT.'})};
+const pfReset=()=>{pfEdit=-1;['pfExtIp','pfExtPort','pfDestIp','pfDestPort'].forEach(id=>$('#'+id).value='');$('#pfAddBtn').textContent='Dodaj';$('#pfCancel').style.display='none';$('#pfMsg').textContent=''};
+const snReset=()=>{snEdit=-1;$('#snSrc').value='';$('#snTo').value='';$('#snAddBtn').textContent='Dodaj';$('#snCancel').style.display='none';$('#snMsg').textContent=''};
+const n11Reset=()=>{n11Edit=-1;$('#n11Ext').value='';$('#n11Int').value='';$('#n11AddBtn').textContent='Dodaj';$('#n11Cancel').style.display='none';$('#n11Msg').textContent=''};
+$('#pfCancel').onclick=pfReset;$('#snCancel').onclick=snReset;$('#n11Cancel').onclick=n11Reset;
+$('#pfAddBtn').onclick=()=>{const m=$('#pfMsg');const proto=$('#pfProto').value,extIp=$('#pfExtIp').value.trim(),extPort=parseInt($('#pfExtPort').value,10)||0,destIp=$('#pfDestIp').value.trim(),destPort=parseInt($('#pfDestPort').value,10)||0;
+if(extIp&&!isIPv4(extIp)){m.textContent='Javna IP mora biti IPv4 (ili prazno).';return}
+if(extPort<1||extPort>65535){m.textContent='Vanjski port mora biti 1-65535.';return}
+if(!isIPv4(destIp)){m.textContent='Interna IP mora biti IPv4.';return}
+if(destPort<1||destPort>65535){m.textContent='Interni port mora biti 1-65535.';return}
+const item={proto,extPort,destIp,destPort};if(extIp)item.extIp=extIp;
+if(pfEdit>=0){pf[pfEdit]=item}else{pf.push(item)}pfReset();renderNat()};
+$('#snAddBtn').onclick=()=>{const m=$('#snMsg');const source=$('#snSrc').value.trim(),toAddress=$('#snTo').value.trim();
+if(!isIPv4(source)&&!isCIDR(source)){m.textContent='Izvor mora biti IPv4 ili CIDR.';return}
+if(!isIPv4(toAddress)){m.textContent='Javna IP mora biti IPv4.';return}
+const item={source,toAddress};if(snEdit>=0){snat[snEdit]=item}else{snat.push(item)}snReset();renderNat()};
+$('#n11AddBtn').onclick=()=>{const m=$('#n11Msg');const extIp=$('#n11Ext').value.trim(),intIp=$('#n11Int').value.trim();
+if(!isIPv4(extIp)){m.textContent='Javna IP mora biti IPv4.';return}
+if(!isIPv4(intIp)){m.textContent='Interna IP mora biti IPv4.';return}
+const item={extIp,intIp};if(n11Edit>=0){nat11[n11Edit]=item}else{nat11.push(item)}n11Reset();renderNat()};
+renderNat();
 $('#wanMode').onchange=()=>{$('#wanStatic').style.display=$('#wanMode').value==='static'?'':'none'};
 $('#wanForm').onsubmit=e=>{e.preventDefault();const m=$('#wanMsg');const mode=$('#wanMode').value;const iface=$('#wanIf').value.trim();
 if(!/^[a-zA-Z0-9._-]{1,15}$/.test(iface)){m.textContent='Upiši ispravno ime sučelja.';return}
@@ -370,12 +411,13 @@ const svcName=r=>{const m=OVSVC.find(s=>s[0]&&s[2]===r.proto&&s[3]===r.port);ret
 const openOVAccess=name=>{const c=(o.clients||[]).find(x=>x.name===name);if(!c)return;let rules=(c.access||[]).map(r=>({dest:r.dest,proto:r.proto||'any',port:r.port||0}));const box=$('#ovAccessBox');
 const render=()=>{box.innerHTML=`<div class="panel"><h3>Pristup za korisnika: ${e(name)} <span class="muted small">(${e(c.vpnAddr||'')})</span></h3>
 <p class="muted small">Prazno = korisnik smije na sve tvoje interne mreže. Dodaj pravila da ga ograničiš — <b>odredište</b> (IP ili mreža) + <b>servis</b> iz izbornika (npr. samo Remote Desktop na jedan server). „Sve" = bilo koji port na tom odredištu.</p>
-<table class="compact"><thead><tr><th>Odredište</th><th>Servis</th><th>Proto/Port</th><th></th></tr></thead><tbody>${rules.length?rules.map((r,i)=>`<tr><td><b>${e(r.destAlias||r.dest)}</b>${r.destAlias?' <span class="badge">alias</span>':''}</td><td>${e(svcName(r))}</td><td class="muted">${r.proto==='any'?'sve':e(r.proto)+(r.port?':'+r.port:'')}</td><td class="rowacts"><button class="oaDel danger" data-i="${i}">Ukloni</button></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Bez ograničenja — smije na sve interno.</td></tr>'}</tbody></table>
+<table class="compact"><thead><tr><th>Odredište</th><th>Servis</th><th>Proto/Port</th><th></th></tr></thead><tbody>${rules.length?rules.map((r,i)=>`<tr><td><b>${e(r.destAlias||r.dest)}</b>${r.destAlias?' <span class="badge">alias</span>':''}</td><td>${e(svcName(r))}</td><td class="muted">${r.proto==='any'?'sve':e(r.proto)+(r.port?':'+r.port:'')}</td><td class="rowacts"><button class="oaEdit ghost" data-i="${i}">Uredi</button> <button class="oaDel danger" data-i="${i}">Ukloni</button></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Bez ograničenja — smije na sve interno.</td></tr>'}</tbody></table>
 <div class="filterbar"><select id="oaAlias"><option value="">— IP/mreža ručno —</option>${aliases.map(a=>`<option value="${e(a.name)}">${e(a.name)} (${e((a.values||[]).join(', '))})</option>`).join('')}</select><input id="oaDest" placeholder="ili IP/mreža ručno"><select id="oaSvc">${OVSVC.map(s=>`<option value="${s[0]}">${e(s[1])}</option>`).join('')}</select><input id="oaPort" type="number" placeholder="ili custom port" style="max-width:130px"><button type="button" id="oaAdd" class="ghost">Dodaj pravilo</button></div>
 <p class="muted small">Odaberi <b>alias</b> (imenovani server/mreža iz Firewall → Aliasi) ili upiši IP/mrežu ručno. Aliasi su transparentni kroz sustav — mijenjaš IP na jednom mjestu, pravila prate.</p>
 <div class="btnrow"><button type="button" id="oaSave">Spremi pristup</button> <button type="button" id="oaClose" class="ghost">Zatvori</button></div><div id="oaMsg" class="muted"></div></div>`;
 $('#oaAdd').onclick=()=>{const al=$('#oaAlias').value;const dest=$('#oaDest').value.trim();const sv=OVSVC.find(s=>s[0]===$('#oaSvc').value);let proto='any',port=0;if(sv&&sv[0]&&sv[0]!=='all'){proto=sv[2];port=sv[3];}const cp=parseInt($('#oaPort').value,10)||0;if(cp){port=cp;if(proto==='any')proto='tcp';}if(al){rules.push({destAlias:al,proto,port})}else{if(!isIPv4(dest)&&!isCIDR(dest)){$('#oaMsg').textContent='Odaberi alias ili upiši ispravan IP/CIDR.';return}rules.push({dest,proto,port})}$('#oaAlias').value='';$('#oaDest').value='';$('#oaPort').value='';render()};
 box.querySelectorAll('.oaDel').forEach(el=>el.onclick=()=>{rules.splice(+el.dataset.i,1);render()});
+box.querySelectorAll('.oaEdit').forEach(el=>el.onclick=()=>{const r=rules[+el.dataset.i];rules.splice(+el.dataset.i,1);render();if(r.destAlias){$('#oaAlias').value=r.destAlias}else{$('#oaDest').value=r.dest||''}const sv=OVSVC.find(s=>s[0]&&s[2]===(r.proto||'any')&&s[3]===(r.port||0));if(sv){$('#oaSvc').value=sv[0]}else{$('#oaSvc').value='all';$('#oaPort').value=r.port||''}$('#oaMsg').textContent='Uređuješ pravilo — prilagodi pa klikni „Dodaj pravilo".'});
 $('#oaSave').onclick=async()=>{$('#oaMsg').textContent='Spremam…';try{await api('/api/openvpn/clients/'+encodeURIComponent(name)+'/access',{method:'PUT',body:JSON.stringify({rules})});openvpnPage()}catch(err){$('#oaMsg').textContent=err.message}};
 $('#oaClose').onclick=()=>{box.innerHTML=''};};
 render();box.scrollIntoView({behavior:'smooth'});};
@@ -664,7 +706,7 @@ function isRange(s){const p=s.split('-');return p.length===2&&isIPv4(p[0].trim()
 // memorable name once and every rule that references them follows.
 async function aliasesPage(){const f=await api('/api/firewall').catch(()=>({aliases:[]}));const aliases=f.aliases||[];const e=escapeHtml;
 const putAliases=list=>api('/api/firewall/aliases',{method:'PUT',body:JSON.stringify({aliases:list})});
-const rows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Još nema aliasa. Dodaj prvi ispod.</td></tr>';
+const rows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('edit','Uredi alias','',`data-i="${i}"`).replace('iconbtn','iconbtn alEdit')}${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Još nema aliasa. Dodaj prvi ispod.</td></tr>';
 $('#content').innerHTML=`${help('Alias je <b>ime za IP, mrežu ili raspon</b> — npr. <code>server_rdp</code> = 10.10.10.50. Definiraš ga jednom, a koristiš po imenu u <b>firewall pravilima</b> i <b>VPN pristupu</b>. Promijeniš li IP, sva pravila prate — bez pamćenja adresa. Isti popis vidiš i pod <b>Vatrozid → Aliasi</b>.')}
 <div class="panel"><h2>Aliasi (${aliases.length})</h2>
 <table><thead><tr><th>Naziv</th><th>Tip</th><th>Vrijednosti</th><th>Akcije</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -674,13 +716,18 @@ $('#content').innerHTML=`${help('Alias je <b>ime za IP, mrežu ili raspon</b> �
 <p class="muted small">Samo slova, brojke i <code>_</code> (počinje slovom). Bez razmaka i crtice — npr. <code>serveri_lan</code>, <code>dmz_web</code>.</p>
 <label>Tip <select id="alType"><option value="host">host — jedna ili više IP adresa</option><option value="network">network — cijela mreža (CIDR)</option><option value="range">range — raspon IP-IP</option></select></label>
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="10.10.10.50, 10.10.10.51" required></label>
-<div><button type="submit">Dodaj alias</button></div><div id="alMsg" class="muted"></div></form></div>`;
+<div><button type="submit" id="alAddBtn">Dodaj alias</button> <button type="button" id="alCancel" class="ghost" style="display:none">Odustani</button></div><div id="alMsg" class="muted"></div></form></div>`;
+let alEdit=-1;const alAddBtn=$('#alAddBtn'),alCancel=$('#alCancel');
+const alEndEdit=()=>{alEdit=-1;$('#alAdd').reset();if(alAddBtn)alAddBtn.textContent='Dodaj alias';if(alCancel)alCancel.style.display='none';$('#alMsg').textContent=''};
+if(alCancel)alCancel.onclick=alEndEdit;
+document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';if(alCancel)alCancel.style.display='';$('#alMsg').textContent=`Uređuješ alias „${a.name||''}".`;$('#alName').focus()});
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const a=aliases[+el.dataset.i];if(!confirm('Obrisati alias „'+a.name+'"? Pravila koja ga koriste ostat će bez odredišta.'))return;const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);aliasesPage()}catch(err){alert(err.message)}});
 $('#alAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#alMsg');const name=$('#alName').value.trim();const type=$('#alType').value;const vals=$('#alVals').value.split(',').map(x=>x.trim()).filter(Boolean);
 if(!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)){m.textContent='Naziv mora počinjati slovom i sadržavati samo slova, brojke i _ (bez crtice/razmaka).';return}
 if(!vals.length){m.textContent='Upiši barem jednu vrijednost.';return}
-if(aliases.some(a=>a.name===name)){m.textContent='Alias s tim imenom već postoji.';return}
-try{await putAliases(aliases.concat([{name,type,values:vals}]));aliasesPage()}catch(err){m.textContent=err.message}};}
+if(aliases.some((a,j)=>a.name===name&&j!==alEdit)){m.textContent='Alias s tim imenom već postoji.';return}
+const list=aliases.slice();if(alEdit>=0){list[alEdit]={name,type,values:vals}}else{list.push({name,type,values:vals})}
+try{await putAliases(list);aliasesPage()}catch(err){m.textContent=err.message}};}
 
 async function fwRulesPage(){const f=await api('/api/firewall');const aliases=f.aliases||[],rules=f.rules||[],zones=f.zones||[];const e=escapeHtml;
 const nics=await api('/api/interfaces').catch(()=>[]);
@@ -706,7 +753,7 @@ const zoneRows=zones.length?zones.map((z,i)=>`<tr><td><b>${e(z.name)}</b></td><t
 const hasVlan=zones.some(z=>z.vlanId);
 const hasInternalZone=zones.some(z=>z.kind!=='wan'&&z.network);
 const pend=f.pending?`<div class="panel error"><h2>⚠ Promjena firewalla čeka potvrdu</h2><p>Bez potvrde unutar 120 s vraća se prethodna konfiguracija.</p><button id="fwConfirm">Potvrdi (zadrži)</button> <button id="fwRollback" class="ghost">Vrati odmah</button></div>`:'';
-const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
+const aliasRows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('edit','Uredi alias','',`data-i="${i}"`).replace('iconbtn','iconbtn alEdit')}${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Nema aliasa.</td></tr>';
 const aliasVals=n=>{const a=aliases.find(x=>x.name===n);return a?(a.values||[]).join(', '):''};
 const firstVal=n=>{const a=aliases.find(x=>x.name===n);const v=a&&a.values&&a.values[0]?a.values[0]:'';return v.split('-')[0].split('/')[0]};
 const aliasOpt=sel=>['<option value="">(bilo koji)</option>'].concat(aliases.map(a=>`<option ${a.name===sel?'selected':''}>${e(a.name)}</option>`)).join('');
@@ -714,7 +761,7 @@ const CATS=[['','(bez)'],['lan2wan','LAN → WAN'],['wan2lan','WAN → LAN'],['w
 const catLabel=c=>{const f=CATS.find(x=>x[0]===c);return f?f[1]:c};
 const catOpts=sel=>CATS.map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');
 const actClass=a=>a==='accept'?'st-healthy':(a==='drop'||a==='reject')?'st-error':'';
-const ruleRows=rules.length?rules.map((r,i)=>{const acts=`<div class="rowacts">${iconBtn('up','Pomakni gore','',`data-i="${i}"${i===0?' disabled':''}`).replace('iconbtn','iconbtn ruUp')}${iconBtn('down','Pomakni dolje','',`data-i="${i}"${i===rules.length-1?' disabled':''}`).replace('iconbtn','iconbtn ruDown')}${iconBtn('test','Testiraj ovo pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruTestBtn')}${iconBtn('del','Obriši pravilo','danger',`data-i="${i}"`).replace('iconbtn','iconbtn ruDel')}</div>`;
+const ruleRows=rules.length?rules.map((r,i)=>{const acts=`<div class="rowacts">${iconBtn('up','Pomakni gore','',`data-i="${i}"${i===0?' disabled':''}`).replace('iconbtn','iconbtn ruUp')}${iconBtn('down','Pomakni dolje','',`data-i="${i}"${i===rules.length-1?' disabled':''}`).replace('iconbtn','iconbtn ruDown')}${iconBtn('test','Testiraj ovo pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruTestBtn')}${iconBtn('edit','Uredi pravilo','',`data-i="${i}"`).replace('iconbtn','iconbtn ruEdit')}${iconBtn('del','Obriši pravilo','danger',`data-i="${i}"`).replace('iconbtn','iconbtn ruDel')}</div>`;
 const main=`<tr class="expandable" data-cat="${e(r.category||'')}" data-i="${i}" data-action="${e(r.action||'')}" data-enabled="${r.enabled?'1':'0'}" data-name="${e((r.name||'').toLowerCase())}"><td class="muted"><span class="chev">▶</span> ${i+1}</td><td>${r.enabled?'':'<span class="muted">(off) </span>'}<b>${e(r.name)}</b>${r.log?'<span class="chip chip-log">LOG</span>':''}${(r.fromZone||r.toZone)?`<span class="chip chip-zone">${e(r.fromZone||'*')}→${e(r.toZone||'*')}</span>`:''}</td><td>${r.category?`<span class="badge">${e(catLabel(r.category))}</span>`:'<span class="muted">—</span>'}</td><td><span class="status ${actClass(r.action)}">${e(r.action)}</span></td><td class="muted">${e(r.proto)}${r.dstPort?':'+r.dstPort:''}</td><td>${e(r.srcAlias||'any')} → ${e(r.dstAlias||'any')}</td><td class="muted small" data-cnt="${e(r.name)}">—</td><td>${acts}</td></tr>`;
 const dl=(t,d)=>`<dl><dt>${t}</dt><dd>${d}</dd></dl>`;
 const detail=`<tr class="row-detail hidden" data-detail="${i}" data-cat="${e(r.category||'')}"><td colspan="8"><div class="detail-inner">${dl('Stanje',r.enabled?'<span class="status st-healthy">omogućeno</span>':'<span class="status st-muted">onemogućeno</span>')}${dl('Akcija',`<span class="status ${actClass(r.action)}">${e(r.action)}</span>`)}${dl('Protokol',e(r.proto)+(r.dstPort?' · port '+r.dstPort:''))}${dl('Kategorija',r.category?e(catLabel(r.category)):'—')}${dl('Izvor ('+e(r.srcAlias||'any')+')',e(r.srcAlias?aliasVals(r.srcAlias):'bilo koji')||'—')}${dl('Odredište ('+e(r.dstAlias||'any')+')',e(r.dstAlias?aliasVals(r.dstAlias):'bilo koji')||'—')}${(r.fromZone||r.toZone)?dl('Zona',e(r.fromZone||'bilo koja')+' → '+e(r.toZone||'bilo koja')):''}${dl('Logiranje',r.log?'<span class="status st-healthy">uključeno</span>':'<span class="muted">isključeno</span>')}</div></td></tr>`;
@@ -749,7 +796,7 @@ ${tabBar('fwTabs',[['pravila','Pravila',rules.length],['nat','NAT pravila',natCo
 <label>Kategorija <select id="ruCat">${catOpts('')}</select></label>
 ${toggle('ruLog',false,'Logiraj promet koji pravilo uhvati (kernel log)')}
 ${toggle('ruEnabled',true,'Omogućeno')}
-<div><button type="submit">Dodaj pravilo</button></div><div id="ruMsg" class="muted"></div></form></div>
+<div><button type="submit" id="ruAddBtn">Dodaj pravilo</button> <button type="button" id="ruCancel" class="ghost" style="display:none">Odustani</button></div><div id="ruMsg" class="muted"></div></form></div>
 <div class="panel"><h3>Brza blokada IP-a (blackhole)</h3>
 <p class="muted small">Odmah odbaci sav <b>proslijeđeni</b> promet s IP adrese (npr. napadač iz sigurnosnog loga). Dodaje IP u <code>blocklist</code> alias + <b>drop pravilo na vrhu</b> (logirano). Ne dira mgmt pristup (forward lanac). Vrijedi odmah i trajno — bez 120 s potvrde.</p>
 <div class="filterbar"><input id="blkIP" placeholder="npr. 203.0.113.5"><button type="button" id="blkAdd">Blokiraj IP</button></div>
@@ -766,7 +813,7 @@ ${toggle('ruEnabled',true,'Omogućeno')}
 <label>Naziv <input id="alName" placeholder="serveri_lan" required></label>
 <label>Tip <select id="alType"><option value="host">host (IP adrese)</option><option value="network">network (CIDR)</option><option value="range">range (IP-IP)</option></select></label>
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="192.168.10.5, 192.168.10.6" required></label>
-<div><button type="submit">Dodaj alias</button></div><div id="alMsg" class="muted"></div></form></div></div>
+<div><button type="submit" id="alAddBtn">Dodaj alias</button> <button type="button" id="alCancel" class="ghost" style="display:none">Odustani</button></div><div id="alMsg" class="muted"></div></form></div></div>
 <div class="tabpane" data-pane="fwTabs" data-tabkey="zone">
 <div class="panel"><h3>Zone (${zones.length})</h3>
 <p class="muted">Segmentiraj mrežu po povjerenju. Zadana politika: zona veće razine povjerenja može otvarati promet prema nižoj (LAN→DMZ, DMZ→internet), nikad obrnuto — pa <b>DMZ ne doseže LAN</b>, a <b>Gost je izoliran</b> od svih. Sve što nije eksplicitno dopušteno (ili port-forward/pravilo) se odbacuje.</p>
@@ -825,13 +872,24 @@ const geoApplyBtn=$('#geoApply');if(geoApplyBtn)geoApplyBtn.onclick=()=>{const a
 if(f.pending){$('#fwConfirm').onclick=async()=>{try{await api('/api/gateway/confirm',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}};$('#fwRollback').onclick=async()=>{try{await api('/api/gateway/rollback',{method:'POST',body:'{}'});fwRulesPage()}catch(err){alert(err.message)}}}
 $('#fwApply').onclick=async()=>{if(!confirm('Primijeniti firewall? Bez potvrde u 120 s vraća se stara konfiguracija.'))return;const m=$('#fwMsg');m.textContent='Primjena…';try{await api('/api/firewall/apply',{method:'POST',body:'{}'});fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);fwRulesPage()}catch(err){alert(err.message)}});
+let alEdit=-1;const alAddBtn=$('#alAddBtn'),alCancel=$('#alCancel');
+const alEndEdit=()=>{alEdit=-1;$('#alAdd').reset();if(alAddBtn)alAddBtn.textContent='Dodaj alias';if(alCancel)alCancel.style.display='none';$('#alMsg').textContent=''};
+if(alCancel)alCancel.onclick=alEndEdit;
+document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';if(alCancel)alCancel.style.display='';$('#alMsg').textContent=`Uređuješ alias „${a.name||''}".`;$('#alName').focus();$('#alName').scrollIntoView({behavior:'smooth',block:'center'})});
 $('#alAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#alMsg');m.textContent='';const name=$('#alName').value.trim(),type=$('#alType').value,vals=$('#alVals').value.split(',').map(x=>x.trim()).filter(Boolean);
 if(!/^[a-z][a-z0-9_]{0,30}$/.test(name)){m.textContent='Naziv: počni slovom, dozvoljeno a-z 0-9 _ (bez crtice).';return}
 if(!vals.length){m.textContent='Upiši barem jednu vrijednost.';return}
 for(const v of vals){const okv=type==='host'?isIPv4(v):type==='network'?isCIDR(v):isRange(v);if(!okv){m.textContent='Neispravna vrijednost za tip '+type+': '+v;return}}
-if(aliases.some(a=>a.name===name)){m.textContent='Alias s tim imenom već postoji.';return}
-try{await putAliases(aliases.concat([{name,type,values:vals}]));fwRulesPage()}catch(err){m.textContent=err.message}};
+if(aliases.some((a,j)=>a.name===name&&j!==alEdit)){m.textContent='Alias s tim imenom već postoji.';return}
+const list=aliases.slice();if(alEdit>=0){list[alEdit]={name,type,values:vals}}else{list.push({name,type,values:vals})}
+try{await putAliases(list);fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.ruDel').forEach(el=>el.onclick=async()=>{const list=rules.filter((_,j)=>j!==+el.dataset.i);try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}});
+let ruEdit=-1;const ruAddBtn=$('#ruAddBtn'),ruCancel=$('#ruCancel');
+const ruEndEdit=()=>{ruEdit=-1;$('#ruAdd').reset();$('#ruEnabled').checked=true;if(ruAddBtn)ruAddBtn.textContent='Dodaj pravilo';if(ruCancel)ruCancel.style.display='none';$('#ruMsg').textContent=''};
+if(ruCancel)ruCancel.onclick=ruEndEdit;
+document.querySelectorAll('.ruEdit').forEach(el=>el.onclick=()=>{const r=rules[+el.dataset.i];ruEdit=+el.dataset.i;
+$('#ruName').value=r.name||'';$('#ruAction').value=r.action||'accept';$('#ruProto').value=r.proto||'any';$('#ruSrc').value=r.srcAlias||'';$('#ruDst').value=r.dstAlias||'';$('#ruPort').value=r.dstPort||0;$('#ruFromZone').value=r.fromZone||'';$('#ruToZone').value=r.toZone||'';$('#ruCat').value=r.category||'';$('#ruLog').checked=!!r.log;$('#ruEnabled').checked=r.enabled!==false;
+if(ruAddBtn)ruAddBtn.textContent='Spremi izmjene';if(ruCancel)ruCancel.style.display='';$('#ruMsg').textContent=`Uređuješ pravilo #${ruEdit+1} — „${r.name||''}". Spremi izmjene ili Odustani.`;$('#ruName').focus();$('#ruName').scrollIntoView({behavior:'smooth',block:'center'})});
 const move=async(i,d)=>{const j=i+d;if(j<0||j>=rules.length)return;const list=rules.slice();const t=list[i];list[i]=list[j];list[j]=t;try{await putRules(list);fwRulesPage()}catch(err){alert(err.message)}};
 document.querySelectorAll('.ruUp').forEach(el=>el.onclick=()=>move(+el.dataset.i,-1));
 document.querySelectorAll('.ruDown').forEach(el=>el.onclick=()=>move(+el.dataset.i,1));
@@ -846,9 +904,10 @@ document.querySelectorAll('.ruTestBtn').forEach(el=>el.onclick=()=>{const r=rule
 $('#ruAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ruMsg');m.textContent='';const name=$('#ruName').value.trim(),proto=$('#ruProto').value,port=parseInt($('#ruPort').value,10)||0;
 if(!/^[A-Za-z0-9 ._-]{1,40}$/.test(name)){m.textContent='Naziv pravila: 1-40 znakova (slova, brojke, razmak . _ -).';return}
 if(port&&proto==='any'){m.textContent='Za odredišni port odaberi tcp ili udp.';return}
-if(rules.some(r=>r.name===name)){m.textContent='Pravilo s tim imenom već postoji.';return}
+if(rules.some((r,j)=>r.name===name&&j!==ruEdit)){m.textContent='Pravilo s tim imenom već postoji.';return}
 const rule={name,action:$('#ruAction').value,proto,srcAlias:$('#ruSrc').value,dstAlias:$('#ruDst').value,dstPort:port,fromZone:$('#ruFromZone').value,toZone:$('#ruToZone').value,category:$('#ruCat').value,log:$('#ruLog').checked,enabled:$('#ruEnabled').checked};
-try{await putRules(rules.concat([rule]));fwRulesPage()}catch(err){m.textContent=err.message}};
+const list=rules.slice();if(ruEdit>=0){list[ruEdit]=rule}else{list.push(rule)}
+try{await putRules(list);fwRulesPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.znDel').forEach(el=>el.onclick=async()=>{const list=zones.filter((_,j)=>j!==+el.dataset.i);try{await putZones(list);fwRulesPage()}catch(err){alert(err.message)}});
 document.querySelectorAll('.znDhcp').forEach(el=>el.onclick=()=>{const z=zones[+el.dataset.i];const ifn=z.vlanId?z.interface+'.'+z.vlanId:z.interface;const router=z.address?z.address.split('/')[0]:'';window.__zoneDhcp={name:z.name,subnet:z.network,iface:ifn,router};openModule('dhcp')});
 const znVlanBtn=$('#znVlanApply');if(znVlanBtn)znVlanBtn.onclick=async()=>{if(!confirm('Primijeniti VLAN sučelja? Ovo piše netplan i radi netplan apply (kreira/mijenja VLAN pod-sučelja).'))return;const m=$('#znVlanMsg');znVlanBtn.disabled=true;m.textContent='Primjena netplana…';try{const r=await api('/api/firewall/zones/apply-vlans',{method:'POST',body:'{}'});m.textContent=`VLAN sučelja primijenjena (${r.vlans}).`}catch(err){m.textContent=err.message}finally{znVlanBtn.disabled=false}};
@@ -986,7 +1045,7 @@ if(dnsZone)await openZone(dnsZone)}
 // Records are kept in `recs` and the whole list is PUT on every change.
 function renderSplitDns(recs){const e=escapeHtml;const el=$('#splitPane');if(!el)return;
 const save=async list=>{try{await api('/api/dns/split',{method:'PUT',body:JSON.stringify({records:list})});renderSplitDns(list)}catch(err){$('#spMsg')&&($('#spMsg').textContent=err.message)}};
-const rows=recs.length?recs.map((r,i)=>`<tr><td><b>${e(r.name)}</b></td><td class="muted">${e(r.type)}</td><td>${e(r.internal)}</td><td>${r.external?e(r.external):'<span class="muted">rekurzija (javni DNS)</span>'}</td><td><div class="rowacts">${iconBtn('del','Obriši','danger',`data-i="${i}"`).replace('iconbtn','iconbtn spDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema split-horizon zapisa.</td></tr>';
+const rows=recs.length?recs.map((r,i)=>`<tr><td><b>${e(r.name)}</b></td><td class="muted">${e(r.type)}</td><td>${e(r.internal)}</td><td>${r.external?e(r.external):'<span class="muted">rekurzija (javni DNS)</span>'}</td><td><div class="rowacts">${iconBtn('edit','Uredi','',`data-i="${i}"`).replace('iconbtn','iconbtn spEdit')}${iconBtn('del','Obriši','danger',`data-i="${i}"`).replace('iconbtn','iconbtn spDel')}</div></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema split-horizon zapisa.</td></tr>';
 el.innerHTML=`${help('<b>Ukratko:</b> isto ime — <b>dva odgovora</b>. Klijenti <b>iznutra</b> (LAN) dobiju <b>interni IP</b> i idu ravno na server; svi <b>izvana</b> dobiju <b>javni IP</b>. Tipično za <code>mail.tvrtka.hr</code> koji je javno <code>203.0.113.10</code>, a u uredu ga želiš doseći kao <code>10.10.10.10</code> bez hairpin NAT-a.<br><br>Upiši <b>ime</b> (FQDN), <b>interni IP</b> (obavezno) i po želji <b>vanjski IP</b> — ako vanjski ostaviš prazan, klijenti izvana ime rješavaju normalno preko javnog DNS-a.<br><i>Tehnički:</i> Unbound view (view-first) za LAN mreže; ostali padaju na globalni odgovor/rekurziju.')}
 <div class="panel"><h2>Split-horizon zapisi (${recs.length})</h2>
 <table><thead><tr><th>Ime (FQDN)</th><th>Tip</th><th>Interni (LAN)</th><th>Vanjski (javni)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -996,16 +1055,21 @@ el.innerHTML=`${help('<b>Ukratko:</b> isto ime — <b>dva odgovora</b>. Klijenti
 <label>Tip <select id="spType"><option>A</option><option>AAAA</option></select></label>
 <label>Interni IP — vide klijenti iznutra <input id="spInt" placeholder="10.10.10.10" required></label>
 <label>Vanjski IP — vide svi izvana (prazno = javni DNS) <input id="spExt" placeholder="203.0.113.10"></label>
-<div><button type="submit">Dodaj</button></div><div id="spMsg" class="muted"></div></form></div>`;
+<div><button type="submit" id="spAddBtn">Dodaj</button> <button type="button" id="spCancel" class="ghost" style="display:none">Odustani</button></div><div id="spMsg" class="muted"></div></form></div>`;
+let spEdit=-1;const spAddBtn=$('#spAddBtn'),spCancel=$('#spCancel');
+if(spCancel)spCancel.onclick=()=>{spEdit=-1;$('#spAdd').reset();if(spAddBtn)spAddBtn.textContent='Dodaj';spCancel.style.display='none';$('#spMsg').textContent=''};
+document.querySelectorAll('.spEdit').forEach(b=>b.onclick=()=>{const r=recs[+b.dataset.i];spEdit=+b.dataset.i;$('#spName').value=r.name||'';$('#spType').value=r.type||'A';$('#spInt').value=r.internal||'';$('#spExt').value=r.external||'';if(spAddBtn)spAddBtn.textContent='Spremi izmjene';if(spCancel)spCancel.style.display='';$('#spMsg').textContent=`Uređuješ zapis „${r.name||''}".`;$('#spName').focus()});
 document.querySelectorAll('.spDel').forEach(b=>b.onclick=()=>{const list=recs.filter((_,j)=>j!==+b.dataset.i);save(list)});
 $('#spAdd').onsubmit=ev=>{ev.preventDefault();const m=$('#spMsg');const name=$('#spName').value.trim().toLowerCase();const type=$('#spType').value;const internal=$('#spInt').value.trim();const external=$('#spExt').value.trim();
 if(!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(name)){m.textContent='Ime mora biti ispravan FQDN (npr. mail.tvrtka.hr).';return}
 if(!internal){m.textContent='Interni IP je obavezan.';return}
-if(recs.some(r=>r.name===name&&r.type===type)){m.textContent='Zapis za to ime i tip već postoji.';return}
-save(recs.concat([{name,type,internal,external}]))}}
+if(recs.some((r,j)=>r.name===name&&r.type===type&&j!==spEdit)){m.textContent='Zapis za to ime i tip već postoji.';return}
+const list=recs.slice();if(spEdit>=0){list[spEdit]={name,type,internal,external}}else{list.push({name,type,internal,external})}
+save(list)}}
 async function openZone(name){dnsZone=name;const d=await api(`/api/dns/zones/${encodeURIComponent(name)}`);const hidden=['SOA','RRSIG','NSEC','NSEC3','NSEC3PARAM','DNSKEY','CDS','CDNSKEY'];const sets=(d.rrsets||[]).filter(s=>!hidden.includes(s.type));
-$('#zoneDetail').innerHTML=`<div class="panel"><h2>Zapisi — ${escapeHtml(name)}</h2><table><thead><tr><th>Ime</th><th>Tip</th><th>TTL</th><th>Vrijednosti</th><th></th></tr></thead><tbody>${sets.map(s=>`<tr><td>${escapeHtml(s.name)}</td><td>${escapeHtml(s.type)}</td><td>${s.ttl}</td><td>${escapeHtml((s.records||[]).map(r=>r.content).join(', '))}</td><td><button class="recDel" data-n="${escapeHtml(s.name)}" data-t="${escapeHtml(s.type)}">Obriši</button></td></tr>`).join('')}</tbody></table>
+$('#zoneDetail').innerHTML=`<div class="panel"><h2>Zapisi — ${escapeHtml(name)}</h2><table><thead><tr><th>Ime</th><th>Tip</th><th>TTL</th><th>Vrijednosti</th><th></th></tr></thead><tbody>${sets.map((s,i)=>`<tr><td>${escapeHtml(s.name)}</td><td>${escapeHtml(s.type)}</td><td>${s.ttl}</td><td>${escapeHtml((s.records||[]).map(r=>r.content).join(', '))}</td><td><button class="recEdit" data-i="${i}">Uredi</button> <button class="recDel" data-n="${escapeHtml(s.name)}" data-t="${escapeHtml(s.type)}">Obriši</button></td></tr>`).join('')}</tbody></table>
 <form id="recAdd" class="stack"><h3>Dodaj / uredi zapis</h3><label>Ime (FQDN) <input id="rName" placeholder="host.${escapeHtml(name)}" required></label><label>Tip <select id="rType">${['A','AAAA','CNAME','TXT','MX','SRV','NS','PTR','CAA'].map(t=>`<option>${t}</option>`).join('')}</select></label><label>TTL <input id="rTtl" type="number" value="3600" min="1"></label><label>Vrijednosti (zarezom) <input id="rVal" placeholder="192.168.10.20" required></label><div><button type="submit">Spremi zapis</button></div><div id="rMsg" class="muted"></div></form></div>`;
+document.querySelectorAll('.recEdit').forEach(el=>el.onclick=()=>{const s=sets[+el.dataset.i];if(!s)return;$('#rName').value=s.name||'';$('#rType').value=s.type||'A';$('#rTtl').value=s.ttl||3600;$('#rVal').value=(s.records||[]).map(r=>r.content).join(', ');$('#rMsg').textContent=`Uređuješ ${s.name} ${s.type} — Spremi zapis zamjenjuje sve vrijednosti tog zapisa.`;$('#rName').focus();$('#rName').scrollIntoView({behavior:'smooth',block:'center'})});
 document.querySelectorAll('.recDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati ${el.dataset.n} ${el.dataset.t}?`))return;try{await api(`/api/dns/zones/${encodeURIComponent(name)}/records`,{method:'PUT',body:JSON.stringify({name:el.dataset.n,type:el.dataset.t,delete:true,ttl:0,contents:[]})});openZone(name)}catch(err){alert(err.message)}});
 $('#recAdd').onsubmit=async e=>{e.preventDefault();$('#rMsg').textContent='';try{await api(`/api/dns/zones/${encodeURIComponent(name)}/records`,{method:'PUT',body:JSON.stringify({name:$('#rName').value.trim(),type:$('#rType').value,ttl:parseInt($('#rTtl').value,10)||3600,contents:$('#rVal').value.split(',').map(s=>s.trim()).filter(Boolean),delete:false})});openZone(name)}catch(err){$('#rMsg').textContent=err.message}}}
 async function dhcpPage(){const get=p=>api(p).catch(e=>({err:e.message}));const [subnets,leases,resv,block,fwblock]=await Promise.all([get('/api/dhcp/subnets'),get('/api/dhcp/leases'),get('/api/dhcp/reservations'),get('/api/dhcp/blocklist'),get('/api/firewall/blocklist')]);
