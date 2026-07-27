@@ -333,11 +333,17 @@ if (( MEM_MB < 3500 || CPU_CORES < 4 )); then
   LOW_SPEC=true
   log "NOTE: low-spec profile detected. DHCP/DNS/CA/proxy/WireGuard are fully supported; do NOT enable Suricata IDS/IPS on this hardware — use Unbound RPZ filtering instead. Journald size will be capped."
 fi
-if $LOW_SPEC && ! $DRY_RUN; then
+# Cap the persistent journal on every install (not just low-spec): an appliance
+# does not need gigabytes of logs, and this keeps the disk safe regardless of
+# size. Structured events have their own retention (saguaro-eventd drops event
+# partitions older than SAGUARO_EVENT_RETENTION_MONTHS, default 6).
+if ! $DRY_RUN; then
   install -d /etc/systemd/journald.conf.d
   cat >/etc/systemd/journald.conf.d/saguaro.conf <<'EOF'
 [Journal]
 SystemMaxUse=512M
+SystemMaxFileSize=64M
+MaxRetentionSec=30day
 EOF
   systemctl restart systemd-journald
 fi
