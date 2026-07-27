@@ -617,16 +617,16 @@ ${help('<b>1.</b> Uključi sučelje i spremi — uređaj generira svoj ključni 
 <div><button type="submit">Spremi sučelje</button></div>
 <div id="s2sMsg" class="muted"></div></form></div>
 ${keyPanel}
-<div class="panel"><h3>Tuneli (${sites.length})</h3>
-<table><thead><tr><th>Naziv</th><th>Endpoint</th><th>Udaljene mreže</th><th>Keepalive</th><th>PSK</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-<div class="panel"><h3>Dodaj tunel (udaljenu lokaciju)</h3><form id="s2sAdd" class="stack">
+<div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Tuneli (${sites.length})</h3><button type="button" id="stNew">+ Dodaj tunel</button></div>
+<table><thead><tr><th>Naziv</th><th>Endpoint</th><th>Udaljene mreže</th><th>Keepalive</th><th>PSK</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<form id="s2sAdd" class="stack" style="${drawerStyle}"><h4 id="stFormTitle" style="margin:.1rem 0 .3rem">Novi tunel (udaljena lokacija)</h4>
 <label>Naziv <input id="stName" placeholder="ured-zagreb" required></label>
 <label>Njihov javni ključ <input id="stKey" placeholder="WireGuard public key" required></label>
 <label>Njihov Endpoint (host:port, prazno = pasivno) <input id="stEp" placeholder="203.0.113.5:51821"></label>
 <label>Udaljene mreže (CIDR, zarezom) <input id="stNets" placeholder="192.168.20.0/24" required></label>
 <label>Keepalive (s, 0 = isključeno) <input id="stKa" type="number" min="0" max="65535" value="25"></label>
 <label>Preshared key (opcionalno) <input id="stPsk" placeholder="wg genpsk (opcionalno)"></label>
-<div><button type="submit">Dodaj tunel</button></div>
+<div class="btnrow"><button type="submit">Dodaj tunel</button> <button type="button" id="stCancel" class="ghost">Odustani</button></div>
 <div id="stMsg" class="muted"></div></form></div>`;
 $('#s2sForm').onsubmit=async ev=>{ev.preventDefault();const m=$('#s2sMsg');m.textContent='';
 const tun=$('#s2sTun').value.trim();const local=$('#s2sLocal').value.split(',').map(x=>x.trim()).filter(Boolean);
@@ -634,6 +634,7 @@ if(tun&&!isCIDR(tun)){m.textContent='Tunel adresa mora biti CIDR (npr. 10.9.0.1/
 for(const n of local){if(!isCIDR(n)){m.textContent='Neispravna lokalna mreža: '+n;return}}
 m.textContent='Primjena…';try{await api('/api/s2s/apply',{method:'POST',body:JSON.stringify({enabled:$('#s2sEnabled').checked,listenPort:parseInt($('#s2sPort').value,10)||51821,tunnelAddress:tun,localNetworks:local})});s2sPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.s2sDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati tunel ${el.dataset.n}?`))return;try{await api(`/api/s2s/sites/${encodeURIComponent(el.dataset.n)}`,{method:'DELETE'});s2sPage()}catch(err){alert(err.message)}});
+makeDrawer({form:'s2sAdd',title:'stFormTitle',newBtn:'stNew',cancel:'stCancel',addTitle:'Novi tunel (udaljena lokacija)',reset:()=>{$('#s2sAdd').reset();$('#stMsg').textContent=''},focus:'stName'});
 $('#s2sAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#stMsg');m.textContent='';
 const key=$('#stKey').value.trim(),ep=$('#stEp').value.trim(),nets=$('#stNets').value.split(',').map(x=>x.trim()).filter(Boolean),psk=$('#stPsk').value.trim();
 if(!isWgKey(key)){m.textContent='Javni ključ nije ispravan WireGuard ključ.';return}
@@ -653,9 +654,9 @@ $('#content').innerHTML=`<div class="panel"><h2>IPsec IKEv2 ${s.enabled?'<span c
 ${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>, iste <b>proposal</b> algoritme (default <code>'+e(dike)+'</code>) i <b>zrcalne</b> mreže — naše <b>Lokalne mreže</b> su njihove udaljene i obrnuto. <b>Remote adresa</b> je javni IP/FQDN drugog uređaja. <b>Initiate</b> uključi na strani koja prva uspostavlja tunel (druga strana čeka); ako obje imaju stalni IP, može bilo koja. <b>ID</b> ostavi prazno da se koristi IP, ili upiši npr. FQDN/@ime ako to peer traži. Na drugom uređaju: IPsec → IKEv2, Authentication = Preshared key, Local/Remote subnets zrcalno, isti algoritmi. Potreban je otvoren UDP 500/4500 prema nama i dozvoljen forwarding.')}
 <div class="wizRow">${conns.length?`<button id="ipToggle">${s.enabled?'Isključi IPsec':'Uključi IPsec'}</button>`:'<span class="muted">Dodaj barem jedan tunel pa ga možeš uključiti.</span>'}</div>
 <div id="ipMsg" class="muted"></div></div>
-<div class="panel"><h3>Tuneli (${conns.length})</h3>
-<table><thead><tr><th>Naziv</th><th>Remote</th><th>Lokalno → Udaljeno</th><th>Način</th><th>Auth</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-<div class="panel"><h3>Dodaj / uredi tunel</h3><form id="ipAdd" class="stack">
+<div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Tuneli (${conns.length})</h3><button type="button" id="ipNew">+ Dodaj tunel</button></div>
+<table><thead><tr><th>Naziv</th><th>Remote</th><th>Lokalno → Udaljeno</th><th>Način</th><th>Auth</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<form id="ipAdd" class="stack" style="${drawerStyle}"><h4 id="ipFormTitle" style="margin:.1rem 0 .3rem">Novi tunel</h4>
 <label>Naziv <input id="ipName" placeholder="ured-hq" required></label>
 <label>Remote adresa (IP ili FQDN) <input id="ipRemote" placeholder="203.0.113.5" required></label>
 <label>Naše lokalne mreže (CIDR, zarezom) <input id="ipLocal" placeholder="192.168.10.0/24" required></label>
@@ -672,11 +673,12 @@ ${help('Obje strane moraju imati <b>iste postavke</b>: isti <b>preshared key</b>
 <label>Naš privatni ključ (PEM, prazno = zadrži) <textarea id="ipKey" rows="3" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></label>
 <label>CA certifikat udaljene strane (PEM) <textarea id="ipCa" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
 <p class="muted">Za certifikate su <b>Local ID</b> i <b>Remote ID</b> obavezni i moraju odgovarati identitetima u certifikatima (npr. CN/SAN). Certifikate možeš izdati u modulu <b>Certificates</b> ili unijeti tuđe.</p></div>
-<div><button type="submit">Spremi tunel</button></div>
+<div class="btnrow"><button type="submit">Spremi tunel</button> <button type="button" id="ipCancel" class="ghost">Odustani</button></div>
 <div id="ipaMsg" class="muted"></div></form></div>`;
 if($('#ipToggle'))$('#ipToggle').onclick=async()=>{const m=$('#ipMsg');m.textContent='Primjena…';try{await api('/api/ipsec/apply',{method:'POST',body:JSON.stringify({enabled:!s.enabled})});ipsecPage()}catch(err){m.textContent=err.message}};
 document.querySelectorAll('.ipDel').forEach(el=>el.onclick=async()=>{if(!confirm(`Obrisati tunel ${el.dataset.n}?`))return;try{await api(`/api/ipsec/connections/${encodeURIComponent(el.dataset.n)}`,{method:'DELETE'});ipsecPage()}catch(err){alert(err.message)}});
 $('#ipAuth').onchange=()=>{const cert=$('#ipAuth').value==='cert';$('#ipPskWrap').style.display=cert?'none':'';$('#ipCertWrap').style.display=cert?'':'none'};
+makeDrawer({form:'ipAdd',title:'ipFormTitle',newBtn:'ipNew',cancel:'ipCancel',addTitle:'Novi tunel',reset:()=>{$('#ipAdd').reset();$('#ipPskWrap').style.display='';$('#ipCertWrap').style.display='none';$('#ipaMsg').textContent=''},focus:'ipName'});
 $('#ipAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#ipaMsg');m.textContent='';
 const local=$('#ipLocal').value.split(',').map(x=>x.trim()).filter(Boolean),rem=$('#ipRemNets').value.split(',').map(x=>x.trim()).filter(Boolean);
 const ike=$('#ipIke').value.trim()||dike,esp=$('#ipEsp').value.trim()||desp,auth=$('#ipAuth').value,psk=$('#ipPsk').value.trim();
