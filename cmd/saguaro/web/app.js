@@ -565,20 +565,21 @@ function isCIDR(s){const m=/^(.+)\/(\d{1,2})$/.exec(s);if(!m)return false;return
 async function routingPage(){const cfg=await api('/api/routes');const routes=cfg.routes||[];let nics=[];try{nics=await api('/api/interfaces')}catch(e){}
 const save=list=>api('/api/routes',{method:'PUT',body:JSON.stringify({routes:list})});
 const nicOpts=nics.map(n=>`<option value="${escapeHtml(n.name)}">`).join('');
-$('#content').innerHTML=`<div class="panel"><h2>Statičke rute (${routes.length})</h2>
+$('#content').innerHTML=`<div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Statičke rute (${routes.length})</h2><button type="button" id="rtNew">+ Dodaj rutu</button></div>
 <p class="muted">Usmjeri promet za određenu mrežu kroz zadani gateway — npr. odredište <code>10.20.0.0/16</code> preko <code>192.168.50.254</code>. Rute su trajne (vraćaju se nakon reboota). Za default rutu koristi odredište <code>default</code>.</p>
 ${help('<b>Odredište</b> je mreža do koje želiš doći, u CIDR obliku (npr. <code>10.20.0.0/16</code> = cijela 10.20.x.x mreža). <b>Gateway</b> je IP susjednog rutera preko kojeg se do te mreže dolazi — mora biti u tvojoj lokalnoj mreži (on-link). <b>Sučelje</b> ostavi prazno osim ako moraš forsirati izlaz kroz točno određeni NIC. <b>Metrika</b> je prioritet (manji broj = veći prioritet) kad postoji više ruta do istog odredišta. Primjer: dvije lokacije spojene preko rutera 192.168.50.254 — dodaj <code>10.20.0.0/16 → 192.168.50.254</code>.')}
 <table><thead><tr><th>Odredište</th><th>Gateway</th><th>Sučelje</th><th>Metrika</th><th></th></tr></thead><tbody>
 ${routes.length?routes.map((r,i)=>`<tr><td><b>${escapeHtml(r.destination)}</b></td><td>${escapeHtml(r.gateway)}</td><td class="muted">${escapeHtml(r.interface||'auto')}</td><td class="muted">${r.metric||0}</td><td><button class="rtDel danger" data-i="${i}">Obriši</button></td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nema statičkih ruta.</td></tr>'}
-</tbody></table></div>
-<div class="panel"><h3>Dodaj rutu</h3><form id="rtAdd" class="stack">
+</tbody></table>
+<form id="rtAdd" class="stack" style="${drawerStyle}"><h4 id="rtFormTitle" style="margin:.1rem 0 .3rem">Nova ruta</h4>
 <label>Odredište (CIDR ili "default") <input id="rtDest" placeholder="10.20.0.0/16" required></label>
 <label>Gateway (IPv4) <input id="rtGw" placeholder="192.168.50.254" required></label>
 <label>Sučelje (opcionalno) <input id="rtIf" list="rtNics" placeholder="auto"><datalist id="rtNics">${nicOpts}</datalist></label>
 <label>Metrika <input id="rtMetric" type="number" min="0" value="0"></label>
-<div><button type="submit">Dodaj rutu</button></div>
+<div class="btnrow"><button type="submit">Dodaj rutu</button> <button type="button" id="rtCancel" class="ghost">Odustani</button></div>
 <div id="rtMsg" class="muted"></div></form></div>`;
 document.querySelectorAll('.rtDel').forEach(el=>el.onclick=async()=>{$('#rtMsg')&&($('#rtMsg').textContent='');const list=routes.filter((_,j)=>j!==parseInt(el.dataset.i,10));try{await save(list);routingPage()}catch(e){alert(e.message)}});
+makeDrawer({form:'rtAdd',title:'rtFormTitle',newBtn:'rtNew',cancel:'rtCancel',addTitle:'Nova ruta',reset:()=>{$('#rtAdd').reset();$('#rtMsg').textContent=''},focus:'rtDest'});
 $('#rtAdd').onsubmit=async e=>{e.preventDefault();const msg=$('#rtMsg');msg.textContent='';const dest=$('#rtDest').value.trim(),gw=$('#rtGw').value.trim(),iface=$('#rtIf').value.trim(),metric=parseInt($('#rtMetric').value,10)||0;
 if(dest!=='default'&&!isCIDR(dest)){msg.textContent='Odredište mora biti CIDR (npr. 10.20.0.0/16) ili "default".';return}
 if(!isIPv4(gw)){msg.textContent='Gateway mora biti ispravna IPv4 adresa.';return}
@@ -754,19 +755,18 @@ async function aliasesPage(){const f=await api('/api/firewall').catch(()=>({alia
 const putAliases=list=>api('/api/firewall/aliases',{method:'PUT',body:JSON.stringify({aliases:list})});
 const rows=aliases.length?aliases.map((a,i)=>`<tr><td><b>${e(a.name)}</b></td><td class="muted">${e(a.type)}</td><td>${e((a.values||[]).join(', '))}</td><td><div class="rowacts">${iconBtn('edit','Uredi alias','',`data-i="${i}"`).replace('iconbtn','iconbtn alEdit')}${iconBtn('del','Obriši alias','danger',`data-i="${i}"`).replace('iconbtn','iconbtn alDel')}</div></td></tr>`).join(''):'<tr><td colspan="4" class="muted">Još nema aliasa. Dodaj prvi ispod.</td></tr>';
 $('#content').innerHTML=`${help('Alias je <b>ime za IP, mrežu ili raspon</b> — npr. <code>server_rdp</code> = 10.10.10.50. Definiraš ga jednom, a koristiš po imenu u <b>firewall pravilima</b> i <b>VPN pristupu</b>. Promijeniš li IP, sva pravila prate — bez pamćenja adresa. Isti popis vidiš i pod <b>Vatrozid → Aliasi</b>.')}
-<div class="panel"><h2>Aliasi (${aliases.length})</h2>
-<table><thead><tr><th>Naziv</th><th>Tip</th><th>Vrijednosti</th><th>Akcije</th></tr></thead><tbody>${rows}</tbody></table></div>
-<div class="panel"><h3>Dodaj alias</h3>
-<form id="alAdd" class="stack">
+<div class="panel"><div class="btnrow" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Aliasi (${aliases.length})</h2><button type="button" id="alNew">+ Dodaj alias</button></div>
+<table><thead><tr><th>Naziv</th><th>Tip</th><th>Vrijednosti</th><th>Akcije</th></tr></thead><tbody>${rows}</tbody></table>
+<form id="alAdd" class="stack" style="${drawerStyle}"><h4 id="alFormTitle" style="margin:.1rem 0 .3rem">Novi alias</h4>
 <label>Naziv <input id="alName" placeholder="server_rdp" required></label>
 <p class="muted small">Samo slova, brojke i <code>_</code> (počinje slovom). Bez razmaka i crtice — npr. <code>serveri_lan</code>, <code>dmz_web</code>.</p>
 <label>Tip <select id="alType"><option value="host">host — jedna ili više IP adresa</option><option value="network">network — cijela mreža (CIDR)</option><option value="range">range — raspon IP-IP</option></select></label>
 <label>Vrijednosti (zarezom) <input id="alVals" placeholder="10.10.10.50, 10.10.10.51" required></label>
-<div><button type="submit" id="alAddBtn">Dodaj alias</button> <button type="button" id="alCancel" class="ghost" style="display:none">Odustani</button></div><div id="alMsg" class="muted"></div></form></div>`;
-let alEdit=-1;const alAddBtn=$('#alAddBtn'),alCancel=$('#alCancel');
-const alEndEdit=()=>{alEdit=-1;$('#alAdd').reset();if(alAddBtn)alAddBtn.textContent='Dodaj alias';if(alCancel)alCancel.style.display='none';$('#alMsg').textContent=''};
-if(alCancel)alCancel.onclick=alEndEdit;
-document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';if(alCancel)alCancel.style.display='';$('#alMsg').textContent=`Uređuješ alias „${a.name||''}".`;$('#alName').focus()});
+<div class="btnrow"><button type="submit" id="alAddBtn">Dodaj alias</button> <button type="button" id="alCancel" class="ghost">Odustani</button></div><div id="alMsg" class="muted"></div></form></div>`;
+let alEdit=-1;const alAddBtn=$('#alAddBtn');
+const alReset=()=>{alEdit=-1;$('#alAdd').reset();if(alAddBtn)alAddBtn.textContent='Dodaj alias';$('#alMsg').textContent=''};
+const alDrawer=makeDrawer({form:'alAdd',title:'alFormTitle',newBtn:'alNew',cancel:'alCancel',addTitle:'Novi alias',reset:alReset,focus:'alName'});
+document.querySelectorAll('.alEdit').forEach(el=>el.onclick=()=>{const a=aliases[+el.dataset.i];alEdit=+el.dataset.i;$('#alName').value=a.name||'';$('#alType').value=a.type||'host';$('#alVals').value=(a.values||[]).join(', ');if(alAddBtn)alAddBtn.textContent='Spremi izmjene';$('#alMsg').textContent='';alDrawer.edit('Uredi alias — '+(a.name||''))});
 document.querySelectorAll('.alDel').forEach(el=>el.onclick=async()=>{const a=aliases[+el.dataset.i];if(!confirm('Obrisati alias „'+a.name+'"? Pravila koja ga koriste ostat će bez odredišta.'))return;const list=aliases.filter((_,j)=>j!==+el.dataset.i);try{await putAliases(list);aliasesPage()}catch(err){alert(err.message)}});
 $('#alAdd').onsubmit=async ev=>{ev.preventDefault();const m=$('#alMsg');const name=$('#alName').value.trim();const type=$('#alType').value;const vals=$('#alVals').value.split(',').map(x=>x.trim()).filter(Boolean);
 if(!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)){m.textContent='Naziv mora počinjati slovom i sadržavati samo slova, brojke i _ (bez crtice/razmaka).';return}
