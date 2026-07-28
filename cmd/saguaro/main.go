@@ -175,7 +175,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.7"
+const appVersion = "0.99.8"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
