@@ -175,7 +175,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.13"
+const appVersion = "0.99.14"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -460,6 +460,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/backup/disable", a.authz(permBackup, a.apiBackupDisable))
 	mux.HandleFunc("GET /api/backup/files", a.authz(permBackup, a.apiBackupFiles))
 	mux.HandleFunc("GET /api/backup/download/{name}", a.authz(permBackup, a.apiBackupDownload))
+	mux.HandleFunc("POST /api/backup/restore", a.authz(permBackup, a.serialized(a.apiBackupRestore)))
 	mux.HandleFunc("GET /api/multiwan", a.auth(a.apiWANGet))
 	mux.HandleFunc("POST /api/multiwan/apply", a.authz(permFirewall, a.serialized(a.apiWANApply)))
 	mux.HandleFunc("POST /api/multiwan/confirm", a.authz(permFirewall, a.serialized(a.apiWANConfirm)))

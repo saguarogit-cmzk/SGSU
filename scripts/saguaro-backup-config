@@ -77,8 +77,46 @@ EOF
     [ -f "/var/backups/saguaro/$f" ] || { echo "no such backup" >&2; exit 1; }
     cat "/var/backups/saguaro/$f"
     ;;
+  restore)
+    # Disaster recovery: decrypt a local archive with the on-box age key and put
+    # the configuration + databases back. Intended to run on a freshly-installed
+    # box (the operator first restores their saved backup.agekey and drops the
+    # archive into /var/backups/saguaro). Strict filename charset; fixed dir.
+    f="${2:-}"
+    echo "$f" | grep -qE '^saguaro-[A-Za-z0-9._-]+\.tar\.gz\.age$' || { echo "invalid archive filename" >&2; exit 1; }
+    SRC="/var/backups/saguaro/$f"
+    [ -f "$SRC" ] || { echo "no such backup archive at $SRC" >&2; exit 1; }
+    [ -s /etc/saguaro/backup.agekey ] || { echo "decryption key /etc/saguaro/backup.agekey is missing (restore your saved key first)" >&2; exit 1; }
+    command -v age >/dev/null || { echo "age is not installed" >&2; exit 1; }
+    RWORK=$(mktemp -d); trap 'rm -rf -- "$RWORK"' EXIT
+    if ! age -d -i /etc/saguaro/backup.agekey "$SRC" 2>/dev/null | tar -C "$RWORK" -xzf - 2>/dev/null; then
+      echo "decrypt/extract failed -- wrong key for this archive, or the archive is corrupt" >&2; exit 1
+    fi
+    [ -d "$RWORK/etc/saguaro" ] || { echo "this does not look like a Saguaro backup (no etc/saguaro inside)" >&2; exit 1; }
+    # Restore the config trees. backup.agekey was excluded from the archive, so the
+    # current decryption key is preserved.
+    for d in etc/saguaro etc/kea etc/unbound etc/powerdns etc/nginx etc/netplan etc/systemd/network var/lib/saguaro; do
+      [ -d "$RWORK/$d" ] && { install -d "/$d" 2>/dev/null || true; cp -a "$RWORK/$d/." "/$d/" 2>/dev/null || true; }
+    done
+    [ -f "$RWORK/etc/nftables.conf" ] && cp -a "$RWORK/etc/nftables.conf" /etc/nftables.conf
+    [ -f "$RWORK/etc/sysctl.d/99-saguaro-forward.conf" ] && cp -a "$RWORK/etc/sysctl.d/99-saguaro-forward.conf" /etc/sysctl.d/99-saguaro-forward.conf
+    # Restore the databases (dumps were taken with --clean --if-exists).
+    if [ -d "$RWORK/pgsql" ] && command -v psql >/dev/null; then
+      for db in saguaro kea pdns; do
+        [ -f "$RWORK/pgsql/$db.sql" ] && runuser -u postgres -- psql -q -d "$db" -f "$RWORK/pgsql/$db.sql" >/dev/null 2>&1 || true
+      done
+    fi
+    # Bring the restored configuration into effect.
+    systemctl daemon-reload 2>/dev/null || true
+    sysctl -q --system 2>/dev/null || true
+    nft -f /etc/nftables.conf 2>/dev/null || true
+    netplan apply 2>/dev/null || true
+    systemctl restart kea-dhcp4-server unbound pdns nginx saguaro-eventd saguaro 2>/dev/null || true
+    logger -t saguaro-backup-config "restored configuration + databases from $f"
+    echo "restore complete from $f"
+    ;;
   *)
-    echo "usage: saguaro-backup-config apply|run|disable|list|get" >&2
+    echo "usage: saguaro-backup-config apply|run|disable|list|get|restore" >&2
     exit 2
     ;;
 esac

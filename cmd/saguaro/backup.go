@@ -333,6 +333,35 @@ func (a *app) apiBackupDownload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
+// apiBackupRestore restores the whole appliance (config + databases) from a local
+// age-encrypted archive via the adapter. Destructive and disaster-recovery only —
+// intended for a freshly-installed box where the operator restored their saved
+// backup.agekey. Admin/backup permission gated; the adapter re-validates and needs
+// the matching decryption key to succeed.
+func (a *app) apiBackupRestore(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if !backupFileRe.MatchString(name) || !strings.HasSuffix(name, ".tar.gz.age") {
+		writeError(w, http.StatusBadRequest, "invalid archive filename")
+		return
+	}
+	out, err := a.runBackupCfg(r.Context(), "restore", name)
+	if err != nil {
+		a.recordSev(r, a.actor(r), "backup-restore", name, "failed", "security",
+			map[string]any{"error": truncate(string(out), 400)})
+		writeError(w, http.StatusBadGateway, "restore failed: "+truncate(string(out), 400))
+		return
+	}
+	a.recordSev(r, a.actor(r), "backup-restore", name, "success", "security", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"message": "Restore dovršen. Servisi su ponovno pokrenuti; ako se konfiguracija razlikovala, GUI se možda nakratko prekinuo."})
+}
+
 // apiBackupMarkDrill records that a restore drill was performed, clearing the
 // 90-day reminder.
 func (a *app) apiBackupMarkDrill(w http.ResponseWriter, r *http.Request) {
