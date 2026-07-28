@@ -19,10 +19,19 @@ Makefile; produkcija se objavljuje isključivo iza HTTPS-a.
 
 ## Ubuntu instalacija
 
-Na čistom Ubuntu 24.04 LTS serveru klonirajte ili prenesite ovaj direktorij, provjerite
-parametre i pokrenite:
+Na čistom Ubuntu 24.04 LTS serveru dohvatite repozitorij, pregledajte plan s
+`--dry-run`, pa pokrenite instalaciju:
 
 ```bash
+# 1. dohvat repozitorija
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/saguarogit-cmzk/SGSU.git
+cd SGSU
+
+# 2. prvo pregled plana (ništa se ne mijenja)
+sudo ./scripts/install-ubuntu.sh --dry-run --admin-network 192.168.10.0/24 --client-network 192.168.10.0/24
+
+# 3. stvarna instalacija (prilagodi parametre svojoj mreži)
 sudo ./scripts/install-ubuntu.sh \
   --admin-network 192.168.10.0/24 \
   --client-network 192.168.10.0/24 \
@@ -52,6 +61,18 @@ exporter. Inicijalna administratorska lozinka sprema se u
 `/etc/saguaro/bootstrap-admin-password` i servisu se predaje isključivo kroz systemd
 `LoadCredential`. Ključ za dešifriranje backupa (`/etc/saguaro/backup.agekey`) odmah
 nakon instalacije kopirajte na offline medij.
+
+## Oporavak nakon kvara (DR)
+
+Kompletan DR se vodi iz GUI-ja (modul **Backup**):
+
+1. **Priprema (na uređaju koji radi):** iz *Lokalne kopije* preuzmi arhive (`.age`), a iz
+   *Ključ za oporavak (DR)* preuzmi `backup.agekey`. Čuvaj ih **offline i odvojeno** —
+   ključ dešifrira sve backupe, tretiraj ga kao master lozinku.
+2. **Oporavak (novi/zamjenski uređaj):** instaliraj Ubuntu → pokreni `install-ubuntu.sh`
+   (koraci gore) → u GUI-ju **Backup → Uvezi ključ** (zalijepi spremljeni ključ) → stavi
+   arhivu u `/var/backups/saguaro/` → **Vrati iz ove kopije**. Vraćaju se konfiguracija,
+   baze (DHCP leaseovi / DNS zapisi / eventi) i interni CA; servisi se ponovno pokreću.
 
 ## Potvrđeni sastav komponenti
 
