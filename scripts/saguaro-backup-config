@@ -18,6 +18,11 @@ DROPDIR=/etc/systemd/system/saguaro-backup.timer.d
 case "${1:-}" in
   apply)
     [ -s "$STAGED_ENV" ] || { echo "no staged backup env at $STAGED_ENV" >&2; exit 1; }
+    # The local destination must exist before the sandboxed backup service starts:
+    # its ProtectSystem=strict + ReadWritePaths=/var/backups/saguaro namespace setup
+    # fails (226/NAMESPACE) if the directory is missing. Create it here so both new
+    # and existing installs work regardless of unit reinstalls.
+    install -d -m 0700 -o root -g root /var/backups/saguaro
     # backup.env is sourced by the root backup service, so the staged file is
     # a trust boundary: reject anything that is not a plain KEY=<safe value>
     # line. This blocks shell injection ($(...), backticks, ;, spaces, quotes)

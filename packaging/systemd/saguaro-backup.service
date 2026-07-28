@@ -3,6 +3,9 @@ Description=Saguaro configuration backup
 
 [Service]
 Type=oneshot
+# Create the destination outside the sandbox first; ProtectSystem=strict +
+# ReadWritePaths below fail namespace setup (226) if it does not already exist.
+ExecStartPre=+/usr/bin/install -d -m 0700 /var/backups/saguaro
 ExecStart=/usr/sbin/saguaro-backup
 Nice=10
 IOSchedulingClass=best-effort

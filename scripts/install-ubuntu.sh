@@ -504,6 +504,7 @@ setup_port_names
 run useradd --system --home-dir /var/lib/saguaro --shell /usr/sbin/nologin saguaro 2>/dev/null || true
 run install -d -o saguaro -g saguaro -m 0700 /var/lib/saguaro
 run install -d -o saguaro -g saguaro -m 0750 /var/log/saguaro
+run install -d -o root -g root -m 0700 /var/backups/saguaro
 run install -d -o root -g saguaro -m 0750 /etc/saguaro
 
 # Deployment mode: "gateway" (firewall/gateway/VPN/UTM) or "router" (local
