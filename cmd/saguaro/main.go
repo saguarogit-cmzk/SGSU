@@ -103,6 +103,11 @@ type store struct {
 	mu   sync.RWMutex
 	path string
 	data state
+	// Config versioning: verDir holds timestamped config snapshots; lastSections
+	// is the per-section fingerprint of the last snapshot, so a save only creates a
+	// new version when the config (not the volatile audit log) actually changes.
+	verDir       string
+	lastSections map[string]string
 }
 
 type app struct {
@@ -167,7 +172,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.4"
+const appVersion = "0.99.5"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -430,6 +435,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/tools", a.authz(permServiceCheck, a.apiToolRun))
 	mux.HandleFunc("POST /api/diag/capture", a.authz(permServiceCheck, a.apiDiagCapture))
 	mux.HandleFunc("GET /api/diag/conntrack", a.authz(permServiceCheck, a.apiDiagConntrack))
+	mux.HandleFunc("GET /api/config/versions", a.auth(a.apiConfigVersions))
+	mux.HandleFunc("GET /api/config/versions/{id}", a.auth(a.apiConfigVersionGet))
+	mux.HandleFunc("POST /api/config/checkpoint", a.authz(permConfigRestore, a.serialized(a.apiConfigCheckpoint)))
+	mux.HandleFunc("POST /api/config/versions/{id}/restore", a.authz(permConfigRestore, a.serialized(a.apiConfigVersionRestore)))
 	mux.HandleFunc("GET /api/webproxy", a.auth(a.apiWebProxyGet))
 	mux.HandleFunc("GET /api/webproxy/ca", a.auth(a.apiWebProxyCA))
 	mux.HandleFunc("PUT /api/webproxy", a.authz(permProxy, a.serialized(a.apiWebProxyPut)))
@@ -494,7 +503,11 @@ func openStore(path string) (*store, error) {
 	s := &store{path: path, data: state{Version: 1, Services: defaultServices()}}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return s, s.saveLocked()
+		if err := s.saveLocked(); err != nil {
+			return nil, err
+		}
+		s.initVersions()
+		return s, nil
 	}
 	if err != nil {
 		return nil, err
@@ -515,8 +528,11 @@ func openStore(path string) (*store, error) {
 		}
 	}
 	if added {
-		return s, s.saveLocked()
+		if err := s.saveLocked(); err != nil {
+			return nil, err
+		}
 	}
+	s.initVersions()
 	return s, nil
 }
 
@@ -543,7 +559,13 @@ func (s *store) saveLocked() error {
 	if err := os.WriteFile(tmp, b, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		return err
+	}
+	// Snapshot a new config version when the config actually changed (no-op for
+	// audit-only saves, and until initVersions has run).
+	s.maybeSnapshotLocked(b)
+	return nil
 }
 
 func (s *store) addAudit(e auditEvent) error {
