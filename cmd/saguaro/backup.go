@@ -418,7 +418,7 @@ func (a *app) apiBackupKeyImport(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordSev(r, a.actor(r), "backup-key-import", "backup.agekey", "success", "security", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-		"message": "Ključ uvezen. Sada možeš vratiti backup („Vrati iz ove kopije")."})
+		"message": "Ključ uvezen. Sada možeš vratiti backup gumbom Vrati iz ove kopije."})
 }
 
 // apiBackupMarkDrill records that a restore drill was performed, clearing the
