@@ -10,6 +10,8 @@ set -eu
 
 STAGED_CONF=/var/lib/saguaro/staged-dns-zones.conf
 CONF=/etc/unbound/unbound.conf.d/saguaro-zones.conf
+STAGED_FWD=/var/lib/saguaro/staged-dns-forward.conf
+FWD_CONF=/etc/unbound/unbound.conf.d/saguaro-forward.conf
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
@@ -36,8 +38,31 @@ case "${1:-}" in
     systemctl restart unbound
     logger -t saguaro-dns "per-zone resolver access disabled"
     ;;
+  forward-apply)
+    [ -s "$STAGED_FWD" ] || { echo "no staged DNS forward drop-in at $STAGED_FWD" >&2; exit 1; }
+    # The control plane validates every upstream; the drop-in also carries '@' for
+    # the forward-addr port syntax, so allow it in addition to the zones charset.
+    if grep -qvE '^[A-Za-z0-9 ._:/#(),"@-]*$' "$STAGED_FWD"; then
+      echo "staged DNS forward drop-in contains unexpected characters; refusing" >&2
+      exit 1
+    fi
+    install -m 0644 -o root -g root "$STAGED_FWD" "$FWD_CONF"
+    rm -f "$STAGED_FWD"
+    if ! unbound-checkconf >/dev/null 2>&1; then
+      rm -f "$FWD_CONF"
+      echo "unbound-checkconf rejected the DNS forward configuration; change reverted" >&2
+      exit 1
+    fi
+    systemctl restart unbound
+    logger -t saguaro-dns "encrypted DNS upstream (DoT) applied"
+    ;;
+  forward-disable)
+    rm -f "$FWD_CONF"
+    systemctl restart unbound
+    logger -t saguaro-dns "encrypted DNS upstream (DoT) disabled"
+    ;;
   *)
-    echo "usage: saguaro-dns zone-access-apply|zone-access-disable" >&2
+    echo "usage: saguaro-dns zone-access-apply|zone-access-disable|forward-apply|forward-disable" >&2
     exit 2
     ;;
 esac

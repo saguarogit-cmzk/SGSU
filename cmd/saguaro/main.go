@@ -97,6 +97,8 @@ type state struct {
 	// SplitDNS are split-horizon overrides: internal clients get the internal
 	// answer, everyone else the external (public) one. Served by Unbound views.
 	SplitDNS []dnszones.SplitRecord `json:"splitDns,omitempty"`
+	// DNSForward is the optional encrypted (DoT) upstream configuration for Unbound.
+	DNSForward *dnsForwardConfig `json:"dnsForward,omitempty"`
 }
 
 type store struct {
@@ -145,6 +147,7 @@ type app struct {
 	runPower          func(ctx context.Context, action string) ([]byte, error)
 	runSelfUpdate     func(ctx context.Context, args ...string) ([]byte, error)
 	runDNSZones       func(ctx context.Context, action string) ([]byte, error)
+	runDNSForward     func(ctx context.Context, action string) ([]byte, error)
 	runNet            func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces    func(ctx context.Context) ([]nicInfo, error)
 	readDefaultRoutes func(ctx context.Context) ([]defaultRoute, error)
@@ -172,7 +175,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.5"
+const appVersion = "0.99.6"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -297,6 +300,7 @@ func main() {
 		runPower:          defaultRunPower,
 		runSelfUpdate:     defaultRunSelfUpdate,
 		runDNSZones:       defaultRunDNSZones,
+		runDNSForward:     defaultRunDNSForward,
 		runNet:            defaultRunNet,
 		readInterfaces:    defaultReadInterfaces,
 		readDefaultRoutes: defaultReadDefaultRoutes,
@@ -391,6 +395,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PUT /api/dns/zones/{zone}/records", a.authz(permDNSWrite, a.apiDNSRecordPut))
 	mux.HandleFunc("POST /api/dns/reverse", a.authz(permDNSWrite, a.apiDNSReverseCreate))
 	mux.HandleFunc("POST /api/dns/ptr", a.authz(permDNSWrite, a.apiDNSPTRUpsert))
+	mux.HandleFunc("GET /api/dns/forward", a.auth(a.apiDNSForwardGet))
+	mux.HandleFunc("POST /api/dns/forward", a.authz(permDNSWrite, a.apiDNSForwardApply))
 	mux.HandleFunc("GET /api/dns/split", a.auth(a.apiDNSSplitGet))
 	mux.HandleFunc("PUT /api/dns/split", a.authz(permDNSWrite, a.apiDNSSplitPut))
 	mux.HandleFunc("GET /api/dhcp/status", a.auth(a.apiDHCPStatus))
