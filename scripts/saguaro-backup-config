@@ -111,9 +111,14 @@ EOF
     sysctl -q --system 2>/dev/null || true
     nft -f /etc/nftables.conf 2>/dev/null || true
     netplan apply 2>/dev/null || true
-    systemctl restart kea-dhcp4-server unbound pdns nginx saguaro-eventd saguaro 2>/dev/null || true
+    systemctl restart kea-dhcp4-server unbound pdns nginx saguaro-eventd 2>/dev/null || true
     logger -t saguaro-backup-config "restored configuration + databases from $f"
     echo "restore complete from $f"
+    # Restart the control plane itself DETACHED: this adapter is a child of the
+    # saguaro process, so an inline `systemctl restart saguaro` would kill this very
+    # script (and could cut the API response) mid-restart. Hand it to a transient
+    # unit that survives our exit -- same pattern the self-update uses.
+    systemd-run --on-active=2 --unit=saguaro-restore-restart systemctl restart saguaro >/dev/null 2>&1 || true
     ;;
   *)
     echo "usage: saguaro-backup-config apply|run|disable|list|get|restore" >&2
