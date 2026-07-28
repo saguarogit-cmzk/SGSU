@@ -221,6 +221,20 @@ func (a *app) apiIDSDisable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// apiIDSUpdateRules refreshes the Suricata ruleset (suricata-update) and reloads
+// Suricata if it is running. Long-running (network fetch), so it is intentionally
+// not wrapped in serialized().
+func (a *app) apiIDSUpdateRules(w http.ResponseWriter, r *http.Request) {
+	if out, err := a.runIDS(r.Context(), "update-rules"); err != nil {
+		a.recordSev(r, a.actor(r), "ids-update-rules", "suricata", "failed", "warning",
+			map[string]any{"error": truncate(string(out), 300)})
+		writeError(w, http.StatusBadGateway, "update failed: "+truncate(string(out), 300))
+		return
+	}
+	a.record(r, a.actor(r), "ids-update-rules", "suricata", "success", nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // setGatewayIPS toggles the NFQUEUE rule through the normal firewall
 // transaction (stage + root adapter apply with its confirm window).
 func (a *app) setGatewayIPS(ctx context.Context, enabled bool) error {

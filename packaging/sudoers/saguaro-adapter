@@ -2,17 +2,17 @@
 # is allowed — a fixed path with a fixed, validated set of subcommands
 # (check/apply/confirm/rollback) and a 120 s confirm-or-rollback window.
 # Do not add "saguaro ALL=(ALL) NOPASSWD: ALL" here.
-saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-firewall check, /usr/sbin/saguaro-firewall apply, /usr/sbin/saguaro-firewall confirm, /usr/sbin/saguaro-firewall rollback, /usr/sbin/saguaro-firewall counters, /usr/sbin/saguaro-firewall log
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-firewall apply, /usr/sbin/saguaro-firewall confirm, /usr/sbin/saguaro-firewall rollback, /usr/sbin/saguaro-firewall counters, /usr/sbin/saguaro-firewall log
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ids apply ids, /usr/sbin/saguaro-ids apply ips, /usr/sbin/saguaro-ids disable, /usr/sbin/saguaro-ids update-rules
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-rpz apply, /usr/sbin/saguaro-rpz disable, /usr/sbin/saguaro-rpz hits
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-dns zone-access-apply, /usr/sbin/saguaro-dns zone-access-disable, /usr/sbin/saguaro-dns forward-apply, /usr/sbin/saguaro-dns forward-disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-proxy apply, /usr/sbin/saguaro-proxy disable
-saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-cert issue, /usr/sbin/saguaro-cert acme *, /usr/sbin/saguaro-cert acme-dns *, /usr/sbin/saguaro-cert renew-all, /usr/sbin/saguaro-cert remove *, /usr/sbin/saguaro-cert deploy-gui *
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-cert issue, /usr/sbin/saguaro-cert acme *, /usr/sbin/saguaro-cert acme-dns *, /usr/sbin/saguaro-cert remove *, /usr/sbin/saguaro-cert deploy-gui *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-vpn apply, /usr/sbin/saguaro-vpn disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-openvpn apply, /usr/sbin/saguaro-openvpn disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-s2s apply, /usr/sbin/saguaro-s2s disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-ipsec apply, /usr/sbin/saguaro-ipsec disable
-saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-svc statusall, /usr/sbin/saguaro-svc status *, /usr/sbin/saguaro-svc start *, /usr/sbin/saguaro-svc stop *, /usr/sbin/saguaro-svc restart *
+saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-svc statusall, /usr/sbin/saguaro-svc start *, /usr/sbin/saguaro-svc stop *, /usr/sbin/saguaro-svc restart *
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-power reboot, /usr/sbin/saguaro-power poweroff
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-pkg list, /usr/sbin/saguaro-pkg refresh, /usr/sbin/saguaro-pkg upgrade *, /usr/sbin/saguaro-pkg unattended-status, /usr/sbin/saguaro-pkg unattended-enable, /usr/sbin/saguaro-pkg unattended-disable
 saguaro ALL=(root) NOPASSWD: /usr/sbin/saguaro-selfupdate check, /usr/sbin/saguaro-selfupdate refs, /usr/sbin/saguaro-selfupdate apply, /usr/sbin/saguaro-selfupdate apply *, /usr/sbin/saguaro-selfupdate rollback
