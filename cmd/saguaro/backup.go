@@ -32,8 +32,11 @@ func safeBackupValue(fields map[string]string) (string, bool) {
 const (
 	stagedBackupEnvName   = "staged-backup.env"
 	stagedBackupSchedName = "staged-backup.schedule"
+	stagedBackupKeyName   = "staged-backup.agekey"
 	restoreDrillDays      = 90
 )
+
+var ageSecretKeyRe = regexp.MustCompile(`(?m)^AGE-SECRET-KEY-1[0-9A-Z]+$`)
 
 // backupConfig is persisted in state.json. Secrets (SFTP key/password, S3
 // secret key) are sealed with the appliance secret key.
@@ -360,6 +363,62 @@ func (a *app) apiBackupRestore(w http.ResponseWriter, r *http.Request) {
 	a.recordSev(r, a.actor(r), "backup-restore", name, "success", "security", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
 		"message": "Restore dovršen. Servisi su ponovno pokrenuti; ako se konfiguracija razlikovala, GUI se možda nakratko prekinuo."})
+}
+
+// apiBackupKeyGet streams the age DECRYPTION key so the operator can keep the DR
+// kit (archive + key) off-box from the GUI. Highly sensitive — the key decrypts
+// every backup — so it is admin/backup gated and audited at security severity.
+func (a *app) apiBackupKeyGet(w http.ResponseWriter, r *http.Request) {
+	out, err := a.runBackupCfg(r.Context(), "get-key")
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no backup key on this device: "+truncate(string(out), 200))
+		return
+	}
+	a.recordSev(r, a.actor(r), "backup-key-download", "backup.agekey", "success", "security", nil)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"backup.agekey\"")
+	w.Header().Set("Content-Length", strconv.Itoa(len(out)))
+	_, _ = w.Write(out)
+}
+
+// apiBackupKeyImport installs a saved age decryption key (disaster recovery on a
+// fresh device) so the restore can decrypt the operator's archives.
+func (a *app) apiBackupKeyImport(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Key string `json:"key"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	key := strings.TrimSpace(in.Key)
+	if !ageSecretKeyRe.MatchString(key) {
+		writeError(w, http.StatusBadRequest, "not a valid age key (expected an AGE-SECRET-KEY-1… line)")
+		return
+	}
+	// Only an age identity file is allowed: the secret-key line plus optional
+	// comment lines. Reject anything else so nothing unexpected is written to disk.
+	for _, line := range strings.Split(key, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, "#") || ageSecretKeyRe.MatchString(l) {
+			continue
+		}
+		writeError(w, http.StatusBadRequest, "the key must be an age identity file (AGE-SECRET-KEY line, optional # comments)")
+		return
+	}
+	staged := filepath.Join(filepath.Dir(a.store.path), stagedBackupKeyName)
+	if err := os.WriteFile(staged, []byte(key+"\n"), 0600); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot stage the key")
+		return
+	}
+	if out, err := a.runBackupCfg(r.Context(), "set-key"); err != nil {
+		a.recordSev(r, a.actor(r), "backup-key-import", "backup.agekey", "failed", "security",
+			map[string]any{"error": truncate(string(out), 200)})
+		writeError(w, http.StatusBadGateway, "import failed: "+truncate(string(out), 200))
+		return
+	}
+	a.recordSev(r, a.actor(r), "backup-key-import", "backup.agekey", "success", "security", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"message": "Ključ uvezen. Sada možeš vratiti backup („Vrati iz ove kopije")."})
 }
 
 // apiBackupMarkDrill records that a restore drill was performed, clearing the

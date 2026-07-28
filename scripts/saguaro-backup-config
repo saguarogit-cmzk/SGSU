@@ -132,8 +132,29 @@ EOF
     # unit that survives our exit -- same pattern the self-update uses.
     systemd-run --on-active=2 --unit=saguaro-restore-restart systemctl restart saguaro >/dev/null 2>&1 || true
     ;;
+  get-key)
+    # Output the age DECRYPTION key so the operator can store the DR kit (archive
+    # + key) off-box from the GUI. Sensitive: the control plane gates this to admin
+    # and audits it. The key decrypts every backup.
+    [ -s /etc/saguaro/backup.agekey ] || { echo "no backup decryption key on this device" >&2; exit 1; }
+    cat /etc/saguaro/backup.agekey
+    ;;
+  set-key)
+    # Import a saved age decryption key (disaster recovery on a fresh device) and
+    # re-derive the public recipient so future backups use the same key.
+    STAGED_KEY=/var/lib/saguaro/staged-backup.agekey
+    [ -s "$STAGED_KEY" ] || { echo "no staged key at $STAGED_KEY" >&2; exit 1; }
+    grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$STAGED_KEY" || { echo "not a valid age secret key" >&2; exit 1; }
+    command -v age-keygen >/dev/null || { echo "age-keygen not installed" >&2; exit 1; }
+    install -m 0600 -o root -g root "$STAGED_KEY" /etc/saguaro/backup.agekey
+    rm -f "$STAGED_KEY"
+    age-keygen -y /etc/saguaro/backup.agekey >/etc/saguaro/backup-recipient.txt 2>/dev/null || { echo "could not derive recipient from the key" >&2; exit 1; }
+    chmod 0644 /etc/saguaro/backup-recipient.txt
+    logger -t saguaro-backup-config "backup decryption key imported"
+    echo "key imported"
+    ;;
   *)
-    echo "usage: saguaro-backup-config apply|run|disable|list|get|restore" >&2
+    echo "usage: saguaro-backup-config apply|run|disable|list|get|restore|get-key|set-key" >&2
     exit 2
     ;;
 esac
