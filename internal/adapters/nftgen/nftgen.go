@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -63,6 +64,52 @@ type Rule struct {
 	ToZone   string `json:"toZone"`   // optional: match traffic leaving to this zone
 	Log      bool   `json:"log"`      // log matches to the kernel log with an SNA prefix
 	Enabled  bool   `json:"enabled"`
+	// Schedule optionally restricts when the rule is active (time-of-day and/or
+	// weekday). Nil means always active. Rendered via nft `meta hour`/`meta day`.
+	Schedule *Schedule `json:"schedule,omitempty"`
+}
+
+// Schedule restricts a rule to certain weekdays and/or a clock window. Days is a
+// set of weekday numbers (0=Sunday .. 6=Saturday); empty = every day. Start/End
+// are "HH:MM" 24h bounds; both empty = all day. A window where Start > End wraps
+// past midnight (nft handles the wrap natively).
+type Schedule struct {
+	Days  []int  `json:"days,omitempty"`
+	Start string `json:"start,omitempty"`
+	End   string `json:"end,omitempty"`
+}
+
+var clockRe = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+
+// nftMatch renders the schedule as nft match tokens and validates it. Returns an
+// empty string (no error) for a nil/empty schedule.
+func (s *Schedule) nftMatch() (string, error) {
+	if s == nil {
+		return "", nil
+	}
+	var parts []string
+	if len(s.Days) > 0 {
+		seen := map[int]bool{}
+		var ds []string
+		for _, d := range s.Days {
+			if d < 0 || d > 6 {
+				return "", fmt.Errorf("schedule weekday out of range (0-6)")
+			}
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			ds = append(ds, strconv.Itoa(d))
+		}
+		parts = append(parts, "meta day { "+strings.Join(ds, ", ")+" }")
+	}
+	if s.Start != "" || s.End != "" {
+		if !clockRe.MatchString(s.Start) || !clockRe.MatchString(s.End) {
+			return "", fmt.Errorf("schedule times must both be HH:MM (00:00-23:59)")
+		}
+		parts = append(parts, fmt.Sprintf("meta hour %q-%q", s.Start, s.End))
+	}
+	return strings.Join(parts, " "), nil
 }
 
 // Zone is a named network segment bound to an interface with a trust kind. The
@@ -327,6 +374,9 @@ func (c Config) validateObjects() error {
 		if r.ToZone != "" && !zoneNames[r.ToZone] {
 			return fmt.Errorf("rule %q references unknown destination zone %q", r.Name, r.ToZone)
 		}
+		if _, err := r.Schedule.nftMatch(); err != nil {
+			return fmt.Errorf("rule %q: %v", r.Name, err)
+		}
 	}
 	return nil
 }
@@ -518,6 +568,10 @@ func ruleMatch(r Rule, zoneIface map[string]string) string {
 		parts = append(parts, fmt.Sprintf("%s dport %d", r.Proto, r.DstPort))
 	case r.Proto == "tcp" || r.Proto == "udp":
 		parts = append(parts, "meta l4proto "+r.Proto)
+	}
+	// Schedule is already validated in Validate(); render its time match if present.
+	if sched, _ := r.Schedule.nftMatch(); sched != "" {
+		parts = append(parts, sched)
 	}
 	parts = append(parts, "counter")
 	if r.Log {
