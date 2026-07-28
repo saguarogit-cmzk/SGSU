@@ -53,7 +53,10 @@ EOF
     logger -t saguaro-ids "suricata disabled"
     ;;
   update-rules)
-    command -v suricata-update >/dev/null && suricata-update --no-test-mode >/dev/null 2>&1 || true
+    # Be honest: if the updater is absent (Suricata not installed) or the refresh
+    # fails, report it so the GUI shows a real error instead of a silent success.
+    command -v suricata-update >/dev/null || { echo "suricata-update is not installed (install the security package first)" >&2; exit 1; }
+    suricata-update --no-test-mode >/dev/null 2>&1 || { echo "suricata-update failed to refresh the ruleset" >&2; exit 1; }
     systemctl try-restart suricata 2>/dev/null || true
     ;;
   *)
