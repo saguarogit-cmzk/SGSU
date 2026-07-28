@@ -135,7 +135,7 @@ type app struct {
 	runCert           func(ctx context.Context, args ...string) ([]byte, error)
 	runVPN            func(ctx context.Context, action string) ([]byte, error)
 	runOpenVPN        func(ctx context.Context, action string) ([]byte, error)
-	runBackupCfg      func(ctx context.Context, action string) ([]byte, error)
+	runBackupCfg      func(ctx context.Context, args ...string) ([]byte, error)
 	runWAN            func(ctx context.Context, action string) ([]byte, error)
 	runRoute          func(ctx context.Context, action string) ([]byte, error)
 	runS2S            func(ctx context.Context, action string) ([]byte, error)
@@ -175,7 +175,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.12"
+const appVersion = "0.99.13"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -458,6 +458,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/backup/run", a.authz(permBackup, a.apiBackupRunNow))
 	mux.HandleFunc("POST /api/backup/drill", a.authz(permBackup, a.apiBackupMarkDrill))
 	mux.HandleFunc("POST /api/backup/disable", a.authz(permBackup, a.apiBackupDisable))
+	mux.HandleFunc("GET /api/backup/files", a.authz(permBackup, a.apiBackupFiles))
+	mux.HandleFunc("GET /api/backup/download/{name}", a.authz(permBackup, a.apiBackupDownload))
 	mux.HandleFunc("GET /api/multiwan", a.auth(a.apiWANGet))
 	mux.HandleFunc("POST /api/multiwan/apply", a.authz(permFirewall, a.serialized(a.apiWANApply)))
 	mux.HandleFunc("POST /api/multiwan/confirm", a.authz(permFirewall, a.serialized(a.apiWANConfirm)))

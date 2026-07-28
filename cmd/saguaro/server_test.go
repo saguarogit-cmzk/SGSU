@@ -63,7 +63,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *app) {
 		probeUpstream: func(context.Context, string) error { return nil },
 		runCert:       func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		runVPN:        func(context.Context, string) ([]byte, error) { return nil, nil },
-		runBackupCfg:  func(context.Context, string) ([]byte, error) { return nil, nil },
+		runBackupCfg:  func(context.Context, ...string) ([]byte, error) { return nil, nil },
 		runWAN:        func(context.Context, string) ([]byte, error) { return nil, nil },
 		runRoute:      func(context.Context, string) ([]byte, error) { return nil, nil },
 		runS2S:        func(context.Context, string) ([]byte, error) { return nil, nil },

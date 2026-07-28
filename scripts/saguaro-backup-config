@@ -60,8 +60,25 @@ EOF
     systemctl disable --now saguaro-backup.timer 2>/dev/null || true
     logger -t saguaro-backup-config "scheduled backup disabled"
     ;;
+  list)
+    # List local backup artifacts (name<TAB>bytes<TAB>mtime-epoch). Read-only.
+    cd /var/backups/saguaro 2>/dev/null || exit 0
+    for f in saguaro-*.age saguaro-*.sha256; do
+      [ -f "$f" ] || continue
+      printf '%s\t%s\t%s\n' "$f" "$(stat -c %s "$f")" "$(stat -c %Y "$f")"
+    done
+    ;;
+  get)
+    # Stream one local backup artifact to stdout for download. The archives are
+    # age-encrypted, so this exposes only ciphertext. Strict filename charset +
+    # a fixed directory prevents path traversal.
+    f="${2:-}"
+    echo "$f" | grep -qE '^saguaro-[A-Za-z0-9._-]+\.(age|sha256)$' || { echo "invalid backup filename" >&2; exit 1; }
+    [ -f "/var/backups/saguaro/$f" ] || { echo "no such backup" >&2; exit 1; }
+    cat "/var/backups/saguaro/$f"
+    ;;
   *)
-    echo "usage: saguaro-backup-config apply|run|disable" >&2
+    echo "usage: saguaro-backup-config apply|run|disable|list|get" >&2
     exit 2
     ;;
 esac

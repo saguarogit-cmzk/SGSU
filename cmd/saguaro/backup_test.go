@@ -15,8 +15,8 @@ import (
 func TestBackupConfigureSFTP(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string
-	a.runBackupCfg = func(_ context.Context, action string) ([]byte, error) {
-		actions = append(actions, action)
+	a.runBackupCfg = func(_ context.Context, args ...string) ([]byte, error) {
+		actions = append(actions, args[0])
 		return []byte("ok"), nil
 	}
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
@@ -50,7 +50,7 @@ func TestBackupConfigureSFTP(t *testing.T) {
 
 func TestBackupS3SecretRedactedInView(t *testing.T) {
 	srv, c, a := newTestServer(t)
-	a.runBackupCfg = func(_ context.Context, _ string) ([]byte, error) { return nil, nil }
+	a.runBackupCfg = func(_ context.Context, _ ...string) ([]byte, error) { return nil, nil }
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", r.StatusCode)
 	}
@@ -74,8 +74,8 @@ func TestBackupS3SecretRedactedInView(t *testing.T) {
 func TestBackupRejectsShellInjection(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var calls []string
-	a.runBackupCfg = func(_ context.Context, action string) ([]byte, error) {
-		calls = append(calls, action)
+	a.runBackupCfg = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args[0])
 		return nil, nil
 	}
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
@@ -111,8 +111,8 @@ func TestBackupRejectsShellInjection(t *testing.T) {
 func TestBackupRunAndRestoreDrill(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var actions []string
-	a.runBackupCfg = func(_ context.Context, action string) ([]byte, error) {
-		actions = append(actions, action)
+	a.runBackupCfg = func(_ context.Context, args ...string) ([]byte, error) {
+		actions = append(actions, args[0])
 		return nil, nil
 	}
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {

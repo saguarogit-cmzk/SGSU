@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,10 +60,11 @@ type backupConfig struct {
 	ScheduleOff bool `json:"scheduleOff,omitempty"`
 }
 
-func defaultRunBackupCfg(ctx context.Context, action string) ([]byte, error) {
+func defaultRunBackupCfg(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "sudo", "-n", "/usr/sbin/saguaro-backup-config", action).CombinedOutput()
+	full := append([]string{"-n", "/usr/sbin/saguaro-backup-config"}, args...)
+	return exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
 }
 
 func (a *app) getBackup() backupConfig {
@@ -284,6 +286,51 @@ func (a *app) apiBackupDisable(w http.ResponseWriter, r *http.Request) {
 	}
 	a.record(r, a.actor(r), "backup-disable", "schedule", "success", nil)
 	writeJSON(w, http.StatusOK, backupView(cfg))
+}
+
+var backupFileRe = regexp.MustCompile(`^saguaro-[A-Za-z0-9._-]+\.(age|sha256)$`)
+
+// apiBackupFiles lists the local backup artifacts (name, size, time) via the
+// adapter, so the operator can download a copy off-box.
+func (a *app) apiBackupFiles(w http.ResponseWriter, r *http.Request) {
+	out, err := a.runBackupCfg(r.Context(), "list")
+	files := []map[string]any{}
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			parts := strings.Split(line, "\t")
+			if len(parts) != 3 {
+				continue
+			}
+			size, _ := strconv.ParseInt(parts[1], 10, 64)
+			epoch, _ := strconv.ParseInt(parts[2], 10, 64)
+			files = append(files, map[string]any{
+				"name": parts[0], "size": size,
+				"time": time.Unix(epoch, 0).UTC().Format(time.RFC3339),
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// apiBackupDownload streams one local backup artifact for download. The archives
+// are age-encrypted, so only ciphertext leaves the box; the filename is strictly
+// validated (charset + fixed dir in the adapter) to block path traversal.
+func (a *app) apiBackupDownload(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !backupFileRe.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "invalid backup filename")
+		return
+	}
+	out, err := a.runBackupCfg(r.Context(), "get", name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "backup not found: "+truncate(string(out), 200))
+		return
+	}
+	a.record(r, a.actor(r), "backup-download", name, "success", map[string]any{"bytes": len(out)})
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	w.Header().Set("Content-Length", strconv.Itoa(len(out)))
+	_, _ = w.Write(out)
 }
 
 // apiBackupMarkDrill records that a restore drill was performed, clearing the
