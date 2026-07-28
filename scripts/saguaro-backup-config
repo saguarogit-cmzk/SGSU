@@ -106,6 +106,18 @@ EOF
         [ -f "$RWORK/pgsql/$db.sql" ] && runuser -u postgres -- psql -q -d "$db" -f "$RWORK/pgsql/$db.sql" >/dev/null 2>&1 || true
       done
     fi
+    # Also restore the internal CA from its companion archive (same timestamp) so
+    # internally-issued certificates stay valid after a rebuild. Best-effort: a
+    # missing or undecryptable CA archive does not fail the whole restore.
+    CA_SRC="/var/backups/saguaro/saguaro-ca-${f#saguaro-}"
+    if [ -f "$CA_SRC" ]; then
+      if age -d -i /etc/saguaro/backup.agekey "$CA_SRC" 2>/dev/null | tar -C / -xzf - etc/step-ca 2>/dev/null; then
+        systemctl restart step-ca-saguaro 2>/dev/null || true
+        logger -t saguaro-backup-config "restored internal CA from $(basename "$CA_SRC")"
+      else
+        echo "note: CA archive present but could not be decrypted (separate CA key?) -- skipped" >&2
+      fi
+    fi
     # Bring the restored configuration into effect.
     systemctl daemon-reload 2>/dev/null || true
     sysctl -q --system 2>/dev/null || true
