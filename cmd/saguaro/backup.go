@@ -53,6 +53,10 @@ type backupConfig struct {
 	// sealed secret (SFTP password OR S3 secret key, depending on target)
 	SecretEnc string    `json:"secretEnc,omitempty"`
 	LastDrill time.Time `json:"lastDrill,omitempty"`
+	// ScheduleOff is true when the scheduled-backup timer has been turned off via
+	// the disable action. Apply re-enables it (sets this back to false); on-demand
+	// "run" still works regardless.
+	ScheduleOff bool `json:"scheduleOff,omitempty"`
 }
 
 func defaultRunBackupCfg(ctx context.Context, action string) ([]byte, error) {
@@ -85,6 +89,7 @@ func backupView(cfg backupConfig) map[string]any {
 		"s3Bucket": cfg.S3Bucket, "s3Endpoint": cfg.S3Endpoint, "s3Region": cfg.S3Region, "s3AccessId": cfg.S3AccessID,
 		"hasSecret": cfg.SecretEnc != "",
 		"lastDrill": cfg.LastDrill, "restoreDrillDue": drillDue, "restoreDrillDays": restoreDrillDays,
+		"scheduleOff": cfg.ScheduleOff,
 	}
 }
 
@@ -193,6 +198,7 @@ func (a *app) apiBackupApply(w http.ResponseWriter, r *http.Request) {
 	cfg.Target, cfg.Schedule, cfg.RetentionDays = in.Target, in.Schedule, in.RetentionDays
 	cfg.SFTPHost, cfg.SFTPPort, cfg.SFTPUser, cfg.SFTPPath = in.SFTPHost, in.SFTPPort, in.SFTPUser, in.SFTPPath
 	cfg.S3Bucket, cfg.S3Endpoint, cfg.S3Region, cfg.S3AccessID = in.S3Bucket, in.S3Endpoint, in.S3Region, in.S3AccessID
+	cfg.ScheduleOff = false // apply (re)installs and enables the timer
 
 	// Off-site targets must be encrypted in transit AND require a secret; the
 	// archives themselves are already age-encrypted (mandatory).
@@ -261,6 +267,23 @@ func (a *app) apiBackupRunNow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.record(r, a.actor(r), "backup-run", "on-demand", "success", nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// apiBackupDisable stops the scheduled-backup timer. The backup env stays in
+// place and on-demand "run" still works; re-enable by applying the config again.
+func (a *app) apiBackupDisable(w http.ResponseWriter, r *http.Request) {
+	if out, err := a.runBackupCfg(r.Context(), "disable"); err != nil {
+		writeError(w, http.StatusBadGateway, "disable failed: "+truncate(string(out), 300))
+		return
+	}
+	cfg := a.getBackup()
+	cfg.ScheduleOff = true
+	if err := a.setBackup(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist backup configuration")
+		return
+	}
+	a.record(r, a.actor(r), "backup-disable", "schedule", "success", nil)
+	writeJSON(w, http.StatusOK, backupView(cfg))
 }
 
 // apiBackupMarkDrill records that a restore drill was performed, clearing the
