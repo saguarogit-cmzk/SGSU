@@ -74,6 +74,31 @@ func TestDiagCapture(t *testing.T) {
 	}
 }
 
+func TestDiagConntrack(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var calls []string
+	a.runTools = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return []byte("tcp 6 431997 ESTABLISHED src=10.0.0.1 dst=1.1.1.1 sport=1 dport=443\n"), nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	// default limit (200), explicit limit, and over-cap clamp to 2000
+	if r := reqJSON(t, srv, c, http.MethodGet, "/api/diag/conntrack", ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("conntrack: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodGet, "/api/diag/conntrack?limit=50", ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("conntrack limit: got %d", r.StatusCode)
+	}
+	if r := reqJSON(t, srv, c, http.MethodGet, "/api/diag/conntrack?limit=99999", ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("conntrack clamp: got %d", r.StatusCode)
+	}
+	if len(calls) != 3 || calls[0] != "conntrack 200" || calls[1] != "conntrack 50" || calls[2] != "conntrack 2000" {
+		t.Fatalf("adapter calls wrong: %v", calls)
+	}
+}
+
 func TestToolRequiresRole(t *testing.T) {
 	srv, admin, a := newTestServer(t)
 	if r := doLogin(t, srv, admin, testPassword); r.StatusCode != http.StatusOK {

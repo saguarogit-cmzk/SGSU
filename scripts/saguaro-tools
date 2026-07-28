@@ -42,6 +42,18 @@ if [ "${1:-}" = capture ]; then
   exec timeout 25 tcpdump "$@"
 fi
 
+# conntrack lists the active connection-tracking table (read-only). The only
+# argument is a validated line cap; conntrack -L takes no user-supplied filter,
+# so nothing from the request reaches its arguments. Output is line-capped and
+# time-bounded; the tool's own stderr summary is dropped.
+if [ "${1:-}" = conntrack ]; then
+  N="${2:-200}"
+  command -v conntrack >/dev/null || { echo "conntrack is not installed" >&2; exit 1; }
+  echo "$N" | grep -Eq '^[0-9]{1,4}$' && [ "$N" -ge 1 ] && [ "$N" -le 2000 ] || { echo "count must be 1-2000" >&2; exit 1; }
+  timeout 15 conntrack -L 2>/dev/null | head -n "$N"
+  exit 0
+fi
+
 TOOL="${1:-}"
 HOST="${2:-}"
 ARG="${3:-}"

@@ -124,3 +124,31 @@ func (a *app) apiDiagCapture(w http.ResponseWriter, r *http.Request) {
 	a.record(r, a.actor(r), "diag-capture", iface, result, map[string]any{"proto": proto, "host": host, "port": in.Port, "count": count})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": err == nil, "output": string(out)})
 }
+
+// apiDiagConntrack returns a bounded snapshot of the active conntrack table via
+// the saguaro-tools adapter (read-only `conntrack -L`, line-capped) plus the live
+// count/max from /proc so the GUI can show table pressure. No user input reaches a
+// shell: only a validated integer limit is passed as a single positional arg.
+func (a *app) apiDiagConntrack(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	out, err := a.runTools(r.Context(), "conntrack", strconv.Itoa(limit))
+	result := "success"
+	if err != nil {
+		result = "failed"
+	}
+	a.record(r, a.actor(r), "diag-conntrack", "", result, map[string]any{"limit": limit})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     err == nil,
+		"output": string(out),
+		"count":  firstUint("/proc/sys/net/netfilter/nf_conntrack_count"),
+		"max":    firstUint("/proc/sys/net/netfilter/nf_conntrack_max"),
+	})
+}
