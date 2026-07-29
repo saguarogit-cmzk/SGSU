@@ -317,6 +317,7 @@ mkdir -p "$(dirname "$LOG_FILE")"
 touch "$LOG_FILE"
 chmod 0600 "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
+# shellcheck disable=SC2154 # rc IS assigned inside the trap string itself
 trap 'rc=$?; echo "Installer failed at line ${LINENO} (exit ${rc}). Existing configuration backup: ${BACKUP_DIR:-not-created}" >&2' ERR
 
 BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%dT%H%M%S)"
@@ -633,6 +634,11 @@ EOF
   # reload it, so restart to pick up our interfaces/access-control/stub-zones.
   systemctl reset-failed unbound 2>/dev/null || true
   systemctl restart unbound
+  # Ubuntu's unbound package ships a resolvconf helper unit that always fails
+  # on systems without resolvconf (we manage resolv.conf ourselves). It is
+  # harmless but pollutes `systemctl --failed`, so mask it for a clean fleet.
+  systemctl mask --now unbound-resolvconf.service 2>/dev/null || true
+  systemctl reset-failed unbound-resolvconf.service 2>/dev/null || true
 fi
 
 log "Configuring PowerDNS authoritative server"
