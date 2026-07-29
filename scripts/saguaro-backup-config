@@ -82,6 +82,11 @@ EOF
     # the configuration + databases back. Intended to run on a freshly-installed
     # box (the operator first restores their saved backup.agekey and drops the
     # archive into /var/backups/saguaro). Strict filename charset; fixed dir.
+    # Exclusive lock: two overlapping restores would tear each other's files
+    # apart (the detached saguaro restart from the first kills the second one
+    # mid-extract). The lock dies with this process, so no stale-lock cleanup.
+    exec 9>/run/saguaro-restore.lock
+    flock -n 9 || { echo "another restore is already running -- wait for it to finish" >&2; exit 1; }
     f="${2:-}"
     echo "$f" | grep -qE '^saguaro-[A-Za-z0-9._-]+\.tar\.gz\.age$' || { echo "invalid archive filename" >&2; exit 1; }
     SRC="/var/backups/saguaro/$f"
@@ -103,7 +108,9 @@ EOF
     # Restore the databases (dumps were taken with --clean --if-exists).
     if [ -d "$RWORK/pgsql" ] && command -v psql >/dev/null; then
       for db in saguaro kea pdns; do
-        [ -f "$RWORK/pgsql/$db.sql" ] && runuser -u postgres -- psql -q -d "$db" -f "$RWORK/pgsql/$db.sql" >/dev/null 2>&1 || true
+        if [ -f "$RWORK/pgsql/$db.sql" ]; then
+          runuser -u postgres -- psql -q -d "$db" -f "$RWORK/pgsql/$db.sql" >/dev/null 2>&1 || true
+        fi
       done
     fi
     # Also restore the internal CA from its companion archive (same timestamp) so
@@ -111,10 +118,15 @@ EOF
     # missing or undecryptable CA archive does not fail the whole restore.
     CA_SRC="/var/backups/saguaro/saguaro-ca-${f#saguaro-}"
     if [ -f "$CA_SRC" ]; then
+      # Stop the CA before extracting over its live Badger database — unpacking
+      # under a running step-ca can leave a torn on-disk state it cannot open.
+      systemctl stop step-ca-saguaro 2>/dev/null || true
       if age -d -i /etc/saguaro/backup.agekey "$CA_SRC" 2>/dev/null | tar -C / -xzf - etc/step-ca 2>/dev/null; then
         systemctl restart step-ca-saguaro 2>/dev/null || true
         logger -t saguaro-backup-config "restored internal CA from $(basename "$CA_SRC")"
       else
+        # Extraction did not happen, so the old CA state is intact — bring it back up.
+        systemctl start step-ca-saguaro 2>/dev/null || true
         echo "note: CA archive present but could not be decrypted (separate CA key?) -- skipped" >&2
       fi
     fi

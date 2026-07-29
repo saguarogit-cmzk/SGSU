@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	mailmod "saguaro.local/network-manager/internal/mail"
@@ -342,6 +343,15 @@ func (a *app) apiBackupDownload(w http.ResponseWriter, r *http.Request) {
 // backup.agekey. Admin/backup permission gated; the adapter re-validates and needs
 // the matching decryption key to succeed.
 func (a *app) apiBackupRestore(w http.ResponseWriter, r *http.Request) {
+	// After a successful restore the control plane is about to be restarted by a
+	// detached systemd unit. A second restore accepted in that window (repeated
+	// click, page refresh + retry) would be killed mid-extract by that restart
+	// and can leave torn files behind. Reject until the restart clears the flag.
+	if restoreCompleted.Load() {
+		writeError(w, http.StatusConflict,
+			"vraćanje je već dovršeno i servis se upravo ponovno pokreće — pričekaj desetak sekundi pa osvježi GUI")
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -360,10 +370,15 @@ func (a *app) apiBackupRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "restore failed: "+truncate(string(out), 400))
 		return
 	}
+	restoreCompleted.Store(true)
 	a.recordSev(r, a.actor(r), "backup-restore", name, "success", "security", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
 		"message": "Restore dovršen. Servisi su ponovno pokrenuti; ako se konfiguracija razlikovala, GUI se možda nakratko prekinuo."})
 }
+
+// restoreCompleted flips to true after a successful restore and stays set until
+// the detached saguaro restart replaces this process — the natural reset point.
+var restoreCompleted atomic.Bool
 
 // apiBackupKeyGet streams the age DECRYPTION key so the operator can keep the DR
 // kit (archive + key) off-box from the GUI. Highly sensitive — the key decrypts
