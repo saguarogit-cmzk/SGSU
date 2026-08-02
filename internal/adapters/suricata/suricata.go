@@ -72,7 +72,32 @@ func (c Config) Generate() (string, error) {
 	var b strings.Builder
 	b.WriteString("%YAML 1.1\n---\n")
 	b.WriteString("# Managed by Saguaro (generated). Manual edits are overwritten on apply.\n")
-	fmt.Fprintf(&b, "vars:\n  address-groups:\n    HOME_NET: \"%s\"\n    EXTERNAL_NET: \"!$HOME_NET\"\n\n", home)
+	// The full standard variable set, not just HOME_NET/EXTERNAL_NET: the
+	// Emerging Threats ruleset references $HTTP_PORTS, $HTTP_SERVERS and the
+	// rest, and Suricata refuses to parse a signature whose variable is
+	// undefined. With only the two address groups defined, `suricata -T` fails
+	// on the very first real ruleset — the engine could never be enabled.
+	// Values follow the upstream suricata.yaml defaults.
+	b.WriteString("vars:\n  address-groups:\n")
+	fmt.Fprintf(&b, "    HOME_NET: \"%s\"\n", home)
+	b.WriteString("    EXTERNAL_NET: \"!$HOME_NET\"\n")
+	for _, g := range []string{"HTTP_SERVERS", "SMTP_SERVERS", "SQL_SERVERS", "DNS_SERVERS", "TELNET_SERVERS", "DNP3_SERVER", "DNP3_CLIENT", "MODBUS_CLIENT", "MODBUS_SERVER", "ENIP_CLIENT", "ENIP_SERVER"} {
+		fmt.Fprintf(&b, "    %s: \"$HOME_NET\"\n", g)
+	}
+	b.WriteString("    AIM_SERVERS: \"$EXTERNAL_NET\"\n")
+	b.WriteString("    DC_SERVERS: \"$HOME_NET\"\n")
+	b.WriteString("  port-groups:\n")
+	b.WriteString("    HTTP_PORTS: \"80\"\n")
+	b.WriteString("    SHELLCODE_PORTS: \"!80\"\n")
+	b.WriteString("    ORACLE_PORTS: 1521\n")
+	b.WriteString("    SSH_PORTS: 22\n")
+	b.WriteString("    DNP3_PORTS: 20000\n")
+	b.WriteString("    MODBUS_PORTS: 502\n")
+	b.WriteString("    FILE_DATA_PORTS: \"[$HTTP_PORTS,110,143]\"\n")
+	b.WriteString("    FTP_PORTS: 21\n")
+	b.WriteString("    GENEVE_PORTS: 6081\n")
+	b.WriteString("    VXLAN_PORTS: 4789\n")
+	b.WriteString("    TEREDO_PORTS: 3544\n\n")
 	b.WriteString("default-log-dir: /var/log/suricata\n\n")
 	b.WriteString("stats:\n  enabled: yes\n  interval: 60\n\n")
 	b.WriteString("outputs:\n")

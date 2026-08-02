@@ -58,3 +58,35 @@ func TestGenerateOffFails(t *testing.T) {
 		t.Fatal("mode off must not generate")
 	}
 }
+
+// The ET ruleset references the standard variables; a config that defines only
+// HOME_NET/EXTERNAL_NET makes `suricata -T` fail on every real ruleset, so the
+// engine can never be enabled.
+func TestGenerateDefinesStandardVars(t *testing.T) {
+	c := Config{Mode: ModeIDS, Interface: "wan1", HomeNet: "10.10.10.0/24"}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		`HOME_NET: "[10.10.10.0/24]"`,
+		`EXTERNAL_NET: "!$HOME_NET"`,
+		`HTTP_SERVERS: "$HOME_NET"`,
+		`SMTP_SERVERS: "$HOME_NET"`,
+		`SQL_SERVERS: "$HOME_NET"`,
+		`DNS_SERVERS: "$HOME_NET"`,
+		`TELNET_SERVERS: "$HOME_NET"`,
+		`AIM_SERVERS: "$EXTERNAL_NET"`,
+		`DC_SERVERS: "$HOME_NET"`,
+		"port-groups:",
+		`HTTP_PORTS: "80"`,
+		`SHELLCODE_PORTS: "!80"`,
+		"SSH_PORTS: 22",
+		"FTP_PORTS: 21",
+		`FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"`,
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("generated config missing %q:\n%s", w, out)
+		}
+	}
+}
