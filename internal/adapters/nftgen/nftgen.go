@@ -178,6 +178,11 @@ type Config struct {
 	// HairpinNAT lets LAN clients reach a port-forwarded service via the WAN
 	// (public) address — NAT reflection.
 	HairpinNAT bool `json:"hairpinNat"`
+	// BruteForceProtect rate-limits new connections to the management ports
+	// per source address, so password guessing against SSH or the GUI dies at
+	// the firewall instead of relying on the login limiter alone. Off by
+	// default so an upgrade never changes an existing appliance's behaviour.
+	BruteForceProtect bool `json:"bruteForceProtect,omitempty"`
 	// SNATRules pin specific sources to specific WAN addresses on egress.
 	SNATRules []SNATRule `json:"snatRules"`
 	// NAT11 maps whole public addresses to internal hosts (1:1 NAT).
@@ -767,6 +772,11 @@ func (c Config) Generate() (string, error) {
 	// cover exactly the segments Unbound is told to allow.
 	internalNets := InternalNetworks(c.Zones, c.ClientNetwork)
 	fmt.Fprintf(&b, "  set internal4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(internalNets, ", "))
+	// A dynamic set holding one rate-limiter per source address; entries expire
+	// on their own, so nothing has to be cleaned up.
+	if c.BruteForceProtect {
+		b.WriteString("  set mgmt_brute4 { type ipv4_addr; size 65535; flags dynamic, timeout; timeout 10m; }\n")
+	}
 	if len(c.GeoCIDRs) > 0 {
 		fmt.Fprintf(&b, "  set geo4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(c.GeoCIDRs, ", "))
 	}
@@ -784,6 +794,13 @@ func (c Config) Generate() (string, error) {
 	}
 	b.WriteString("    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept\n")
 	b.WriteString("    ip6 nexthdr ipv6-icmp accept\n")
+	// Rate-limit before the management accepts, so an attacker hitting SSH or
+	// the GUI is dropped at the firewall. Established sessions were already
+	// accepted above, so an administrator who is logged in is never affected —
+	// only new connection attempts count against the limit.
+	if c.BruteForceProtect {
+		b.WriteString("    tcp dport { 22, 443 } ct state new update @mgmt_brute4 { ip saddr limit rate over 10/minute burst 15 packets } counter log prefix \"SNA-BRUTE-DROP \" drop\n")
+	}
 	if c.AdminNetwork != "" {
 		b.WriteString("    ip saddr @mgmt4 tcp dport { 22, 443 } accept\n")
 	}

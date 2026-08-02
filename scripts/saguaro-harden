@@ -1,0 +1,133 @@
+#!/bin/sh
+# saguaro-harden — root adapter for host hardening the control plane cannot do
+# from user space: SSH access policy and kernel network hardening.
+# Allow-listed subcommands only; the saguaro user runs these via sudoers.
+#
+#   status          report the current posture as key=value lines (read-only)
+#   ssh-harden      keys-only SSH: no passwords, no root login, no X11 forwarding
+#   ssh-revert      remove the Saguaro SSH drop-in (back to distribution defaults)
+#   sysctl-harden   drop ICMP redirects, refuse source routing, log martians
+#   sysctl-revert   remove the Saguaro sysctl drop-in
+#
+# ssh-harden REFUSES to run when no account that can become root has an SSH key
+# installed. Turning off password authentication without a working key is the
+# classic way to lock yourself out of an appliance you can only reach remotely —
+# the same lockout the firewall's confirm-or-rollback window exists to prevent.
+set -eu
+
+SSH_DROPIN=/etc/ssh/sshd_config.d/99-saguaro-harden.conf
+SYSCTL_DROPIN=/etc/sysctl.d/99-saguaro-harden.conf
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
+
+# sudo_users lists accounts that can reach root: members of sudo/admin plus root.
+sudo_users() {
+  { getent group sudo 2>/dev/null | cut -d: -f4 | tr ',' '\n'
+    getent group admin 2>/dev/null | cut -d: -f4 | tr ',' '\n'
+    echo root
+  } | sed '/^$/d' | sort -u
+}
+
+# key_count counts installed authorized_keys lines across those accounts. Only
+# non-comment, non-empty lines count.
+key_count() {
+  total=0
+  for u in $(sudo_users); do
+    home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
+    [ -n "$home" ] && [ -f "$home/.ssh/authorized_keys" ] || continue
+    n=$(grep -cvE '^[[:space:]]*(#|$)' "$home/.ssh/authorized_keys" 2>/dev/null || echo 0)
+    total=$((total + n))
+  done
+  echo "$total"
+}
+
+sshd_val() { sshd -T 2>/dev/null | awk -v k="$1" 'tolower($1)==k {print $2; exit}'; }
+sysctl_val() { sysctl -n "$1" 2>/dev/null || echo unknown; }
+
+case "${1:-}" in
+  status)
+    printf 'ssh_password_auth=%s\n' "$(sshd_val passwordauthentication)"
+    printf 'ssh_root_login=%s\n' "$(sshd_val permitrootlogin)"
+    printf 'ssh_x11=%s\n' "$(sshd_val x11forwarding)"
+    printf 'ssh_max_auth_tries=%s\n' "$(sshd_val maxauthtries)"
+    printf 'ssh_keys_installed=%s\n' "$(key_count)"
+    printf 'ssh_dropin=%s\n' "$([ -f "$SSH_DROPIN" ] && echo yes || echo no)"
+    printf 'sysctl_send_redirects=%s\n' "$(sysctl_val net.ipv4.conf.all.send_redirects)"
+    printf 'sysctl_accept_redirects=%s\n' "$(sysctl_val net.ipv4.conf.all.accept_redirects)"
+    printf 'sysctl_accept_source_route=%s\n' "$(sysctl_val net.ipv4.conf.all.accept_source_route)"
+    printf 'sysctl_log_martians=%s\n' "$(sysctl_val net.ipv4.conf.all.log_martians)"
+    printf 'sysctl_syncookies=%s\n' "$(sysctl_val net.ipv4.tcp_syncookies)"
+    printf 'sysctl_dropin=%s\n' "$([ -f "$SYSCTL_DROPIN" ] && echo yes || echo no)"
+    printf 'suricata_installed=%s\n' "$(command -v suricata >/dev/null 2>&1 && echo yes || echo no)"
+    printf 'journal_retention=%s\n' "$(journalctl --header 2>/dev/null >/dev/null && grep -hoE 'MaxRetentionSec=[0-9a-z]+' /etc/systemd/journald.conf.d/*.conf /etc/systemd/journald.conf 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)"
+    ;;
+  ssh-harden)
+    keys=$(key_count)
+    if [ "$keys" -lt 1 ]; then
+      echo "refusing: no SSH key is installed for any account that can become root." >&2
+      echo "Install a key first (ssh-copy-id), otherwise disabling passwords locks you out." >&2
+      exit 1
+    fi
+    install -d -m 0755 /etc/ssh/sshd_config.d
+    cat >"$SSH_DROPIN" <<'EOF'
+# Managed by Saguaro (generated). Remove with: saguaro-harden ssh-revert
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+X11Forwarding no
+MaxAuthTries 3
+EOF
+    chmod 0644 "$SSH_DROPIN"
+    # Validate the DESTINATION config before reloading; a bad drop-in that
+    # sshd refuses would leave the service unable to restart later.
+    if ! sshd -t 2>/dev/null; then
+      rm -f "$SSH_DROPIN"
+      echo "sshd rejected the hardening drop-in; previous configuration kept" >&2
+      exit 1
+    fi
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    logger -t saguaro-harden "SSH hardened (keys only, no root login), $keys key(s) present"
+    echo "ssh hardened; $keys key(s) installed"
+    ;;
+  ssh-revert)
+    rm -f "$SSH_DROPIN"
+    sshd -t 2>/dev/null || { echo "sshd config invalid after revert" >&2; exit 1; }
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    logger -t saguaro-harden "SSH hardening removed"
+    echo "ssh hardening removed"
+    ;;
+  sysctl-harden)
+    cat >"$SYSCTL_DROPIN" <<'EOF'
+# Managed by Saguaro (generated). Remove with: saguaro-harden sysctl-revert
+# rp_filter is deliberately NOT set here: multi-WAN needs the loose mode (2)
+# that the routing setup already relies on, and forcing strict mode would drop
+# legitimate replies arriving on the secondary uplink.
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_source_route = 0
+EOF
+    chmod 0644 "$SYSCTL_DROPIN"
+    sysctl -q --system >/dev/null 2>&1 || true
+    logger -t saguaro-harden "kernel network hardening applied"
+    echo "sysctl hardening applied"
+    ;;
+  sysctl-revert)
+    rm -f "$SYSCTL_DROPIN"
+    sysctl -q --system >/dev/null 2>&1 || true
+    logger -t saguaro-harden "kernel network hardening removed"
+    echo "sysctl hardening removed"
+    ;;
+  *)
+    echo "usage: saguaro-harden status | ssh-harden | ssh-revert | sysctl-harden | sysctl-revert" >&2
+    exit 2
+    ;;
+esac

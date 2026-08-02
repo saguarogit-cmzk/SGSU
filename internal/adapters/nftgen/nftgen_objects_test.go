@@ -395,3 +395,38 @@ func TestValidateObjectsErrors(t *testing.T) {
 		t.Fatalf("expected valid: %v", err)
 	}
 }
+
+// Brute-force protection is opt-in and must rate-limit before the management
+// accepts, otherwise the accept would match first and the limit never apply.
+func TestBruteForceProtect(t *testing.T) {
+	base := Config{AdminNetwork: "192.168.50.0/24", ClientNetwork: "192.168.10.0/24",
+		GatewayEnabled: true, WANInterface: "enp1", LANInterface: "enp2", NATEnabled: true}
+	off, err := base.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "mgmt_brute4") {
+		t.Errorf("brute-force rules present while disabled:\n%s", off)
+	}
+	base.BruteForceProtect = true
+	on, err := base.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"set mgmt_brute4 { type ipv4_addr; size 65535; flags dynamic, timeout; timeout 10m; }",
+		`tcp dport { 22, 443 } ct state new update @mgmt_brute4 { ip saddr limit rate over 10/minute burst 15 packets } counter log prefix "SNA-BRUTE-DROP " drop`,
+	} {
+		if !strings.Contains(on, w) {
+			t.Errorf("missing %q:\n%s", w, on)
+		}
+	}
+	if strings.Index(on, "mgmt_brute4 { ip saddr") > strings.Index(on, "ip saddr @mgmt4 tcp dport") {
+		t.Errorf("rate limit must precede the management accept:\n%s", on)
+	}
+	// Established sessions are accepted before the limiter, so an administrator
+	// who is already logged in can never be locked out by their own traffic.
+	if strings.Index(on, "ct state established,related accept") > strings.Index(on, "mgmt_brute4 { ip saddr") {
+		t.Errorf("established accept must precede the limiter:\n%s", on)
+	}
+}

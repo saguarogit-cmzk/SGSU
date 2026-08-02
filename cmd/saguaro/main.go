@@ -150,6 +150,7 @@ type app struct {
 	runDNSZones       func(ctx context.Context, action string) ([]byte, error)
 	runDNSForward     func(ctx context.Context, action string) ([]byte, error)
 	runNet            func(ctx context.Context, args ...string) ([]byte, error)
+	runHarden         func(ctx context.Context, action string) ([]byte, error)
 	readInterfaces    func(ctx context.Context) ([]nicInfo, error)
 	readDefaultRoutes func(ctx context.Context) ([]defaultRoute, error)
 	hwMemMB           int
@@ -176,7 +177,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.21"
+const appVersion = "0.99.22"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -303,6 +304,7 @@ func main() {
 		runDNSZones:       defaultRunDNSZones,
 		runDNSForward:     defaultRunDNSForward,
 		runNet:            defaultRunNet,
+		runHarden:         defaultRunHarden,
 		readInterfaces:    defaultReadInterfaces,
 		readDefaultRoutes: defaultReadDefaultRoutes,
 		hwMemMB:           readMemTotalMB(),
@@ -455,6 +457,9 @@ func (a *app) handler() http.Handler {
 	// confirm-or-rollback window the firewall has, so a wrong address cannot
 	// strand the admin.
 	mux.HandleFunc("GET /api/net/pending", a.authz(permFirewall, a.apiNetPending))
+	// Security posture: read-only checklist plus the two root fixes it can apply.
+	mux.HandleFunc("GET /api/hardening", a.authz(permServiceCheck, a.apiHardeningGet))
+	mux.HandleFunc("POST /api/hardening/apply", a.authz(permFirewall, a.serialized(a.apiHardeningApply)))
 	mux.HandleFunc("POST /api/wan/confirm", a.authz(permFirewall, a.serialized(a.apiNetConfirm("wan"))))
 	mux.HandleFunc("POST /api/wan/rollback", a.authz(permFirewall, a.serialized(a.apiNetRollback("wan"))))
 	mux.HandleFunc("POST /api/firewall/zones/vlans-confirm", a.authz(permFirewall, a.serialized(a.apiNetConfirm("vlan"))))
