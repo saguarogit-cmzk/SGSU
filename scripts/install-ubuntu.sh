@@ -851,6 +851,13 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-Proto https;
         proxy_http_version 1.1;
+        # Some operations legitimately run for minutes (installing Suricata,
+        # fetching ~68k IDS rules, an apt upgrade). The control plane already
+        # lifts its own write deadline for those; without matching timeouts here
+        # nginx returns 504 while the work is still running and the operator is
+        # told it failed when it did not.
+        proxy_read_timeout 15m;
+        proxy_send_timeout 15m;
     }
 }
 EOF

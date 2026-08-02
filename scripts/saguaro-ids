@@ -32,6 +32,10 @@ case "${1:-}" in
       exit 1
     fi
     rm -f "$ACTIVE.bak"
+    # A unit left in the failed state after earlier attempts refuses to start
+    # again ("Start request repeated too quickly"), so clear it before we ask
+    # systemd for a restart — otherwise a fixed configuration still looks broken.
+    systemctl reset-failed suricata 2>/dev/null || true
     install -d -m 0755 "$OVERRIDE_DIR"
     if [ "$MODE" = ips ]; then
       EXEC="/usr/bin/suricata -c $ACTIVE --pidfile /run/suricata.pid -q 0 -D"
