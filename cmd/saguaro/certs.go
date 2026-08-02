@@ -15,10 +15,11 @@ import (
 	"time"
 )
 
-const (
-	stagedCertRequestName = "staged-cert-request"
-	certDir               = "/etc/saguaro/certs"
-)
+const stagedCertRequestName = "staged-cert-request"
+
+// certDir is a var, not a const, so tests can point the expiry reader at a
+// temporary directory; nothing in production reassigns it.
+var certDir = "/etc/saguaro/certs"
 
 // certRecord is persisted in state.json; expiry is read live from the
 // certificate file when available.

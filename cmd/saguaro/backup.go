@@ -449,6 +449,47 @@ func (a *app) apiBackupMarkDrill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, backupView(cfg))
 }
 
+// apiBackupVerify actually proves the newest archive can be restored: the
+// adapter decrypts it with the on-box key, extracts it to a temporary directory
+// and checks that the configuration trees and all three database dumps are
+// there, and that the decryption key is not inside the archive. Nothing on the
+// running system is touched. A successful verification records the drill, so
+// the reminder is cleared by evidence instead of by assertion.
+func (a *app) apiBackupVerify(w http.ResponseWriter, r *http.Request) {
+	extendDeadline(w, 6*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	out, err := a.runBackupCfg(ctx, "verify")
+	fields := parseKV(out)
+	if err != nil {
+		reason := fields["reason"]
+		if reason == "" {
+			reason = truncate(strings.TrimSpace(string(out)), 300)
+		}
+		a.recordSev(r, a.actor(r), "backup-verify", fields["archive"], "failed", "warning",
+			map[string]any{"reason": reason})
+		writeError(w, http.StatusBadGateway, "provjera nije uspjela: "+reason)
+		return
+	}
+	cfg := a.getBackup()
+	cfg.LastDrill = time.Now().UTC()
+	if err := a.setBackup(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist backup configuration")
+		return
+	}
+	dumps, _ := strconv.Atoi(fields["dbdumps"])
+	files, _ := strconv.Atoi(fields["files"])
+	a.recordSev(r, a.actor(r), "backup-verify", fields["archive"], "success", "security",
+		map[string]any{"dbDumps": dumps, "files": files})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "archive": fields["archive"], "dbDumps": dumps, "files": files,
+		"keyExcluded": fields["keyexcluded"] == "yes",
+		"note": fmt.Sprintf("Arhiva %s je dešifrirana i provjerena: %d datoteka, %d dumpova baze, ključ nije u arhivi.",
+			fields["archive"], files, dumps),
+		"backup": backupView(cfg),
+	})
+}
+
 // checkRestoreDrill emits a Warning event when the restore drill is overdue;
 // called from the daily health goroutine.
 func (a *app) checkRestoreDrill() {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -171,5 +172,46 @@ func TestMultiWANRequiresGateway(t *testing.T) {
 	}
 	if cfg := a.getWAN(); !cfg.Enabled || len(cfg.Uplinks) != 2 {
 		t.Fatalf("state wrong: %+v", cfg)
+	}
+}
+
+// Verification must prove the archive, not assert it: a passing run records the
+// drill, a failing one leaves it untouched and reports the adapter's reason.
+func TestBackupVerify(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	var calls []string
+	ok := true
+	a.runBackupCfg = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if !ok {
+			return []byte("archive=saguaro-x.tar.gz.age\nresult=fail\nreason=decrypt or extract failed\n"),
+				errors.New("exit 1")
+		}
+		return []byte("archive=saguaro-20260802T094553Z.tar.gz.age\nbytes=12345\ndbdumps=3\nfiles=214\nkeyexcluded=yes\nresult=ok\n"), nil
+	}
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	if got := a.getBackup(); !got.LastDrill.IsZero() {
+		t.Fatal("drill should start unrecorded")
+	}
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/backup/verify", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("verify: got %d", r.StatusCode)
+	}
+	if len(calls) != 1 || calls[0] != "verify" {
+		t.Fatalf("adapter call wrong: %v", calls)
+	}
+	after := a.getBackup()
+	if after.LastDrill.IsZero() {
+		t.Error("a successful verification must record the drill")
+	}
+
+	// A failed verification must not move the drill date forward.
+	ok = false
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/backup/verify", `{}`); r.StatusCode != http.StatusBadGateway {
+		t.Fatalf("failed verify: got %d, want 502", r.StatusCode)
+	}
+	if a.getBackup().LastDrill != after.LastDrill {
+		t.Error("a failed verification must not update the drill date")
 	}
 }

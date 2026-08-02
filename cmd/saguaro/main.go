@@ -177,7 +177,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.29"
+const appVersion = "0.99.30"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -346,9 +346,12 @@ func main() {
 	}()
 	go a.alertLoop()
 	go func() {
-		// Daily restore-drill reminder (W11): a Warning event when overdue.
+		// Daily reminders: restore drill overdue (W11) and certificates about
+		// to expire. Renewal is automated, but automation fails quietly, so the
+		// appliance warns while there is still time to act.
 		for {
 			a.checkRestoreDrill()
+			a.checkCertExpiry()
 			time.Sleep(24 * time.Hour)
 		}
 	}()
@@ -474,6 +477,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/backup/apply", a.authz(permBackup, a.apiBackupApply))
 	mux.HandleFunc("POST /api/backup/run", a.authz(permBackup, a.apiBackupRunNow))
 	mux.HandleFunc("POST /api/backup/drill", a.authz(permBackup, a.apiBackupMarkDrill))
+	// Long-running (decrypt + extract), so not serialized — it only reads.
+	mux.HandleFunc("POST /api/backup/verify", a.authz(permBackup, a.apiBackupVerify))
 	mux.HandleFunc("POST /api/backup/disable", a.authz(permBackup, a.apiBackupDisable))
 	mux.HandleFunc("GET /api/backup/files", a.authz(permBackup, a.apiBackupFiles))
 	mux.HandleFunc("GET /api/backup/download/{name}", a.authz(permBackup, a.apiBackupDownload))

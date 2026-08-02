@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -171,6 +172,28 @@ func (a *app) hardeningReport(ctx context.Context) []hardeningCheck {
 		add(hardeningCheck{Key: "siem", Title: "Prosljeđivanje logova izvan uređaja", Status: "warn",
 			Detail:   "Isključeno — ako uređaj otkaže ili bude kompromitiran, dokazi nestaju s njim.",
 			Severity: "high"})
+	}
+
+	// --- Certifikati -------------------------------------------------------
+	if exp := a.certExpiryReport(); len(exp) > 0 {
+		worst := exp[0]
+		detail := fmt.Sprintf("Certifikat %q istječe za %d dana (%s).", worst.Name, worst.DaysLeft,
+			worst.NotAfter.Format("2006-01-02"))
+		if worst.Expired {
+			detail = fmt.Sprintf("Certifikat %q je istekao %s.", worst.Name, worst.NotAfter.Format("2006-01-02"))
+		}
+		if len(exp) > 1 {
+			detail += fmt.Sprintf(" Ukupno %d certifikata traži pažnju.", len(exp))
+		}
+		status := "warn"
+		if worst.Severity == "critical" {
+			status = "fail"
+		}
+		add(hardeningCheck{Key: "certs", Title: "Istek certifikata", Status: status,
+			Detail: detail, Severity: "high"})
+	} else {
+		add(hardeningCheck{Key: "certs", Title: "Istek certifikata", Status: "ok",
+			Detail: "Nijedan upravljani certifikat ne istječe u sljedeća 3 tjedna.", Severity: "high"})
 	}
 
 	// --- Oporavak ----------------------------------------------------------

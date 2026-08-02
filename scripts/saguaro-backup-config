@@ -77,6 +77,61 @@ EOF
     [ -f "/var/backups/saguaro/$f" ] || { echo "no such backup" >&2; exit 1; }
     cat "/var/backups/saguaro/$f"
     ;;
+  verify)
+    # Prove a backup can actually be restored, without touching the running
+    # system: decrypt the newest (or a named) archive with the on-box key,
+    # extract it to a temporary directory and check that the parts a restore
+    # depends on are present and non-empty. A drill that is only an operator
+    # ticking "yes, I tested it" proves nothing; this does the work.
+    f="${2:-}"
+    if [ -n "$f" ]; then
+      echo "$f" | grep -qE '^saguaro-[A-Za-z0-9._-]+\.tar\.gz\.age$' || { echo "invalid archive filename" >&2; exit 1; }
+    else
+      f=$(ls -1t /var/backups/saguaro/saguaro-*.tar.gz.age 2>/dev/null | grep -v '/saguaro-ca-' | head -1)
+      f=${f##*/}
+      [ -n "$f" ] || { echo "no local backup archive found in /var/backups/saguaro" >&2; exit 1; }
+    fi
+    SRC="/var/backups/saguaro/$f"
+    [ -f "$SRC" ] || { echo "no such backup archive at $SRC" >&2; exit 1; }
+    [ -s /etc/saguaro/backup.agekey ] || { echo "decryption key /etc/saguaro/backup.agekey is missing" >&2; exit 1; }
+    command -v age >/dev/null || { echo "age is not installed" >&2; exit 1; }
+    VWORK=$(mktemp -d); trap 'rm -rf -- "$VWORK"' EXIT
+    if ! age -d -i /etc/saguaro/backup.agekey "$SRC" 2>/dev/null | tar -C "$VWORK" -xzf - 2>/dev/null; then
+      echo "archive=$f"; echo "result=fail"
+      echo "reason=decrypt or extract failed (wrong key for this archive, or it is corrupt)"
+      exit 1
+    fi
+    echo "archive=$f"
+    echo "bytes=$(stat -c %s "$SRC" 2>/dev/null || echo 0)"
+    missing=""
+    # The configuration trees a restore puts back.
+    for d in etc/saguaro var/lib/saguaro; do
+      [ -d "$VWORK/$d" ] || missing="$missing $d"
+    done
+    # The database dumps, which are what makes a restore more than config files.
+    dumps=0
+    for db in saguaro kea pdns; do
+      if [ -s "$VWORK/pgsql/$db.sql" ]; then
+        dumps=$((dumps + 1))
+      else
+        missing="$missing pgsql/$db.sql"
+      fi
+    done
+    echo "dbdumps=$dumps"
+    echo "files=$(find "$VWORK" -type f 2>/dev/null | wc -l)"
+    # The decryption key must never be inside the archive: whoever steals the
+    # backup would otherwise also hold the key to it.
+    if [ -f "$VWORK/etc/saguaro/backup.agekey" ]; then
+      echo "result=fail"; echo "reason=the archive contains the decryption key"; exit 1
+    fi
+    echo "keyexcluded=yes"
+    if [ -n "$missing" ]; then
+      echo "result=fail"; echo "reason=missing:$missing"; exit 1
+    fi
+    echo "result=ok"
+    logger -t saguaro-backup "verify ok: $f ($dumps db dumps)"
+    ;;
+
   restore)
     # Disaster recovery: decrypt a local archive with the on-box age key and put
     # the configuration + databases back. Intended to run on a freshly-installed
