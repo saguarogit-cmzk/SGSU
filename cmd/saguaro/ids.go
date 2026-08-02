@@ -37,8 +37,12 @@ func defaultRunIDS(ctx context.Context, args ...string) ([]byte, error) {
 	// and compiles tens of thousands of rules — it needs minutes, not the 60 s
 	// that used to apply to every action and made a fresh install report a
 	// refresh failure that was really a timeout.
+	// `apply` validates the whole ruleset with `suricata -T` before installing
+	// it, which on a real Emerging Threats set (~68k signatures) takes minutes
+	// on appliance-class hardware — the 60 s that used to cover every action
+	// aborted the apply halfway and reported a failure for work still running.
 	timeout := 60 * time.Second
-	if len(args) > 0 && args[0] == "update-rules" {
+	if len(args) > 0 && (args[0] == "update-rules" || args[0] == "apply") {
 		timeout = 10 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -182,8 +186,10 @@ func (a *app) apiIDSInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiIDSEnable turns on IDS (af-packet) or IPS (NFQUEUE + nftables queue
-// rule through the existing 120 s firewall transaction).
+// rule through the existing 120 s firewall transaction). Validating the ruleset
+// takes minutes, so the response deadline is lifted like the other slow paths.
 func (a *app) apiIDSEnable(w http.ResponseWriter, r *http.Request) {
+	extendDeadline(w, 11*time.Minute)
 	var in struct {
 		Mode      string `json:"mode"`
 		Interface string `json:"interface"`
