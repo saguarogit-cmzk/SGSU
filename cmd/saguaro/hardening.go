@@ -176,13 +176,17 @@ func (a *app) hardeningReport(ctx context.Context) []hardeningCheck {
 	// --- Oporavak ----------------------------------------------------------
 	b := a.getBackup()
 	offsite := strings.TrimSpace(b.SFTPHost) != "" || strings.TrimSpace(b.S3Bucket) != ""
+	// Off-site copies are a recommendation, not a hard requirement: on a small
+	// site the operator may deliberately keep the encrypted archive and the key
+	// on removable media. It stays a warning so the risk is visible without
+	// pretending the appliance is broken.
 	if offsite {
 		add(hardeningCheck{Key: "backup_offsite", Title: "Kopija izvan uređaja", Status: "ok",
-			Detail: "Konfigurirano udaljeno odredište.", Severity: "critical"})
+			Detail: "Konfigurirano udaljeno odredište (SFTP ili S3).", Severity: "high"})
 	} else {
-		add(hardeningCheck{Key: "backup_offsite", Title: "Kopija izvan uređaja", Status: "fail",
-			Detail:   "Kopije postoje samo lokalno. Kvar diska uništava i sustav i sve njegove kopije.",
-			Severity: "critical"})
+		add(hardeningCheck{Key: "backup_offsite", Title: "Kopija izvan uređaja", Status: "warn",
+			Detail:   "Kopije postoje samo lokalno. Za manju instalaciju dovoljno je povremeno preuzeti arhivu i ključ na vanjski medij; inače kvar diska uništava i sustav i kopije.",
+			Severity: "high"})
 	}
 	if b.LastDrill.IsZero() {
 		add(hardeningCheck{Key: "backup_drill", Title: "Testirano vraćanje iz kopije", Status: "fail",

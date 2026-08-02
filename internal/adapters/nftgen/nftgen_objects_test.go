@@ -430,3 +430,71 @@ func TestBruteForceProtect(t *testing.T) {
 		t.Errorf("established accept must precede the limiter:\n%s", on)
 	}
 }
+
+// The device-access matrix replaces the blanket management rules with per-zone
+// ones, and must never leave the appliance unreachable.
+func TestServiceACLMatrix(t *testing.T) {
+	c := Config{ClientNetwork: "10.10.10.0/24", GatewayEnabled: true,
+		WANInterface: "wan1", LANInterface: "lan0", NATEnabled: true, MgmtOnLAN: true,
+		Zones:    []Zone{{Name: "dmz", Kind: "dmz", Interface: "net7", Network: "10.20.0.0/24"}},
+		VPNPorts: []int{1194},
+		ServiceACLs: []ServiceACL{
+			{Zone: "lan", HTTPS: true, SSH: true, DNS: true, Ping: true, DHCP: true},
+			{Zone: "wan", VPN: true},
+			{Zone: "dmz", DNS: true},
+		}}
+	out, err := c.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		`iifname "lan0" tcp dport { 443, 22 } accept comment "acl lan mgmt"`,
+		`iifname "lan0" udp dport 53 accept comment "acl lan dns"`,
+		`iifname "lan0" ip protocol icmp icmp type echo-request accept comment "acl lan ping"`,
+		`iifname "lan0" udp dport 67 accept comment "acl lan dhcp"`,
+		`iifname "wan1" udp dport 1194 accept comment "acl wan vpn"`,
+		`iifname "net7" udp dport 53 accept comment "acl dmz dns"`,
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q:\n%s", w, out)
+		}
+	}
+	// The WAN row grants no management, so no rule may open 22/443 there.
+	if strings.Contains(out, `iifname "wan1" tcp dport`) {
+		t.Errorf("WAN must not expose management:\n%s", out)
+	}
+	// The DMZ row denies ping, so only the LAN echo rule exists.
+	if strings.Contains(out, `iifname "net7" ip protocol icmp`) {
+		t.Errorf("DMZ ping was not granted but a rule appeared:\n%s", out)
+	}
+	// PMTUD must not depend on the matrix.
+	if !strings.Contains(out, "icmp type { destination-unreachable, time-exceeded, parameter-problem } accept") {
+		t.Errorf("path-MTU ICMP types must stay accepted:\n%s", out)
+	}
+	// Legacy blanket rules are gone once the matrix is in use.
+	if strings.Contains(out, "ip saddr @internal4 udp dport 53") {
+		t.Errorf("matrix must replace the blanket DNS rule:\n%s", out)
+	}
+
+	// A matrix with no management anywhere is refused (anti-lockout).
+	bad := c
+	bad.ServiceACLs = []ServiceACL{{Zone: "lan", DNS: true}, {Zone: "wan"}}
+	if err := bad.Validate(); err == nil {
+		t.Error("expected a lockout refusal when no zone allows HTTPS or SSH")
+	}
+	// ...unless an admin network still provides a path.
+	bad.AdminNetwork = "192.168.50.0/24"
+	if err := bad.Validate(); err != nil {
+		t.Errorf("admin network is a valid management path: %v", err)
+	}
+	// A row for a zone that no longer exists cannot widen access.
+	stale := c
+	stale.ServiceACLs = append(append([]ServiceACL{}, c.ServiceACLs...), ServiceACL{Zone: "ghost", HTTPS: true, SSH: true})
+	sout, err := stale.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sout, "acl ghost") {
+		t.Errorf("stale zone row must be dropped:\n%s", sout)
+	}
+}

@@ -196,6 +196,9 @@ type Config struct {
 	// that reference them. Both are edited in the Firewall objects/rules pages.
 	Aliases []Alias `json:"aliases,omitempty"`
 	Rules   []Rule  `json:"rules,omitempty"`
+	// ServiceACLs is the device-access matrix (zone × service). Empty means the
+	// legacy MgmtOnLAN/MgmtOnWAN + blanket DNS/DHCP/VPN rules stay in effect.
+	ServiceACLs []ServiceACL `json:"serviceAcls,omitempty"`
 	// Zones are named network segments (LAN/DMZ/GUEST/WAN) whose trust ranks
 	// drive the default inter-zone forward policy. Edited in the Firewall zones
 	// page; rules may additionally scope by from/to zone.
@@ -394,6 +397,72 @@ func (c Config) zoneIfaceMap() map[string]string {
 		m[z.Name] = z.IfaceName()
 	}
 	return m
+}
+
+// ServiceACL is one row of the device-access matrix: which appliance services a
+// zone may reach on its own interface. It is the "can the WAN side reach the
+// GUI?" question made explicit per zone, instead of the two blanket
+// MgmtOnLAN/MgmtOnWAN toggles. An empty matrix keeps the legacy behaviour, so
+// an upgrade never changes an existing appliance.
+type ServiceACL struct {
+	Zone  string `json:"zone"` // wan | lan | vpn | <zone name>
+	HTTPS bool   `json:"https,omitempty"`
+	SSH   bool   `json:"ssh,omitempty"`
+	DNS   bool   `json:"dns,omitempty"`
+	Ping  bool   `json:"ping,omitempty"`
+	DHCP  bool   `json:"dhcp,omitempty"`
+	VPN   bool   `json:"vpn,omitempty"`
+}
+
+// aclRow pairs a matrix row with the interface it resolved to.
+type aclRow struct {
+	ServiceACL
+	iface string
+}
+
+// serviceACLRows resolves each row to an interface, dropping rows whose zone no
+// longer exists so a stale entry can never widen access.
+func (c Config) serviceACLRows() []aclRow {
+	if len(c.ServiceACLs) == 0 {
+		return nil
+	}
+	zoneIface := c.zoneIfaceMap()
+	out := make([]aclRow, 0, len(c.ServiceACLs))
+	for _, r := range c.ServiceACLs {
+		var iface string
+		switch r.Zone {
+		case "wan":
+			iface = c.WANInterface
+		case "lan":
+			iface = c.LANInterface
+		case "vpn":
+			iface = c.OpenVPNIface
+		default:
+			iface = zoneIface[r.Zone]
+		}
+		if iface == "" {
+			continue
+		}
+		out = append(out, aclRow{ServiceACL: r, iface: iface})
+	}
+	return out
+}
+
+// ManagementReachable reports whether any path to SSH/HTTPS survives the
+// configuration — the anti-lockout invariant Validate enforces.
+func (c Config) ManagementReachable() bool {
+	if strings.TrimSpace(c.AdminNetwork) != "" {
+		return true
+	}
+	if rows := c.serviceACLRows(); len(rows) > 0 {
+		for _, r := range rows {
+			if r.HTTPS || r.SSH {
+				return true
+			}
+		}
+		return false
+	}
+	return (c.MgmtOnLAN && c.LANInterface != "") || (c.MgmtOnWAN && c.WANInterface != "")
 }
 
 // ZoneNetworks returns the deduplicated, sorted IPv4 networks of the non-WAN
@@ -709,7 +778,12 @@ func (c Config) Validate() error {
 	// The input chain drops by default; if no management path is allowed the
 	// appliance answers SSH/GUI on no interface and locks everyone out. Require
 	// at least one: management on WAN, management on LAN, or an admin network.
-	if c.AdminNetwork == "" && !c.MgmtOnWAN && !c.MgmtOnLAN {
+	// With a device-access matrix the same invariant is checked against it: at
+	// least one zone must still be allowed HTTPS or SSH.
+	if !c.ManagementReachable() {
+		if len(c.ServiceACLs) > 0 {
+			return fmt.Errorf("barem jedna zona mora imati dopušten HTTPS ili SSH, inače se gubi pristup uređaju")
+		}
 		return fmt.Errorf("enable management on WAN or LAN, or set an admin network")
 	}
 	for _, pf := range c.PortForwards {
@@ -792,7 +866,14 @@ func (c Config) Generate() (string, error) {
 	if len(c.GeoCIDRs) > 0 {
 		b.WriteString("    ip saddr @geo4 drop\n")
 	}
-	b.WriteString("    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept\n")
+	acl := c.serviceACLRows()
+	if len(acl) > 0 {
+		// Path-MTU discovery and traceroute replies must never depend on a
+		// per-zone ping setting, so only echo-request is gated by the matrix.
+		b.WriteString("    ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept\n")
+	} else {
+		b.WriteString("    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept\n")
+	}
 	b.WriteString("    ip6 nexthdr ipv6-icmp accept\n")
 	// Rate-limit before the management accepts, so an attacker hitting SSH or
 	// the GUI is dropped at the firewall. Established sessions were already
@@ -804,24 +885,64 @@ func (c Config) Generate() (string, error) {
 	if c.AdminNetwork != "" {
 		b.WriteString("    ip saddr @mgmt4 tcp dport { 22, 443 } accept\n")
 	}
-	// Interface-bound management: answer SSH/GUI on the LAN and/or WAN port. This
-	// survives a LAN/WAN subnet change because it matches the port, not a CIDR.
-	if c.MgmtOnLAN && c.LANInterface != "" {
-		fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.LANInterface)
-	}
-	if c.MgmtOnWAN && c.WANInterface != "" {
-		fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.WANInterface)
-	}
-	b.WriteString("    ip saddr @internal4 udp dport 53 accept\n")
-	b.WriteString("    ip saddr @internal4 tcp dport 53 accept\n")
-	// Remote VPN clients connect from the WAN, so accept the VPN UDP ports here.
-	for _, p := range c.VPNPorts {
-		if p > 0 && p <= 65535 {
-			fmt.Fprintf(&b, "    udp dport %d accept\n", p)
+	if len(acl) > 0 {
+		// Device-access matrix: one row per zone, each service bound to that
+		// zone's interface. Replaces the fixed management/DNS/DHCP rules so a
+		// zone can be denied a service (notably: management off the WAN).
+		for _, row := range acl {
+			iface := row.iface
+			if iface == "" {
+				continue
+			}
+			var ports []string
+			if row.HTTPS {
+				ports = append(ports, "443")
+			}
+			if row.SSH {
+				ports = append(ports, "22")
+			}
+			if len(ports) > 0 {
+				fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept comment \"acl %s mgmt\"\n",
+					iface, strings.Join(ports, ", "), row.Zone)
+			}
+			if row.DNS {
+				fmt.Fprintf(&b, "    iifname %q udp dport 53 accept comment \"acl %s dns\"\n", iface, row.Zone)
+				fmt.Fprintf(&b, "    iifname %q tcp dport 53 accept comment \"acl %s dns\"\n", iface, row.Zone)
+			}
+			if row.Ping {
+				fmt.Fprintf(&b, "    iifname %q ip protocol icmp icmp type echo-request accept comment \"acl %s ping\"\n", iface, row.Zone)
+			}
+			if row.DHCP {
+				fmt.Fprintf(&b, "    iifname %q udp dport 67 accept comment \"acl %s dhcp\"\n", iface, row.Zone)
+			}
+			if row.VPN {
+				for _, p := range c.VPNPorts {
+					if p > 0 && p <= 65535 {
+						fmt.Fprintf(&b, "    iifname %q udp dport %d accept comment \"acl %s vpn\"\n", iface, p, row.Zone)
+					}
+				}
+			}
 		}
-	}
-	if c.DHCPInterface != "" {
-		fmt.Fprintf(&b, "    iifname %q udp dport 67 accept\n", c.DHCPInterface)
+	} else {
+		// Interface-bound management: answer SSH/GUI on the LAN and/or WAN port. This
+		// survives a LAN/WAN subnet change because it matches the port, not a CIDR.
+		if c.MgmtOnLAN && c.LANInterface != "" {
+			fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.LANInterface)
+		}
+		if c.MgmtOnWAN && c.WANInterface != "" {
+			fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.WANInterface)
+		}
+		b.WriteString("    ip saddr @internal4 udp dport 53 accept\n")
+		b.WriteString("    ip saddr @internal4 tcp dport 53 accept\n")
+		// Remote VPN clients connect from the WAN, so accept the VPN UDP ports here.
+		for _, p := range c.VPNPorts {
+			if p > 0 && p <= 65535 {
+				fmt.Fprintf(&b, "    udp dport %d accept\n", p)
+			}
+		}
+		if c.DHCPInterface != "" {
+			fmt.Fprintf(&b, "    iifname %q udp dport 67 accept\n", c.DHCPInterface)
+		}
 	}
 	b.WriteString("    counter log prefix \"SNA-INPUT-DROP \" drop\n")
 	b.WriteString("  }\n\n")

@@ -112,11 +112,47 @@ func (a *app) apiIDSGet(w http.ResponseWriter, r *http.Request) {
 		stats = map[string]int64{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"config":   st,
-		"hw":       map[string]any{"memMB": a.hwMemMB, "cores": a.hwCores, "ok": hwOK, "reason": hwReason},
-		"ips":      map[string]any{"allowed": ipsOK, "reason": ipsReason, "minIdsDays": a.ipsMinIDSDays()},
-		"stats14d": stats,
+		"config":    st,
+		"hw":        map[string]any{"memMB": a.hwMemMB, "cores": a.hwCores, "ok": hwOK, "reason": hwReason},
+		"ips":       map[string]any{"allowed": ipsOK, "reason": ipsReason, "minIdsDays": a.ipsMinIDSDays()},
+		"stats14d":  stats,
+		"installed": a.suricataInstalled(r.Context()),
 	})
+}
+
+// suricataInstalled reports whether the engine is present. The installer can
+// skip it on small hardware, and until now that meant reinstalling the whole
+// appliance to gain IDS — so the GUI needs to know, and to be able to fix it.
+func (a *app) suricataInstalled(ctx context.Context) bool {
+	out, err := a.runHarden(ctx, "status")
+	if err != nil {
+		return false
+	}
+	return parseKV(out)["suricata_installed"] == "yes"
+}
+
+// apiIDSInstall installs Suricata (and suricata-update) through the package
+// adapter's tiny install allow-list, so an appliance that shipped without the
+// IDS can gain it in place.
+func (a *app) apiIDSInstall(w http.ResponseWriter, r *http.Request) {
+	if ok, reason := a.idsHardwareOK(); !ok {
+		writeError(w, http.StatusConflict, "hardver ne zadovoljava minimum za IDS: "+reason)
+		return
+	}
+	if a.suricataInstalled(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": "Suricata je već instalirana."})
+		return
+	}
+	out, err := a.runPkg(r.Context(), "install", "suricata")
+	if err != nil {
+		a.recordSev(r, a.actor(r), "ids-install", "suricata", "failed", "warning",
+			map[string]any{"output": truncate(string(out), 300)})
+		writeError(w, http.StatusBadGateway, "instalacija nije uspjela: "+truncate(string(out), 300))
+		return
+	}
+	a.recordSev(r, a.actor(r), "ids-install", "suricata", "success", "security", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"note": "Suricata je instalirana. Sada je uključi u načinu IDS (promatranje).", "output": truncate(string(out), 300)})
 }
 
 // apiIDSEnable turns on IDS (af-packet) or IPS (NFQUEUE + nftables queue

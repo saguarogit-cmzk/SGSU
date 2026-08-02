@@ -6,3 +6,4 @@ dist/
 
 # Local tooling state
 .claude/settings.local.json
+.gotmp/

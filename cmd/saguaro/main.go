@@ -177,7 +177,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.22"
+const appVersion = "0.99.23"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -457,6 +457,9 @@ func (a *app) handler() http.Handler {
 	// confirm-or-rollback window the firewall has, so a wrong address cannot
 	// strand the admin.
 	mux.HandleFunc("GET /api/net/pending", a.authz(permFirewall, a.apiNetPending))
+	// Device access: which zone may reach which appliance service.
+	mux.HandleFunc("GET /api/device-access", a.authz(permServiceCheck, a.apiDeviceAccessGet))
+	mux.HandleFunc("PUT /api/device-access", a.authz(permFirewall, a.serialized(a.apiDeviceAccessPut)))
 	// Security posture: read-only checklist plus the two root fixes it can apply.
 	mux.HandleFunc("GET /api/hardening", a.authz(permServiceCheck, a.apiHardeningGet))
 	mux.HandleFunc("POST /api/hardening/apply", a.authz(permFirewall, a.serialized(a.apiHardeningApply)))
@@ -513,6 +516,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /api/ids/enable", a.authz(permFirewall, a.serialized(a.apiIDSEnable)))
 	mux.HandleFunc("POST /api/ids/disable", a.authz(permFirewall, a.serialized(a.apiIDSDisable)))
 	mux.HandleFunc("POST /api/ids/update-rules", a.authz(permFirewall, a.apiIDSUpdateRules))
+	// Long-running apt work, so intentionally not serialized (like the other
+	// package operations).
+	mux.HandleFunc("POST /api/ids/install", a.authz(permPackages, a.apiIDSInstall))
 	mux.HandleFunc("GET /api/system", a.auth(a.apiSystemGet))
 	mux.HandleFunc("PUT /api/system/profile", a.authz(permFirewall, a.apiSystemProfilePut))
 	mux.HandleFunc("POST /api/system/power/{action}", a.authz(permPower, a.apiSystemPower))

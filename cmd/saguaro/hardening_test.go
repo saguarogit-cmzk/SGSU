@@ -67,7 +67,7 @@ func TestHardeningReportsWeakHost(t *testing.T) {
 	for _, c := range out.Checks {
 		byKey[c.Key] = c
 	}
-	for _, k := range []string{"ssh_password", "ssh_root", "mgmt_wan", "backup_offsite", "backup_drill"} {
+	for _, k := range []string{"ssh_password", "ssh_root", "mgmt_wan", "backup_drill"} {
 		if byKey[k].Status != "fail" {
 			t.Errorf("%s: got %q, want fail (%+v)", k, byKey[k].Status, byKey[k])
 		}
@@ -81,7 +81,7 @@ func TestHardeningReportsWeakHost(t *testing.T) {
 	if byKey["sysctl"].Status != "warn" || byKey["sysctl"].Fix != "sysctl" {
 		t.Errorf("kernel item wrong: %+v", byKey["sysctl"])
 	}
-	if out.Summary["fail"] < 4 {
+	if out.Summary["fail"] < 3 {
 		t.Errorf("summary should count the failures: %+v", out.Summary)
 	}
 }
@@ -148,6 +148,27 @@ func TestHardeningApplyRefusalSurfaces(t *testing.T) {
 	for i, w := range want {
 		if called[i] != w {
 			t.Fatalf("action %d = %q, want %q", i, called[i], w)
+		}
+	}
+}
+
+// Off-site backup is a recommendation for small sites, not a hard failure —
+// the operator may keep the encrypted archive and key on removable media.
+func TestHardeningOffsiteBackupIsAdvisory(t *testing.T) {
+	srv, c, a := newTestServer(t)
+	a.runHarden = func(context.Context, string) ([]byte, error) { return []byte(hardStatusStrong), nil }
+	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", r.StatusCode)
+	}
+	resp, _ := c.Get(srv.URL + "/api/hardening")
+	var out struct {
+		Checks []hardeningCheck `json:"checks"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	for _, ch := range out.Checks {
+		if ch.Key == "backup_offsite" && ch.Status != "warn" {
+			t.Fatalf("off-site backup must warn, not fail: %+v", ch)
 		}
 	}
 }

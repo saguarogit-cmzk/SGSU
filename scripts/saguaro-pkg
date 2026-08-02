@@ -63,6 +63,24 @@ case "$ACTION" in
     echo "package lists refreshed"
     ;;
 
+  install)
+    # Installing (as opposed to upgrading) is restricted to the optional
+    # security components the installer can skip on small hardware, so a
+    # working appliance can gain them without being reinstalled. The list is
+    # deliberately tiny: `apt-get install <anything>` would be root code exec.
+    case "$KEY" in
+      suricata) pkgs="suricata suricata-update" ;;
+      *) echo "package $KEY cannot be installed from the GUI" >&2; exit 1 ;;
+    esac
+    apt-get update -qq || true
+    # shellcheck disable=SC2086
+    apt-get install -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $pkgs
+    logger -t saguaro-pkg "install $pkgs"
+    for p in $pkgs; do
+      printf '%s %s\n' "$p" "$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null || echo missing)"
+    done
+    ;;
+
   upgrade)
     p=$(pkg_for "$KEY") || { echo "unknown package" >&2; exit 1; }
     # --only-upgrade never installs a package that is not already present.
