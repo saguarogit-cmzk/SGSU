@@ -143,7 +143,13 @@ func (a *app) apiIDSInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": "Suricata je već instalirana."})
 		return
 	}
-	out, err := a.runPkg(r.Context(), "install", "suricata")
+	// apt install pulls tens of megabytes; lift the 30 s write deadline the same
+	// way the package-upgrade handler does, or the browser sees a truncated
+	// failure while the install is still running.
+	extendDeadline(w, 15*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 14*time.Minute)
+	defer cancel()
+	out, err := a.runPkg(ctx, "install", "suricata")
 	if err != nil {
 		a.recordSev(r, a.actor(r), "ids-install", "suricata", "failed", "warning",
 			map[string]any{"output": truncate(string(out), 300)})
