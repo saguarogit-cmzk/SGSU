@@ -92,20 +92,23 @@ func TestFirewallDNSApply(t *testing.T) {
 	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-dns", `{}`); r.StatusCode != http.StatusOK {
 		t.Fatalf("dns apply (empty): got %d", r.StatusCode)
 	}
-	// Define internal zones, then apply grants them resolver access.
+	// Defining internal zones refreshes the drop-in on its own — no separate
+	// DNS apply click needed.
 	if r := reqJSON(t, srv, c, http.MethodPut, "/api/firewall/zones",
 		`{"zones":[{"name":"dmz","kind":"dmz","interface":"enp3","network":"10.20.0.0/24"},{"name":"guest","kind":"guest","interface":"enp4","network":"10.30.0.0/24"}]}`); r.StatusCode != http.StatusOK {
 		t.Fatalf("put zones: got %d", r.StatusCode)
-	}
-	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-dns", `{}`); r.StatusCode != http.StatusOK {
-		t.Fatalf("dns apply: got %d", r.StatusCode)
 	}
 	staged, err := os.ReadFile(filepath.Join(filepath.Dir(a.store.path), stagedDNSZonesName))
 	if err != nil || !strings.Contains(string(staged), "access-control: 10.20.0.0/24 allow") ||
 		!strings.Contains(string(staged), "access-control: 10.30.0.0/24 allow") {
 		t.Fatalf("staged DNS drop-in wrong: %v %s", err, staged)
 	}
-	if len(actions) != 2 || actions[0] != "zone-access-disable" || actions[1] != "zone-access-apply" {
+	// The manual apply endpoint still works for re-runs.
+	if r := reqJSON(t, srv, c, http.MethodPost, "/api/firewall/zones/apply-dns", `{}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("dns apply: got %d", r.StatusCode)
+	}
+	if len(actions) != 3 || actions[0] != "zone-access-disable" ||
+		actions[1] != "zone-access-apply" || actions[2] != "zone-access-apply" {
 		t.Fatalf("adapter sequence wrong: %v", actions)
 	}
 }

@@ -79,18 +79,61 @@ func TestHairpinNAT(t *testing.T) {
 	if strings.Contains(off, "fib daddr type local") {
 		t.Errorf("hairpin rules present while disabled:\n%s", off)
 	}
+	if strings.Contains(off, "ct status dnat") {
+		t.Errorf("hairpin forward accept present while disabled:\n%s", off)
+	}
 	base.HairpinNAT = true
 	on, err := base.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range []string{
-		`iifname "enp2" fib daddr type local tcp dport 8443 dnat to 192.168.10.5:443`,
+		`ip saddr 192.168.10.0/24 fib daddr type local tcp dport 8443 dnat to 192.168.10.5:443`,
 		`ip saddr 192.168.10.0/24 ip daddr 192.168.10.5 tcp dport 443 masquerade`,
+		// The reflected flow re-enters the forward chain from an internal
+		// interface (possibly iif==oif), so it needs its own accept.
+		`ip daddr 192.168.10.5 tcp dport 443 ct status dnat ct state new accept`,
 	} {
 		if !strings.Contains(on, w) {
 			t.Errorf("hairpin ruleset missing %q:\n%s", w, on)
 		}
+	}
+
+	// With zones defined, reflection covers every internal segment (DMZ here),
+	// not only the LAN client network — and so does resolver access.
+	base.Zones = []Zone{{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "10.20.0.0/24"}}
+	zoned, err := base.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		`set internal4 { type ipv4_addr; flags interval; elements = { 10.20.0.0/24, 192.168.10.0/24 } }`,
+		`ip saddr @internal4 udp dport 53 accept`,
+		`ip saddr @internal4 tcp dport 53 accept`,
+		`ip saddr { 10.20.0.0/24, 192.168.10.0/24 } fib daddr type local tcp dport 8443 dnat to 192.168.10.5:443`,
+		`ip saddr { 10.20.0.0/24, 192.168.10.0/24 } ip daddr 192.168.10.5 tcp dport 443 masquerade`,
+	} {
+		if !strings.Contains(zoned, w) {
+			t.Errorf("zoned hairpin ruleset missing %q:\n%s", w, zoned)
+		}
+	}
+}
+
+func TestInternalNetworks(t *testing.T) {
+	zones := []Zone{
+		{Name: "up", Kind: "wan", Interface: "enp1"},
+		{Name: "dmz", Kind: "dmz", Interface: "enp3", Network: "10.20.0.0/24"},
+		{Name: "iot", Kind: "guest", Interface: "enp2", VLANID: 40, Network: "10.40.0.0/24", Address: "10.40.0.1/24"},
+	}
+	if got := ZoneNetworks(zones); len(got) != 2 || got[0] != "10.20.0.0/24" || got[1] != "10.40.0.0/24" {
+		t.Fatalf("ZoneNetworks wrong: %v", got)
+	}
+	if got := InternalNetworks(zones, "192.168.10.0/24"); len(got) != 3 || got[2] != "192.168.10.0/24" {
+		t.Fatalf("InternalNetworks wrong: %v", got)
+	}
+	// A client network already covered by a zone is not duplicated.
+	if got := InternalNetworks(zones, "10.20.0.0/24"); len(got) != 2 {
+		t.Fatalf("InternalNetworks duplicated the client network: %v", got)
 	}
 }
 

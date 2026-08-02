@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -390,6 +391,47 @@ func (c Config) zoneIfaceMap() map[string]string {
 	return m
 }
 
+// ZoneNetworks returns the deduplicated, sorted IPv4 networks of the non-WAN
+// zones. This is the single eligibility rule shared by the firewall generator
+// and the Unbound zone-access drop-in (dnszones), so the two layers can never
+// disagree about which segments count as internal.
+func ZoneNetworks(zones []Zone) []string {
+	seen := map[string]bool{}
+	var nets []string
+	for _, z := range zones {
+		if z.Kind == "wan" {
+			continue
+		}
+		n := strings.TrimSpace(z.Network)
+		if !validCIDR4(n) || seen[n] {
+			continue
+		}
+		seen[n] = true
+		nets = append(nets, n)
+	}
+	sort.Strings(nets)
+	return nets
+}
+
+// InternalNetworks is ZoneNetworks plus the ClientNetwork: every IPv4 segment
+// whose clients count as internal (resolver access, hairpin NAT, and the
+// split-horizon view all key off this same list).
+func InternalNetworks(zones []Zone, clientNet string) []string {
+	nets := ZoneNetworks(zones)
+	cn := strings.TrimSpace(clientNet)
+	if !validCIDR4(cn) {
+		return nets
+	}
+	for _, n := range nets {
+		if n == cn {
+			return nets
+		}
+	}
+	nets = append(nets, cn)
+	sort.Strings(nets)
+	return nets
+}
+
 // aliasSetType returns the nft set declaration body for an alias.
 func aliasSetType(a Alias) string {
 	interval := a.Type == "network" || a.Type == "range"
@@ -720,7 +762,11 @@ func (c Config) Generate() (string, error) {
 	if c.AdminNetwork != "" {
 		fmt.Fprintf(&b, "  set mgmt4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.AdminNetwork)
 	}
-	fmt.Fprintf(&b, "  set clients4 { type ipv4_addr; flags interval; elements = { %s } }\n", c.ClientNetwork)
+	// internal4 mirrors the dnszones eligibility rule (every non-WAN zone
+	// network plus the client network), so resolver access and hairpin NAT
+	// cover exactly the segments Unbound is told to allow.
+	internalNets := InternalNetworks(c.Zones, c.ClientNetwork)
+	fmt.Fprintf(&b, "  set internal4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(internalNets, ", "))
 	if len(c.GeoCIDRs) > 0 {
 		fmt.Fprintf(&b, "  set geo4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(c.GeoCIDRs, ", "))
 	}
@@ -749,8 +795,8 @@ func (c Config) Generate() (string, error) {
 	if c.MgmtOnWAN && c.WANInterface != "" {
 		fmt.Fprintf(&b, "    iifname %q tcp dport { 22, 443 } accept\n", c.WANInterface)
 	}
-	b.WriteString("    ip saddr @clients4 udp dport 53 accept\n")
-	b.WriteString("    ip saddr @clients4 tcp dport 53 accept\n")
+	b.WriteString("    ip saddr @internal4 udp dport 53 accept\n")
+	b.WriteString("    ip saddr @internal4 tcp dport 53 accept\n")
 	// Remote VPN clients connect from the WAN, so accept the VPN UDP ports here.
 	for _, p := range c.VPNPorts {
 		if p > 0 && p <= 65535 {
@@ -772,6 +818,7 @@ func (c Config) Generate() (string, error) {
 		}
 	}
 	zoneIface := c.zoneIfaceMap()
+	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
 	forwardActive := c.GatewayEnabled || hasRules || len(c.TunnelNets) > 0 || len(c.GeoCIDRs) > 0
 	if forwardActive {
 		b.WriteString("    ct state established,related accept\n")
@@ -843,6 +890,18 @@ func (c Config) Generate() (string, error) {
 		for _, n := range c.NAT11 {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s ct state new accept\n", c.WANInterface, n.IntIP)
 		}
+		// Hairpin flows enter on an internal interface and leave toward the
+		// forwarded host — possibly the same interface — so the WAN-scoped
+		// accept above never matches them. Accept exactly the DNAT'd
+		// destination: the service is already published to the internet, so
+		// reaching it from any internal zone via the public address is the
+		// point of reflection, even from a lower-trust zone.
+		if hairpin {
+			for _, pf := range c.PortForwards {
+				fmt.Fprintf(&b, "    ip daddr %s %s dport %d ct status dnat ct state new accept comment \"hairpin\"\n",
+					pf.DestIP, pf.Proto, pf.DestPort)
+			}
+		}
 	}
 	// OpenVPN per-client access: allow each user's fixed source to only its
 	// permitted destinations (all, or specific IP+proto+port), then drop the rest
@@ -889,7 +948,6 @@ func (c Config) Generate() (string, error) {
 		b.WriteString("  }\n")
 	}
 	b.WriteString("}\n")
-	hairpin := c.HairpinNAT && len(c.PortForwards) > 0
 	if c.GatewayEnabled && (c.NATEnabled || len(c.PortForwards) > 0 || len(c.SNATRules) > 0 || len(c.NAT11) > 0 || c.OpenVPNSubnet != "") {
 		b.WriteString("\ntable ip saguaro-nat {\n")
 		if len(c.PortForwards) > 0 || len(c.NAT11) > 0 {
@@ -907,12 +965,15 @@ func (c Config) Generate() (string, error) {
 			for _, n := range c.NAT11 {
 				fmt.Fprintf(&b, "    iifname %q ip daddr %s dnat to %s\n", c.WANInterface, n.ExtIP, n.IntIP)
 			}
-			// Hairpin: LAN clients hitting the appliance's own (public/local)
-			// address on the forwarded port get DNAT'd to the internal host too.
+			// Hairpin: clients in any internal zone hitting the appliance's own
+			// (public/local) address on the forwarded port get DNAT'd to the
+			// internal host too. Source-based so VLAN sub-interfaces are covered
+			// without per-zone rules; ExtPort 22/443 are refused by Validate, so
+			// reflection can never capture the appliance's own management ports.
 			if hairpin {
 				for _, pf := range c.PortForwards {
-					fmt.Fprintf(&b, "    iifname %q fib daddr type local %s dport %d dnat to %s:%d\n",
-						c.LANInterface, pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
+					fmt.Fprintf(&b, "    ip saddr %s fib daddr type local %s dport %d dnat to %s:%d\n",
+						nftSet(internalNets), pf.Proto, pf.ExtPort, pf.DestIP, pf.DestPort)
 				}
 			}
 			b.WriteString("  }\n")
@@ -939,11 +1000,12 @@ func (c Config) Generate() (string, error) {
 				fmt.Fprintf(&b, "    oifname %q ip saddr %s masquerade\n", c.LANInterface, c.OpenVPNSubnet)
 			}
 			// Hairpin: masquerade the reflected flows so the internal host
-			// replies via the appliance (source becomes the appliance LAN IP).
+			// replies via the appliance (needed when client and server share a
+			// segment, harmless when they don't).
 			if hairpin {
 				for _, pf := range c.PortForwards {
 					fmt.Fprintf(&b, "    ip saddr %s ip daddr %s %s dport %d masquerade\n",
-						c.ClientNetwork, pf.DestIP, pf.Proto, pf.DestPort)
+						nftSet(internalNets), pf.DestIP, pf.Proto, pf.DestPort)
 				}
 			}
 			b.WriteString("  }\n")

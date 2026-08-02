@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net"
 	"regexp"
-	"sort"
 	"strings"
 
 	"saguaro.local/network-manager/internal/adapters/nftgen"
@@ -88,35 +87,13 @@ func canonName(name string) string {
 // sorted for stable output. With no eligible zones and no split records it
 // returns an empty (server-only) drop-in so applying it removes prior state.
 func GenerateAccessConf(zones []nftgen.Zone, split []SplitRecord, clientNet string) string {
-	seen := map[string]bool{}
-	var nets []string
-	for _, z := range zones {
-		if z.Kind == "wan" || z.Network == "" {
-			continue
-		}
-		ip, _, err := net.ParseCIDR(strings.TrimSpace(z.Network))
-		if err != nil || ip.To4() == nil {
-			continue
-		}
-		n := strings.TrimSpace(z.Network)
-		if !seen[n] {
-			seen[n] = true
-			nets = append(nets, n)
-		}
-	}
-	sort.Strings(nets)
-
-	// The internal view covers the firewall zones plus the LAN (client) network,
-	// so LAN clients get split-horizon answers even without explicit zones. The
-	// LAN is already allowed by the base config, so it needs no allow line here.
-	viewNets := append([]string{}, nets...)
-	if cn := strings.TrimSpace(clientNet); cn != "" {
-		if ip, _, err := net.ParseCIDR(cn); err == nil && ip.To4() != nil && !seen[cn] {
-			viewNets = append(viewNets, cn)
-			seen[cn] = true
-		}
-	}
-	sort.Strings(viewNets)
+	// Both lists come from nftgen so the firewall's internal4 set and the
+	// resolver's access-control lines can never disagree about which segments
+	// are internal. The view additionally covers the LAN (client) network, so
+	// LAN clients get split-horizon answers even without explicit zones; the
+	// LAN is already allowed by the base config, so it needs no allow line.
+	nets := nftgen.ZoneNetworks(zones)
+	viewNets := nftgen.InternalNetworks(zones, clientNet)
 
 	var valid []SplitRecord
 	for _, s := range split {

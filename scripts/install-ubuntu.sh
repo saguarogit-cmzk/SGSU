@@ -923,7 +923,7 @@ if $ENABLE_FIREWALL; then
 flush ruleset
 table inet saguaro {
   set mgmt4 { type ipv4_addr; flags interval; elements = { ${ADMIN_NETWORK} } }
-  set clients4 { type ipv4_addr; flags interval; elements = { ${CLIENT_NETWORK} } }
+  set internal4 { type ipv4_addr; flags interval; elements = { ${CLIENT_NETWORK} } }
 
   chain input {
     type filter hook input priority filter; policy drop;
@@ -933,8 +933,8 @@ table inet saguaro {
     ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
     ip6 nexthdr ipv6-icmp accept
     ip saddr @mgmt4 tcp dport { 22, 443 } accept
-    ip saddr @clients4 udp dport 53 accept
-    ip saddr @clients4 tcp dport 53 accept
+    ip saddr @internal4 udp dport 53 accept
+    ip saddr @internal4 tcp dport 53 accept
 ${dhcp_rule}
     counter log prefix "SNA-INPUT-DROP " drop
   }

@@ -268,7 +268,7 @@ ${toggle('gwMgmtWan',c.mgmtOnWan===true,'Dostupno s WAN strane')}
 <label>Dodatna mgmt mreža (CIDR) — opcionalno <input id="gwAdmin" value="${ew(c.adminNetwork||'')}" placeholder="npr. 192.168.10.0/24"></label>
 <p class="muted small">Sivi tekst je samo primjer (placeholder) — ostavi prazno ako koristiš prekidače gore. Barem jedan pristup mora ostati uključen.</p>
 <h3>Napredno</h3>
-${toggle('gwHairpin',c.hairpinNat,'Hairpin NAT (LAN klijenti dosežu port-forward preko javnog IP-a)')}
+${toggle('gwHairpin',c.hairpinNat,'Hairpin NAT (klijenti svih internih zona dosežu port-forward preko javnog IP-a)')}
 <h4>Preusmjeravanje portova (port forward · DNAT)</h4>
 <p class="muted small">Otvara vanjski port prema unutarnjem poslužitelju. Ako imaš <b>više javnih IP-ova</b> na WAN-u, upiši <b>javnu IP</b> da vežeš pravilo baš za nju (prazno = vrijedi za WAN adresu). Javnu IP dodaj i kao WAN alias.</p>
 <div id="pfList"></div>

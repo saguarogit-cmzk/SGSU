@@ -246,7 +246,18 @@ func (a *app) apiFirewallZonesPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.record(r, a.actor(r), "firewall-zones", "objects", "success", map[string]any{"count": len(in.Zones)})
-	writeJSON(w, http.StatusOK, map[string]any{"zones": cfg.Zones})
+	// Zones also feed the Unbound zone-access drop-in, so refresh it here —
+	// otherwise a freshly saved zone passes the firewall but is still refused
+	// by the resolver until someone remembers the manual DNS apply. Best-effort:
+	// the zones are already persisted, so a resolver failure is reported but
+	// does not fail the save.
+	dnsApplied := true
+	if _, _, out, err := a.applyDNSDropin(r.Context()); err != nil {
+		dnsApplied = false
+		a.recordSev(r, a.actor(r), "zone-dns", "unbound", "failed", "warning",
+			map[string]any{"error": err.Error(), "output": truncate(string(out), 300)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"zones": cfg.Zones, "dnsApplied": dnsApplied})
 }
 
 // apiFirewallVLANsApply creates (or removes) the 802.1Q sub-interfaces backing

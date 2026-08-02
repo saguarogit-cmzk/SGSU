@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"saguaro.local/network-manager/internal/adapters/dnszones"
+	"saguaro.local/network-manager/internal/adapters/nftgen"
 )
 
 // getSplitDNS returns the configured split-horizon records (never nil-mutating
@@ -33,13 +34,16 @@ func (a *app) setSplitDNS(recs []dnszones.SplitRecord) error {
 // serve. It returns the eligible-zone and valid-split counts plus the adapter
 // output for error reporting.
 func (a *app) applyDNSDropin(ctx context.Context) (zones, splits int, out []byte, err error) {
+	return a.applyDNSDropinWith(ctx, a.getSplitDNS())
+}
+
+// applyDNSDropinWith is applyDNSDropin over an explicit record set, so a
+// handler can apply records before persisting them (apply-then-persist).
+func (a *app) applyDNSDropinWith(ctx context.Context, split []dnszones.SplitRecord) (zones, splits int, out []byte, err error) {
 	cfg, _ := a.getGateway()
-	split := a.getSplitDNS()
-	for _, z := range cfg.Zones {
-		if z.Kind != "wan" && z.Network != "" {
-			zones++
-		}
-	}
+	// Eligibility comes from the same helper that feeds the firewall's
+	// internal4 set and the generated access-control lines.
+	zones = len(nftgen.ZoneNetworks(cfg.Zones))
 	for _, s := range split {
 		if s.Valid() {
 			splits++
@@ -90,15 +94,17 @@ func (a *app) apiDNSSplitPut(w http.ResponseWriter, r *http.Request) {
 		}
 		clean = append(clean, s)
 	}
-	if err := a.setSplitDNS(clean); err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot save split-horizon records")
-		return
-	}
-	_, splits, out, err := a.applyDNSDropin(r.Context())
+	// Apply first, persist second (house pattern): a failed Unbound apply must
+	// not leave state.json claiming records that were never installed.
+	_, splits, out, err := a.applyDNSDropinWith(r.Context(), clean)
 	if err != nil {
 		a.recordSev(r, a.actor(r), "dns-split", "unbound", "failed", "warning",
 			map[string]any{"error": err.Error(), "output": truncate(string(out), 300)})
 		writeError(w, http.StatusBadGateway, "apply failed: "+truncate(string(out), 300))
+		return
+	}
+	if err := a.setSplitDNS(clean); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot save split-horizon records")
 		return
 	}
 	a.record(r, a.actor(r), "dns-split", "unbound", "success", map[string]any{"records": splits})
