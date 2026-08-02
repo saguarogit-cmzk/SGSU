@@ -156,9 +156,21 @@ func (a *app) apiIDSInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "instalacija nije uspjela: "+truncate(string(out), 300))
 		return
 	}
+	// A freshly installed Suricata ships no rule files, and `suricata -T` fails
+	// without them — so the engine would be installed but impossible to enable,
+	// with only an opaque validation error to show for it. Fetch the ruleset as
+	// part of the install so it leaves behind something that actually starts.
+	note := "Suricata je instalirana i baza pravila je preuzeta. Sada je uključi u načinu IDS (promatranje)."
+	if rulesOut, rulesErr := a.runIDS(ctx, "update-rules"); rulesErr != nil {
+		note = "Suricata je instalirana, ali baza pravila nije preuzeta (" +
+			truncate(strings.TrimSpace(string(rulesOut)), 200) +
+			"). Pokreni \"Ažuriraj pravila\" prije uključivanja."
+		a.recordSev(r, a.actor(r), "ids-install", "suricata-update", "failed", "warning",
+			map[string]any{"output": truncate(string(rulesOut), 300)})
+	}
 	a.recordSev(r, a.actor(r), "ids-install", "suricata", "success", "security", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-		"note": "Suricata je instalirana. Sada je uključi u načinu IDS (promatranje).", "output": truncate(string(out), 300)})
+		"note": note, "output": truncate(string(out), 300)})
 }
 
 // apiIDSEnable turns on IDS (af-packet) or IPS (NFQUEUE + nftables queue
