@@ -95,8 +95,13 @@ func (a *app) hardeningReport(ctx context.Context) []hardeningCheck {
 			Detail:   "Nije pronađen nijedan ključ za račun koji može postati root. Bez ključa se pristup samo lozinkom ne smije isključiti.",
 			Severity: "high"})
 	} else {
+		// Counting keys says nothing about whether anyone still holds the
+		// private half — a leftover key from a decommissioned laptop counts
+		// the same as a working one, and acting on that number alone is how an
+		// operator locks themselves out.
 		add(hardeningCheck{Key: "ssh_keys", Title: "SSH ključ za administratora", Status: "ok",
-			Detail: strconv.Itoa(keys) + " instaliran(ih) ključ(ev)a.", Severity: "high"})
+			Detail:   strconv.Itoa(keys) + " instaliran(ih) ključ(ev)a. Prije isključivanja lozinki provjeri da se tim ključem stvarno možeš prijaviti (ssh bez pitanja za lozinku).",
+			Severity: "high"})
 	}
 
 	// --- Upravljački pristup ----------------------------------------------

@@ -845,7 +845,12 @@ func (c Config) Generate() (string, error) {
 	// network plus the client network), so resolver access and hairpin NAT
 	// cover exactly the segments Unbound is told to allow.
 	internalNets := InternalNetworks(c.Zones, c.ClientNetwork)
-	fmt.Fprintf(&b, "  set internal4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(internalNets, ", "))
+	// Only declared when something still references it: the device-access matrix
+	// replaces the source-based DNS rules with per-interface ones, and an
+	// unreferenced set in a live ruleset is just a thing to misread later.
+	if len(c.ServiceACLs) == 0 {
+		fmt.Fprintf(&b, "  set internal4 { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(internalNets, ", "))
+	}
 	// A dynamic set holding one rate-limiter per source address; entries expire
 	// on their own, so nothing has to be cleaned up.
 	if c.BruteForceProtect {
