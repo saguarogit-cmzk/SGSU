@@ -12,6 +12,7 @@ STAGED_SQUID=/var/lib/saguaro/staged-squid.conf
 STAGED_BANNED=/var/lib/saguaro/staged-e2g-banned
 STAGED_EXC=/var/lib/saguaro/staged-e2g-exceptions
 SQUID_DROPIN=/etc/squid/conf.d/saguaro.conf
+SQUID_BACKUP=/run/saguaro/squid-dropin-backup.conf
 E2G_DIR=/etc/e2guardian
 E2G_LISTS="$E2G_DIR/lists"
 BUMP_DIR=/etc/squid/ssl_cert
@@ -24,6 +25,42 @@ CA_PUBLISH=/var/lib/saguaro/webproxy-bump-ca.crt
 
 ensure_include() { # file marker-line
   grep -qF "$2" "$1" 2>/dev/null || printf '%s\n' "$2" >>"$1"
+}
+
+# validate_squid enforces a directive allow-list on the drop-in BEFORE Squid
+# parses it. /var/lib/saguaro is writable by the unprivileged saguaro user, and
+# `squid -k parse` accepts directives that name helper programs
+# (url_rewrite_program, external_acl_type, auth_param ... program,
+# logfile_daemon) or pull in arbitrary files (include) — the same privilege
+# boundary validate_wg and validate_swanctl defend in the VPN adapters. The
+# generator emits only these four directives; sslcrtd_program is legitimate but
+# pinned to its exact generated form so no other helper path can appear.
+validate_squid() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    l=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$l" in ''|'#'*) continue ;; esac
+    key=$(printf '%s' "$l" | awk '{print tolower($1)}')
+    case "$key" in
+      acl|http_access|http_port|ssl_bump) ;;
+      sslcrtd_program)
+        [ "$l" = "sslcrtd_program /usr/lib/squid/security_file_certgen -s /var/lib/squid/ssl_db -M 4MB" ] || {
+          echo "refusing squid config: sslcrtd_program must be the fixed generated helper" >&2; return 1; } ;;
+      *) echo "refusing squid config: disallowed directive: $line" >&2; return 1 ;;
+    esac
+  done < "$1"
+  return 0
+}
+
+# validate_list keeps the e2guardian banned/exception lists to plain domain
+# entries: an `.Include<...>` line inside a list would pull in any file.
+validate_list() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    l=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$l" in ''|'#'*) continue ;; esac
+    printf '%s' "$l" | grep -Eq '^[A-Za-z0-9.*_-]+$' || {
+      echo "refusing e2guardian list $1: unexpected entry: $line" >&2; return 1; }
+  done < "$1"
+  return 0
 }
 
 case "${1:-}" in
@@ -61,11 +98,20 @@ case "${1:-}" in
     command -v squid >/dev/null || { echo "squid is not installed" >&2; exit 1; }
     [ -s "$STAGED_SQUID" ] || { echo "no staged squid config" >&2; exit 1; }
     install -d -m 0755 /etc/squid/conf.d
+    # Snapshot the live drop-in so a rejected config restores what was working
+    # instead of leaving the proxy with no Saguaro configuration at all.
+    install -d -m 0755 /run/saguaro
+    if [ -e "$SQUID_DROPIN" ]; then cp -p "$SQUID_DROPIN" "$SQUID_BACKUP"; else rm -f "$SQUID_BACKUP"; fi
     install -m 0644 -o root -g root "$STAGED_SQUID" "$SQUID_DROPIN"
     rm -f "$STAGED_SQUID"
-    if ! squid -k parse >/dev/null 2>&1; then
-      rm -f "$SQUID_DROPIN"
-      echo "squid rejected the generated config; not applied" >&2
+    # Validate the DESTINATION, not the staged file (SR2), then let Squid parse.
+    if ! validate_squid "$SQUID_DROPIN" || ! squid -k parse >/dev/null 2>&1; then
+      if [ -s "$SQUID_BACKUP" ]; then
+        install -m 0644 -o root -g root "$SQUID_BACKUP" "$SQUID_DROPIN"
+      else
+        rm -f "$SQUID_DROPIN"
+      fi
+      echo "squid config refused; previous state restored" >&2
       exit 1
     fi
     systemctl enable squid >/dev/null 2>&1 || true
@@ -74,6 +120,9 @@ case "${1:-}" in
       install -d -m 0755 "$E2G_LISTS"
       install -m 0644 -o root -g root "$STAGED_BANNED" "$E2G_LISTS/saguaro-banned" 2>/dev/null || : >"$E2G_LISTS/saguaro-banned"
       install -m 0644 -o root -g root "$STAGED_EXC" "$E2G_LISTS/saguaro-exceptions" 2>/dev/null || : >"$E2G_LISTS/saguaro-exceptions"
+      for lf in "$E2G_LISTS/saguaro-banned" "$E2G_LISTS/saguaro-exceptions"; do
+        validate_list "$lf" || { : >"$lf"; echo "cleared $lf after refusing its content" >&2; exit 1; }
+      done
       ensure_include "$E2G_LISTS/bannedsitelist" ".Include<$E2G_LISTS/saguaro-banned>"
       ensure_include "$E2G_LISTS/exceptionsitelist" ".Include<$E2G_LISTS/saguaro-exceptions>"
       # point e2guardian at the client port and the Squid parent

@@ -14,6 +14,29 @@ BACKUP=/run/saguaro/nginx-apps-backup.conf
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
+# validate_nginx enforces a strict directive allow-list on the vhost BEFORE
+# nginx loads it. This is the privilege boundary: /var/lib/saguaro is writable
+# by the unprivileged saguaro user, and `nginx -t` happily accepts directives
+# that read or write arbitrary paths as root — `include` pulls in any file,
+# `root`/`alias` publish any directory to the internet, and access_log/error_log
+# create or truncate files anywhere (the master process opens them as root).
+# The generator emits a small fixed vocabulary, so an allow-list (the same shape
+# validate_wg uses in saguaro-vpn) is both safe and sufficient.
+validate_nginx() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    l=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$l" in
+      ''|'#'*|'}'|'server {'|'location / {'|'upstream '*'{') continue ;;
+    esac
+    key=$(printf '%s' "$l" | awk '{print tolower($1)}')
+    case "$key" in
+      listen|server_name|ssl_certificate|ssl_certificate_key|allow|deny|proxy_pass|proxy_set_header|proxy_http_version|server|location|upstream) ;;
+      *) echo "refusing nginx vhost: disallowed directive: $line" >&2; return 1 ;;
+    esac
+  done < "$1"
+  return 0
+}
+
 case "${1:-}" in
   apply)
     [ -s "$STAGED" ] || { echo "no staged vhost file at $STAGED" >&2; exit 1; }
@@ -21,6 +44,17 @@ case "${1:-}" in
     if [ -e "$AVAIL" ]; then cp -p "$AVAIL" "$BACKUP"; else : >"$BACKUP"; fi
     install -m 0644 -o root -g root "$STAGED" "$AVAIL"
     ln -sfn "$AVAIL" "$ENABLED"
+    # Validate the DESTINATION, not the staged file, so a staged-file swap
+    # between check and load cannot slip an unvalidated vhost past us (SR2).
+    if ! validate_nginx "$AVAIL"; then
+      if [ -s "$BACKUP" ]; then
+        install -m 0644 -o root -g root "$BACKUP" "$AVAIL"
+      else
+        rm -f "$AVAIL" "$ENABLED"
+      fi
+      echo "staged vhost contains disallowed directives; previous state restored" >&2
+      exit 1
+    fi
     if ! nginx -t >/dev/null 2>&1; then
       if [ -s "$BACKUP" ]; then
         install -m 0644 -o root -g root "$BACKUP" "$AVAIL"

@@ -183,7 +183,7 @@ func (a *app) apiIDSEnable(w http.ResponseWriter, r *http.Request) {
 	firewallNote := ""
 	if in.Mode == "ips" {
 		st.IPSEnabledAt = now
-		if err := a.setGatewayIPS(r.Context(), true); err != nil {
+		if err := a.setGatewayIPS(r.Context(), true, false); err != nil {
 			writeError(w, http.StatusBadGateway, "suricata started but the firewall queue rule failed: "+err.Error())
 			return
 		}
@@ -206,9 +206,17 @@ func (a *app) apiIDSDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "disable failed: "+truncate(string(out), 300))
 		return
 	}
+	// The queue rule is removed and confirmed in one step: an emergency stop
+	// that silently reverts two minutes later is worse than none.
+	queueNote := ""
 	if st.Mode == "ips" {
-		if err := a.setGatewayIPS(r.Context(), false); err != nil {
+		if err := a.setGatewayIPS(r.Context(), false, true); err != nil {
 			a.log.Error("cannot remove IPS queue rule", "error", err)
+			// Suricata is already stopped, so report honestly rather than
+			// implying the firewall is clean.
+			queueNote = "Suricata je zaustavljen, ali nftables queue pravilo nije uklonjeno: " + err.Error()
+			a.recordSev(r, a.actor(r), "ids-disable", "nftables", "failed", "security",
+				map[string]any{"error": err.Error()})
 		}
 	}
 	st.Mode = "off"
@@ -218,7 +226,7 @@ func (a *app) apiIDSDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.recordSev(r, a.actor(r), "ids-disable", "suricata", "success", "security", nil)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": queueNote})
 }
 
 // apiIDSUpdateRules refreshes the Suricata ruleset (suricata-update) and reloads
@@ -236,14 +244,23 @@ func (a *app) apiIDSUpdateRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // setGatewayIPS toggles the NFQUEUE rule through the normal firewall
-// transaction (stage + root adapter apply with its confirm window).
-func (a *app) setGatewayIPS(ctx context.Context, enabled bool) error {
-	cfg, ok := a.getGateway()
+// transaction (stage + root adapter apply). When confirm is set the ruleset is
+// also confirmed immediately, so it cannot auto-revert: turning IPS *off* must
+// stick, otherwise the 120 s timer restores the queue rule against a Suricata
+// that is no longer running. Turning it *on* deliberately keeps the window —
+// inline inspection is exactly the change an operator may need undone.
+func (a *app) setGatewayIPS(ctx context.Context, enabled, confirm bool) error {
+	stored, ok := a.getGateway()
 	if !ok {
 		return fmt.Errorf("gateway is not configured")
 	}
-	cfg.IPSEnabled = enabled
-	text, err := cfg.Generate()
+	stored.IPSEnabled = enabled
+	// Render from the runtime view: generating from the stored config alone
+	// would drop the VPN tunnel accepts, geo-block CIDRs, VPN input ports and
+	// OpenVPN per-client policy from the live ruleset every time IPS toggles.
+	gen, _ := a.firewallConfig()
+	gen.IPSEnabled = enabled
+	text, err := gen.Generate()
 	if err != nil {
 		return err
 	}
@@ -254,5 +271,10 @@ func (a *app) setGatewayIPS(ctx context.Context, enabled bool) error {
 	if out, err := a.runFirewall(ctx, "apply"); err != nil {
 		return fmt.Errorf("%s", truncate(string(out), 300))
 	}
-	return a.setGateway(cfg)
+	if confirm {
+		if out, err := a.runFirewall(ctx, "confirm"); err != nil {
+			return fmt.Errorf("%s", truncate(string(out), 300))
+		}
+	}
+	return a.setGateway(stored)
 }

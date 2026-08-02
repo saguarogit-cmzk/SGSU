@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"saguaro.local/network-manager/internal/adapters/wireguard"
 )
 
 type testServerBundle struct {
@@ -106,12 +108,56 @@ func TestIPSPreconditionsAndQueueRule(t *testing.T) {
 	if err != nil || !strings.Contains(string(stagedFW), "queue num 0 bypass") {
 		t.Fatalf("staged firewall lacks queue rule: %v", err)
 	}
-	// Emergency off removes the queue rule again.
+	// Enabling IPS keeps the 120 s window (the operator confirms on the Gateway
+	// page), so no confirm may follow the apply here.
+	if last := (*fwCalls)[len(*fwCalls)-1]; last != "apply" {
+		t.Fatalf("IPS enable must not auto-confirm, calls: %v", *fwCalls)
+	}
+	// Emergency off removes the queue rule again — and confirms it, because a
+	// ruleset that auto-reverts after 120 s would restore the queue rule
+	// against a Suricata that is no longer running.
 	if r := reqJSON(t, b.srv, b.c, http.MethodPost, "/api/ids/disable", "{}"); r.StatusCode != http.StatusOK {
 		t.Fatalf("emergency off: got %d", r.StatusCode)
 	}
 	gw, _ = b.a.getGateway()
 	if gw.IPSEnabled {
 		t.Fatal("emergency off must clear IPSEnabled")
+	}
+	n := len(*fwCalls)
+	if n < 2 || (*fwCalls)[n-2] != "apply" || (*fwCalls)[n-1] != "confirm" {
+		t.Fatalf("emergency off must apply then confirm, calls: %v", *fwCalls)
+	}
+	stagedFW, err = os.ReadFile(filepath.Join(filepath.Dir(b.a.store.path), stagedRulesetName))
+	if err != nil || strings.Contains(string(stagedFW), "queue num 0 bypass") {
+		t.Fatalf("emergency off must stage a ruleset without the queue rule: %v", err)
+	}
+}
+
+// Toggling IPS regenerates the whole ruleset, so the runtime-injected rules
+// (VPN tunnel accepts, geo-block CIDRs, VPN input ports) must survive it —
+// rendering from the stored config alone used to drop them.
+func TestIPSToggleKeepsRuntimeRules(t *testing.T) {
+	b, _, _ := idsTestServer(t)
+	if r := reqJSON(t, b.srv, b.c, http.MethodPut, "/api/gateway", gwBody); r.StatusCode != http.StatusOK {
+		t.Fatalf("gateway config: got %d", r.StatusCode)
+	}
+	// A WireGuard listen port is one of the rules injected at generate time and
+	// never stored in the gateway config.
+	if err := b.a.setVPN(wireguard.Config{Enabled: true, ListenPort: 51820,
+		Subnet: "10.8.0.0/24"}); err != nil {
+		t.Fatalf("setVPN: %v", err)
+	}
+	if err := b.a.setGatewayIPS(context.Background(), true, false); err != nil {
+		t.Fatalf("setGatewayIPS: %v", err)
+	}
+	staged, err := os.ReadFile(filepath.Join(filepath.Dir(b.a.store.path), stagedRulesetName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(staged), "queue num 0 bypass") {
+		t.Fatalf("queue rule missing:\n%s", staged)
+	}
+	if !strings.Contains(string(staged), "udp dport 51820 accept") {
+		t.Fatalf("VPN port rule dropped by the IPS toggle:\n%s", staged)
 	}
 }
