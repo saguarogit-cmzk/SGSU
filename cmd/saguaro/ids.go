@@ -33,7 +33,15 @@ type idsState struct {
 }
 
 func defaultRunIDS(ctx context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	// The apply/disable actions are quick, but a first `suricata-update` fetches
+	// and compiles tens of thousands of rules — it needs minutes, not the 60 s
+	// that used to apply to every action and made a fresh install report a
+	// refresh failure that was really a timeout.
+	timeout := 60 * time.Second
+	if len(args) > 0 && args[0] == "update-rules" {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	full := append([]string{"-n", "/usr/sbin/saguaro-ids"}, args...)
 	return exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
@@ -287,6 +295,7 @@ func (a *app) apiIDSDisable(w http.ResponseWriter, r *http.Request) {
 // Suricata if it is running. Long-running (network fetch), so it is intentionally
 // not wrapped in serialized().
 func (a *app) apiIDSUpdateRules(w http.ResponseWriter, r *http.Request) {
+	extendDeadline(w, 11*time.Minute)
 	if out, err := a.runIDS(r.Context(), "update-rules"); err != nil {
 		a.recordSev(r, a.actor(r), "ids-update-rules", "suricata", "failed", "warning",
 			map[string]any{"error": truncate(string(out), 300)})
