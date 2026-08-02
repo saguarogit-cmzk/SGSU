@@ -93,10 +93,10 @@ const UTM_MODULES=new Set(['gateway','aliasi','fwrules','ids','webproxy','vpn','
 // groups; the modules of the active group appear as tabs across the top of the
 // content as tabs, so the rail stays short no matter how many modules.
 const NAV_GROUPS=[
- ['Status','monitoring',['dashboard','monitoring','diagnostics','conflicts','tools','audit']],
+ ['Status','monitoring',['dashboard','monitoring','diagnostics','hardening','conflicts','tools','audit']],
  ['Mreža','interfaces',['interfaces','gateway','routing','aliasi','multiwan']],
  ['DNS i DHCP','dns',['dns','dhcp','rpz']],
- ['Vatrozid','fwrules',['fwrules','ids','webproxy']],
+ ['Vatrozid','fwrules',['fwrules','deviceaccess','ids','webproxy']],
  ['VPN','vpn',['vpn','openvpn','sitevpn','ipsec']],
  ['Servisi i TLS','services',['certificates','proxy','services','backup','mail','siem']],
  ['Sustav','system',['system','configver','packages','users']],
