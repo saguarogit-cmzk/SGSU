@@ -15,7 +15,9 @@ func TestEveryModuleAppearsInNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := string(b)
+	// The checkout may carry CRLF endings on Windows, which would leave a \r
+	// before every line anchor and make the patterns below silently miss.
+	src := strings.ReplaceAll(string(b), "\r\n", "\n")
 
 	modLine := regexp.MustCompile(`(?m)^const modules=\[(.*)\];$`).FindStringSubmatch(src)
 	if modLine == nil {
@@ -73,7 +75,9 @@ func TestEveryModuleHasARoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := string(b)
+	// The checkout may carry CRLF endings on Windows, which would leave a \r
+	// before every line anchor and make the patterns below silently miss.
+	src := strings.ReplaceAll(string(b), "\r\n", "\n")
 	modLine := regexp.MustCompile(`(?m)^const modules=\[(.*)\];$`).FindStringSubmatch(src)
 	if modLine == nil {
 		t.Fatal("cannot find the modules list in app.js")
