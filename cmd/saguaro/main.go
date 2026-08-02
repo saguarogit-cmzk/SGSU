@@ -100,6 +100,8 @@ type state struct {
 	SplitDNS []dnszones.SplitRecord `json:"splitDns,omitempty"`
 	// DNSForward is the optional encrypted (DoT) upstream configuration for Unbound.
 	DNSForward *dnsForwardConfig `json:"dnsForward,omitempty"`
+	// APITokens are bearer credentials for automation; only their hashes live here.
+	APITokens []apiToken `json:"apiTokens,omitempty"`
 }
 
 type store struct {
@@ -177,7 +179,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.33"
+const appVersion = "0.99.34"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -464,6 +466,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/device-access", a.authz(permServiceCheck, a.apiDeviceAccessGet))
 	mux.HandleFunc("PUT /api/device-access", a.authz(permFirewall, a.serialized(a.apiDeviceAccessPut)))
 	// Security posture: read-only checklist plus the two root fixes it can apply.
+	// API tokens for automation (admin-managed; a token can never mint another).
+	mux.HandleFunc("GET /api/tokens", a.authz(permUsersWrite, a.apiTokensList))
+	mux.HandleFunc("POST /api/tokens", a.authz(permUsersWrite, a.serialized(a.apiTokensCreate)))
+	mux.HandleFunc("DELETE /api/tokens/{id}", a.authz(permUsersWrite, a.serialized(a.apiTokensRevoke)))
 	mux.HandleFunc("GET /api/hardening", a.authz(permServiceCheck, a.apiHardeningGet))
 	mux.HandleFunc("POST /api/hardening/apply", a.authz(permFirewall, a.serialized(a.apiHardeningApply)))
 	mux.HandleFunc("POST /api/wan/confirm", a.authz(permFirewall, a.serialized(a.apiNetConfirm("wan"))))
@@ -720,6 +726,23 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Bearer tokens are for automation. CSRF protection exists because a
+		// browser attaches cookies to cross-site requests on its own; it never
+		// attaches an Authorization header, so a token request is not subject
+		// to that attack and needs no CSRF pairing. Everything else — role
+		// checks, audit, rate limiting — applies unchanged.
+		if secret := bearerToken(r); secret != "" {
+			user, ok := a.authenticateToken(secret)
+			if !ok {
+				a.recordSev(r, "token", "token-reject", r.URL.Path, "denied", "security", nil)
+				writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyUser{}, user)
+			ctx = context.WithValue(ctx, ctxKeyTokenAuth{}, true)
+			next(w, r.WithContext(ctx))
+			return
+		}
 		c, err := r.Cookie("saguaro_session")
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "authentication required")
