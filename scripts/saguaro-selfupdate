@@ -21,6 +21,16 @@ PREV_FILE="$STATEDIR/selfupdate-prev"
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
+# When the GUI triggers an update, this adapter runs inside the saguaro.service
+# systemd sandbox (sudo keeps the namespace): ProtectHome leaves /root
+# read-only, so anything defaulting to $HOME — git's global config, Go's build
+# and module caches — must live under /var, which the sandbox keeps writable.
+# Also used for manual root runs so there is one cache location either way.
+export HOME=/var/cache/saguaro-selfupdate
+export GOCACHE="$HOME/go-build"
+export GOPATH="$HOME/go"
+install -d -m 0700 "$HOME"
+
 GO=$(command -v go 2>/dev/null || true)
 [ -n "$GO" ] || { [ -x /usr/local/go/bin/go ] && GO=/usr/local/go/bin/go || true; }
 

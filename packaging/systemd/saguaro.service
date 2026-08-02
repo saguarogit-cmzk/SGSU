@@ -22,6 +22,12 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=true
 ProtectHome=true
+# Self-update runs inside this unit's namespace (sudo does not leave it) and
+# must install the rebuilt binaries and refreshed adapters. ProtectSystem=true
+# mounts all of /usr read-only, so re-open exactly the two install targets.
+# This does not weaken the saguaro user's containment: DAC still applies, and
+# only the root adapters reached through the sudoers allow-list can write here.
+ReadWritePaths=/usr/lib/saguaro /usr/sbin
 # AF_NETLINK is how the kernel is asked about interfaces and routes. Without it
 # `ip` dies with "Cannot open netlink socket" and every read of the live network
 # state comes back empty -- the interface list, the addresses shown against each
