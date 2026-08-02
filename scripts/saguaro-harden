@@ -36,7 +36,11 @@ key_count() {
   for u in $(sudo_users); do
     home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
     [ -n "$home" ] && [ -f "$home/.ssh/authorized_keys" ] || continue
-    n=$(grep -cvE '^[[:space:]]*(#|$)' "$home/.ssh/authorized_keys" 2>/dev/null || echo 0)
+    # `grep -c` prints 0 AND exits non-zero when nothing matches, so a plain
+    # `|| echo 0` yields "0\n0" and the arithmetic below dies with "Illegal
+    # number". Take the first line and default an empty result to zero.
+    n=$(grep -cvE '^[[:space:]]*(#|$)' "$home/.ssh/authorized_keys" 2>/dev/null | head -1)
+    [ -n "$n" ] || n=0
     total=$((total + n))
   done
   echo "$total"
