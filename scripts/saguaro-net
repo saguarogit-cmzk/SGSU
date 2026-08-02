@@ -4,18 +4,90 @@
 #
 #   identify NIC SECS   blink the port LED (ethtool -p) so the physical port
 #                       can be located; runs detached, best effort
-#   wan-apply           install the staged WAN netplan and apply it
+#   wan-apply           install the staged WAN netplan and apply it, then
+#                       schedule an automatic rollback in 120 s unless confirmed
+#   wan-confirm         keep the applied WAN netplan (cancels the rollback)
+#   wan-rollback        restore the previous WAN netplan immediately
+#   vlan-apply          same, for the VLAN sub-interface netplan
+#   vlan-confirm / vlan-rollback
+#   *-rollback-if-pending  used by the timer; reverts only when unconfirmed
 set -eu
 
 STAGED_WAN=/var/lib/saguaro/staged-wan-netplan.yaml
 WAN_DEST=/etc/netplan/60-saguaro-wan.yaml
 STAGED_VLAN=/var/lib/saguaro/staged-vlan-netplan.yaml
 VLAN_DEST=/etc/netplan/65-saguaro-vlans.yaml
+RUNDIR=/run/saguaro
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
 valid_nic() {
   echo "$1" | grep -Eq '^[a-zA-Z0-9._-]{1,15}$' && [ -e "/sys/class/net/$1" ]
+}
+
+# netplan_apply installs a staged netplan and applies it behind a
+# confirm-or-rollback window. Addressing changes are the one operation that can
+# strand the admin outright (a wrong address on the management port, a VLAN that
+# steals the parent NIC), and until now they were the only apply path with no
+# way back — the firewall (saguaro-firewall) and the multi-WAN routes
+# (saguaro-wan) have had this safety for a while.
+#   $1 kind (wan|vlan)  $2 staged file  $3 destination
+netplan_apply() {
+  kind="$1"; staged="$2"; dest="$3"
+  backup="$RUNDIR/netplan-$kind-backup.yaml"
+  flag="$RUNDIR/net-$kind-pending"
+  [ -s "$staged" ] || { echo "no staged $kind netplan at $staged" >&2; exit 1; }
+  # The control plane validates every value; keep the file to a safe charset.
+  if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$staged"; then
+    echo "staged $kind netplan contains unexpected characters; refusing" >&2
+    exit 1
+  fi
+  install -d -m 0755 "$RUNDIR"
+  # Remember whether a config existed, so a rollback with no previous file
+  # removes ours instead of restoring an empty one.
+  if [ -f "$dest" ]; then
+    cp -p "$dest" "$backup"
+  else
+    rm -f "$backup"
+  fi
+  install -m 0600 -o root -g root "$staged" "$dest"
+  rm -f "$staged"
+  # Re-check the DESTINATION, not the staged file: a staged-file swap between
+  # the check above and this install cannot slip unvalidated YAML past us (SR2,
+  # the same reasoning as saguaro-firewall's destination validation).
+  if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$dest"; then
+    netplan_restore "$kind" "$dest" quiet
+    echo "installed $kind netplan failed validation; previous state restored" >&2
+    exit 1
+  fi
+  if ! netplan generate; then
+    netplan_restore "$kind" "$dest" quiet
+    echo "netplan generate failed; $kind configuration not applied" >&2
+    exit 1
+  fi
+  netplan apply
+  : >"$flag"
+  systemctl stop "saguaro-net-$kind-rollback.timer" 2>/dev/null || true
+  systemd-run --unit="saguaro-net-$kind-rollback" --on-active=120 --timer-property=AccuracySec=1s \
+    /usr/sbin/saguaro-net "$kind-rollback-if-pending" >/dev/null 2>&1 || true
+  logger -t saguaro-net "$kind netplan applied; auto-rollback in 120 s unless confirmed"
+}
+
+# netplan_restore puts the previous file back (or removes ours when there was
+# none) and re-applies, then clears the pending flag so the state can never get
+# stuck — the failure mode saguaro-firewall's restore_backup documents.
+netplan_restore() {
+  kind="$1"; dest="$2"
+  backup="$RUNDIR/netplan-$kind-backup.yaml"
+  flag="$RUNDIR/net-$kind-pending"
+  if [ -s "$backup" ]; then
+    install -m 0600 -o root -g root "$backup" "$dest"
+  else
+    rm -f "$dest"
+  fi
+  netplan generate && netplan apply
+  rm -f "$flag"
+  [ "${3:-}" = quiet ] || logger -t saguaro-net "$kind netplan rolled back"
 }
 
 case "${1:-}" in
@@ -30,39 +102,45 @@ case "${1:-}" in
     logger -t saguaro-net "identify $NIC ${SECS}s"
     ;;
   wan-apply)
-    [ -s "$STAGED_WAN" ] || { echo "no staged WAN netplan at $STAGED_WAN" >&2; exit 1; }
-    # The control plane validates every value; keep the file to a safe charset.
-    if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$STAGED_WAN"; then
-      echo "staged WAN netplan contains unexpected characters; refusing" >&2
-      exit 1
-    fi
-    install -m 0600 -o root -g root "$STAGED_WAN" "$WAN_DEST"
-    rm -f "$STAGED_WAN"
-    if ! netplan generate; then
-      echo "netplan generate failed; WAN configuration not applied" >&2
-      exit 1
-    fi
-    netplan apply
-    logger -t saguaro-net "wan netplan applied"
+    netplan_apply wan "$STAGED_WAN" "$WAN_DEST"
+    ;;
+  wan-confirm)
+    rm -f "$RUNDIR/net-wan-pending"
+    systemctl stop saguaro-net-wan-rollback.timer 2>/dev/null || true
+    logger -t saguaro-net "wan netplan confirmed"
+    ;;
+  wan-rollback)
+    systemctl stop saguaro-net-wan-rollback.timer 2>/dev/null || true
+    netplan_restore wan "$WAN_DEST"
+    ;;
+  wan-rollback-if-pending)
+    [ -e "$RUNDIR/net-wan-pending" ] || exit 0
+    netplan_restore wan "$WAN_DEST"
     ;;
   vlan-apply)
-    [ -s "$STAGED_VLAN" ] || { echo "no staged VLAN netplan at $STAGED_VLAN" >&2; exit 1; }
-    # The control plane validates every value; keep the file to a safe charset.
-    if grep -qvE '^[A-Za-z0-9 ._:/#(),-]*$' "$STAGED_VLAN"; then
-      echo "staged VLAN netplan contains unexpected characters; refusing" >&2
-      exit 1
-    fi
-    install -m 0600 -o root -g root "$STAGED_VLAN" "$VLAN_DEST"
-    rm -f "$STAGED_VLAN"
-    if ! netplan generate; then
-      echo "netplan generate failed; VLAN configuration not applied" >&2
-      exit 1
-    fi
-    netplan apply
-    logger -t saguaro-net "vlan netplan applied"
+    netplan_apply vlan "$STAGED_VLAN" "$VLAN_DEST"
+    ;;
+  vlan-confirm)
+    rm -f "$RUNDIR/net-vlan-pending"
+    systemctl stop saguaro-net-vlan-rollback.timer 2>/dev/null || true
+    logger -t saguaro-net "vlan netplan confirmed"
+    ;;
+  vlan-rollback)
+    systemctl stop saguaro-net-vlan-rollback.timer 2>/dev/null || true
+    netplan_restore vlan "$VLAN_DEST"
+    ;;
+  vlan-rollback-if-pending)
+    [ -e "$RUNDIR/net-vlan-pending" ] || exit 0
+    netplan_restore vlan "$VLAN_DEST"
+    ;;
+  pending)
+    # Read-only: which netplan applies are awaiting confirmation.
+    printf 'wan %s\nvlan %s\n' \
+      "$([ -e "$RUNDIR/net-wan-pending" ] && echo yes || echo no)" \
+      "$([ -e "$RUNDIR/net-vlan-pending" ] && echo yes || echo no)"
     ;;
   *)
-    echo "usage: saguaro-net identify NIC SECS | wan-apply | vlan-apply" >&2
+    echo "usage: saguaro-net identify NIC SECS | wan-apply | wan-confirm | wan-rollback | vlan-apply | vlan-confirm | vlan-rollback | pending" >&2
     exit 2
     ;;
 esac

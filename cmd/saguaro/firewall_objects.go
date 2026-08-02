@@ -289,7 +289,9 @@ func (a *app) apiFirewallVLANsApply(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordSev(r, a.actor(r), "zone-vlans", "netplan", "success", "security",
 		map[string]any{"vlans": vlanCount})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vlans": vlanCount})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vlans": vlanCount,
+		"confirmWindowSeconds": netplanConfirmWindow,
+		"message":              "VLAN sučelja primijenjena; potvrdi unutar 120 sekundi ili se vraćaju automatski"})
 }
 
 // apiFirewallDNSApply grants the internal zones access to the Unbound resolver

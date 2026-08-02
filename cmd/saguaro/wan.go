@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"saguaro.local/network-manager/internal/adapters/wancfg"
@@ -162,5 +163,53 @@ func (a *app) apiWANConfigApply(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordSev(r, a.actor(r), "wan-config", "netplan", "success", "security",
 		map[string]any{"interfaces": len(in.WANs)})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wans": in.WANs})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wans": in.WANs,
+		"confirmWindowSeconds": netplanConfirmWindow,
+		"message":              "adrese primijenjene; potvrdi unutar 120 sekundi ili se vraćaju automatski"})
+}
+
+// netplanConfirmWindow mirrors the adapter's auto-rollback timer, so the GUI
+// counts down the same window the box will act on.
+const netplanConfirmWindow = 120
+
+// apiNetConfirm/apiNetRollback keep or revert a pending netplan apply. The kind
+// ("wan" or "vlan") selects which of the two independent windows is meant.
+func (a *app) apiNetConfirm(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if out, err := a.runNet(r.Context(), kind+"-confirm"); err != nil {
+			writeError(w, http.StatusBadGateway, "confirm failed: "+truncate(string(out), 300))
+			return
+		}
+		a.recordSev(r, a.actor(r), kind+"-netplan-confirm", "netplan", "success", "security", nil)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func (a *app) apiNetRollback(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if out, err := a.runNet(r.Context(), kind+"-rollback"); err != nil {
+			writeError(w, http.StatusBadGateway, "rollback failed: "+truncate(string(out), 300))
+			return
+		}
+		a.recordSev(r, a.actor(r), kind+"-netplan-rollback", "netplan", "success", "security", nil)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// apiNetPending reports which netplan applies are awaiting confirmation, so the
+// GUI can show the confirm bar after a reload (the window outlives the page).
+func (a *app) apiNetPending(w http.ResponseWriter, r *http.Request) {
+	out, err := a.runNet(r.Context(), "pending")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"wan": false, "vlan": false})
+		return
+	}
+	pending := map[string]any{"wan": false, "vlan": false}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && (f[0] == "wan" || f[0] == "vlan") {
+			pending[f[0]] = f[1] == "yes"
+		}
+	}
+	writeJSON(w, http.StatusOK, pending)
 }

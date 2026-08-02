@@ -176,7 +176,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.19"
+const appVersion = "0.99.20"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -451,6 +451,14 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("PUT /api/webproxy", a.authz(permProxy, a.serialized(a.apiWebProxyPut)))
 	mux.HandleFunc("GET /api/wan", a.auth(a.apiWANConfigGet))
 	mux.HandleFunc("POST /api/wan/apply", a.authz(permFirewall, a.serialized(a.apiWANConfigApply)))
+	// Netplan applies (addresses, VLAN sub-interfaces) carry the same 120 s
+	// confirm-or-rollback window the firewall has, so a wrong address cannot
+	// strand the admin.
+	mux.HandleFunc("GET /api/net/pending", a.authz(permFirewall, a.apiNetPending))
+	mux.HandleFunc("POST /api/wan/confirm", a.authz(permFirewall, a.serialized(a.apiNetConfirm("wan"))))
+	mux.HandleFunc("POST /api/wan/rollback", a.authz(permFirewall, a.serialized(a.apiNetRollback("wan"))))
+	mux.HandleFunc("POST /api/firewall/zones/vlans-confirm", a.authz(permFirewall, a.serialized(a.apiNetConfirm("vlan"))))
+	mux.HandleFunc("POST /api/firewall/zones/vlans-rollback", a.authz(permFirewall, a.serialized(a.apiNetRollback("vlan"))))
 	mux.HandleFunc("GET /api/interfaces", a.auth(a.apiInterfacesList))
 	mux.HandleFunc("POST /api/interfaces/{name}/identify", a.authz(permFirewall, a.apiInterfaceIdentify))
 	mux.HandleFunc("PUT /api/interfaces/{name}/label", a.authz(permFirewall, a.apiInterfaceLabel))
