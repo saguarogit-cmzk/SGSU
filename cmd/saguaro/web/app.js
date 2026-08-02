@@ -1082,6 +1082,7 @@ ${help('Provjerava je li uređaj stvarno postavljen onako kako bi trebao biti pr
 <table><thead><tr><th>Status</th><th>Stavka</th><th>Nalaz</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 $('#hdRefresh').onclick=hardeningPage;
 document.querySelectorAll('[data-fix]').forEach(b=>{b.onclick=async()=>{const t=b.dataset.fix;const m=$('#hdMsg');
+if(t==='logret'){const d=prompt('Koliko dana zadržavati sistemske logove? (7-3650)','90');if(!d)return;b.disabled=true;m.textContent='Primjenjujem…';try{const r=await api('/api/hardening/apply',{method:'POST',body:JSON.stringify({target:'logret',days:parseInt(d,10)})});m.textContent=r.output||'Primijenjeno.';await hardeningPage()}catch(err){m.textContent=err.message;b.disabled=false}return}
 if(t==='ssh'&&!confirm('Isključiti SSH prijavu lozinkom i root prijavu? Uređaj će odbiti ako nema instaliranog SSH ključa.'))return;
 b.disabled=true;m.textContent='Primjena…';try{const r=await api('/api/hardening/apply',{method:'POST',body:JSON.stringify({target:t})});m.textContent=r.output||'Primijenjeno.';await hardeningPage()}catch(err){m.textContent=err.message;b.disabled=false}}})}
 async function conflictsPage(){const d=await api('/api/conflicts');const list=d.conflicts||[];const e=escapeHtml;const ch=d.checked||{};

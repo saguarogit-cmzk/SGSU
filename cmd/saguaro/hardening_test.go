@@ -45,7 +45,7 @@ journal_retention=90day
 // critical, and the SSH item must warn that no key is installed.
 func TestHardeningReportsWeakHost(t *testing.T) {
 	srv, c, a := newTestServer(t)
-	a.runHarden = func(context.Context, string) ([]byte, error) { return []byte(hardStatusWeak), nil }
+	a.runHarden = func(context.Context, ...string) ([]byte, error) { return []byte(hardStatusWeak), nil }
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", r.StatusCode)
 	}
@@ -89,7 +89,7 @@ func TestHardeningReportsWeakHost(t *testing.T) {
 // A hardened host reports the same items as satisfied.
 func TestHardeningReportsStrongHost(t *testing.T) {
 	srv, c, a := newTestServer(t)
-	a.runHarden = func(context.Context, string) ([]byte, error) { return []byte(hardStatusStrong), nil }
+	a.runHarden = func(context.Context, ...string) ([]byte, error) { return []byte(hardStatusStrong), nil }
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", r.StatusCode)
 	}
@@ -119,7 +119,8 @@ func TestHardeningReportsStrongHost(t *testing.T) {
 func TestHardeningApplyRefusalSurfaces(t *testing.T) {
 	srv, c, a := newTestServer(t)
 	var called []string
-	a.runHarden = func(_ context.Context, action string) ([]byte, error) {
+	a.runHarden = func(_ context.Context, args ...string) ([]byte, error) {
+		action := strings.Join(args, " ")
 		called = append(called, action)
 		if action == "ssh-harden" {
 			return []byte("refusing: no SSH key is installed for any account that can become root."), errors.New("exit 1")
@@ -156,7 +157,7 @@ func TestHardeningApplyRefusalSurfaces(t *testing.T) {
 // the operator may keep the encrypted archive and key on removable media.
 func TestHardeningOffsiteBackupIsAdvisory(t *testing.T) {
 	srv, c, a := newTestServer(t)
-	a.runHarden = func(context.Context, string) ([]byte, error) { return []byte(hardStatusStrong), nil }
+	a.runHarden = func(context.Context, ...string) ([]byte, error) { return []byte(hardStatusStrong), nil }
 	if r := doLogin(t, srv, c, testPassword); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", r.StatusCode)
 	}

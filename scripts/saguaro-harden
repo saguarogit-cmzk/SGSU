@@ -120,6 +120,30 @@ EOF
     logger -t saguaro-harden "kernel network hardening applied"
     echo "sysctl hardening applied"
     ;;
+  journal-retention)
+    # Forensics need weeks, not days: the default install keeps 30 days, which
+    # is below what an incident investigation (or an auditor) usually asks for.
+    # Bounded to a sane range so a typo cannot fill the disk or wipe history.
+    DAYS="${2:-}"
+    echo "$DAYS" | grep -qE '^[0-9]{1,4}$' || { echo "retention must be a number of days" >&2; exit 1; }
+    [ "$DAYS" -ge 7 ] && [ "$DAYS" -le 3650 ] || { echo "retention must be between 7 and 3650 days" >&2; exit 1; }
+    # Size cap scales with the window but stays well inside a small appliance
+    # disk; journald enforces whichever limit is reached first.
+    CAP=$((DAYS * 20))
+    [ "$CAP" -gt 4096 ] && CAP=4096
+    [ "$CAP" -lt 512 ] && CAP=512
+    install -d -m 0755 /etc/systemd/journald.conf.d
+    cat >/etc/systemd/journald.conf.d/99-saguaro-retention.conf <<EOF
+# Managed by Saguaro (generated).
+[Journal]
+SystemMaxUse=${CAP}M
+MaxRetentionSec=${DAYS}day
+EOF
+    chmod 0644 /etc/systemd/journald.conf.d/99-saguaro-retention.conf
+    systemctl restart systemd-journald 2>/dev/null || true
+    logger -t saguaro-harden "journal retention set to ${DAYS} days (cap ${CAP}M)"
+    echo "journal retention ${DAYS} days, cap ${CAP}M"
+    ;;
   sysctl-revert)
     rm -f "$SYSCTL_DROPIN"
     sysctl -q --system >/dev/null 2>&1 || true

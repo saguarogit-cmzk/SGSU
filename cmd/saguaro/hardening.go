@@ -12,10 +12,11 @@ import (
 
 // defaultRunHarden invokes the root hardening adapter through the sudoers
 // allow-list, argv-only like every other adapter call.
-func defaultRunHarden(ctx context.Context, action string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+func defaultRunHarden(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "sudo", "-n", "/usr/sbin/saguaro-harden", action).CombinedOutput()
+	full := append([]string{"-n", "/usr/sbin/saguaro-harden"}, args...)
+	return exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
 }
 
 // The hardening module answers one question the audit kept asking: is this
@@ -174,6 +175,26 @@ func (a *app) hardeningReport(ctx context.Context) []hardeningCheck {
 			Severity: "high"})
 	}
 
+	// --- Zadržavanje logova ------------------------------------------------
+	// 30 days is the install default and below what an incident investigation
+	// usually needs; 90 is the common floor.
+	if ret := get("journal_retention"); ret != "unknown" {
+		days := 0
+		fmt.Sscanf(ret, "%dday", &days)
+		switch {
+		case days >= 90:
+			add(hardeningCheck{Key: "logret", Title: "Zadržavanje sistemskih logova", Status: "ok",
+				Detail: ret + " — dovoljno za istragu incidenta.", Severity: "medium"})
+		case days > 0:
+			add(hardeningCheck{Key: "logret", Title: "Zadržavanje sistemskih logova", Status: "warn",
+				Detail:   ret + ". Za forenziku se preporučuje najmanje 90 dana; prostora ima.",
+				Severity: "medium", Fix: "logret"})
+		default:
+			add(hardeningCheck{Key: "logret", Title: "Zadržavanje sistemskih logova", Status: "warn",
+				Detail: "Nije ograničeno vremenom, samo veličinom.", Severity: "medium", Fix: "logret"})
+		}
+	}
+
 	// --- Certifikati -------------------------------------------------------
 	if exp := a.certExpiryReport(); len(exp) > 0 {
 		worst := exp[0]
@@ -237,14 +258,35 @@ func (a *app) apiHardeningGet(w http.ResponseWriter, r *http.Request) {
 // privilege boundary rather than trusted to the caller.
 func (a *app) apiHardeningApply(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Target string `json:"target"` // ssh | sysctl
+		Target string `json:"target"` // ssh | sysctl | logret
 		Revert bool   `json:"revert"`
+		Days   int    `json:"days,omitempty"` // logret only
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
 	}
+	// Log retention takes a value; the other two are on/off.
+	if in.Target == "logret" {
+		days := in.Days
+		if days == 0 {
+			days = 90
+		}
+		if days < 7 || days > 3650 {
+			writeError(w, http.StatusBadRequest, "zadržavanje mora biti između 7 i 3650 dana")
+			return
+		}
+		out, err := a.runHarden(r.Context(), "journal-retention", strconv.Itoa(days))
+		if err != nil {
+			writeError(w, http.StatusBadGateway, truncate(strings.TrimSpace(string(out)), 300))
+			return
+		}
+		a.recordSev(r, a.actor(r), "hardening", "journal-retention", "success", "security",
+			map[string]any{"days": days})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(string(out))})
+		return
+	}
 	if in.Target != "ssh" && in.Target != "sysctl" {
-		writeError(w, http.StatusBadRequest, "nepoznata meta otvrdnjavanja (ssh ili sysctl)")
+		writeError(w, http.StatusBadRequest, "nepoznata meta otvrdnjavanja (ssh, sysctl ili logret)")
 		return
 	}
 	action := in.Target + "-harden"

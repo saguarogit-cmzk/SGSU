@@ -150,7 +150,7 @@ type app struct {
 	runDNSZones       func(ctx context.Context, action string) ([]byte, error)
 	runDNSForward     func(ctx context.Context, action string) ([]byte, error)
 	runNet            func(ctx context.Context, args ...string) ([]byte, error)
-	runHarden         func(ctx context.Context, action string) ([]byte, error)
+	runHarden         func(ctx context.Context, args ...string) ([]byte, error)
 	readInterfaces    func(ctx context.Context) ([]nicInfo, error)
 	readDefaultRoutes func(ctx context.Context) ([]defaultRoute, error)
 	hwMemMB           int
@@ -177,7 +177,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.30"
+const appVersion = "0.99.31"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
