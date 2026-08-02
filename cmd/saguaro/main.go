@@ -1024,6 +1024,7 @@ func env(k, fallback string) string {
 	return fallback
 }
 func newID() string { b := make([]byte, 12); _, _ = rand.Read(b); return hex.EncodeToString(b) }
+
 // remoteIP returns the client address used for rate-limiting and the audit
 // trail. In production the service listens on loopback behind nginx, which sets
 // X-Real-IP — without honouring it every visitor shares one 127.0.0.1
