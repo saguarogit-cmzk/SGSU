@@ -14,11 +14,59 @@ UNIT=openvpn-server@saguaro
 
 [ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 1; }
 
+# validate_openvpn rejects OpenVPN directives that execute programs or pull in
+# other files BEFORE the server is (re)started on the config. The generated
+# config runs with `script-security 2` (needed for the fixed auth helper), so an
+# `up`/`plugin`/`client-connect` line smuggled through /var/lib/saguaro — which
+# the unprivileged saguaro user can write — would be root command execution.
+# This is the same privilege boundary validate_wg (saguaro-vpn) and
+# validate_swanctl (saguaro-ipsec) defend; OpenVPN's only legitimate script
+# hooks are pinned to their exact generated form.
+validate_openvpn() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    l=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$l" in ''|'#'*|';'*) continue ;; esac
+    key=$(printf '%s' "$l" | awk '{print tolower($1)}')
+    case "$key" in
+      up|down|route-up|route-pre-down|ipchange|iproute|client-connect|client-disconnect|learn-address|tls-verify|plugin|management|config)
+        echo "refusing OpenVPN config: disallowed directive: $line" >&2; return 1 ;;
+      auth-user-pass-verify)
+        [ "$l" = "auth-user-pass-verify /etc/openvpn/server/saguaro-authverify via-file" ] || {
+          echo "refusing OpenVPN config: auth-user-pass-verify must use the fixed saguaro helper" >&2; return 1; } ;;
+      script-security)
+        [ "$l" = "script-security 2" ] || {
+          echo "refusing OpenVPN config: script-security must be exactly 2" >&2; return 1; } ;;
+    esac
+  done < "$1"
+  return 0
+}
+
+# validate_ccd allow-lists the per-client files: only address pinning and
+# routing directives may appear; `config` (file inclusion) and everything else
+# is refused.
+validate_ccd() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    l=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$l" in ''|'#'*|';'*) continue ;; esac
+    key=$(printf '%s' "$l" | awk '{print tolower($1)}')
+    case "$key" in
+      ifconfig-push|iroute|push|disable) ;;
+      *) echo "refusing OpenVPN ccd file $1: disallowed directive: $line" >&2; return 1 ;;
+    esac
+  done < "$1"
+  return 0
+}
+
 case "${1:-}" in
   apply)
     [ -s "$STAGED/saguaro.conf" ] || { echo "no staged OpenVPN config" >&2; exit 1; }
     command -v openvpn >/dev/null 2>&1 || { echo "openvpn is not installed" >&2; exit 1; }
     install -d -m 0750 "$DEST"
+    # Snapshot the live config so a refused apply can restore it; the running
+    # server keeps its in-memory config either way, this keeps the on-disk one
+    # safe for the next (re)start.
+    install -d -m 0700 /run/saguaro
+    [ -f "$DEST/saguaro.conf" ] && cp -a "$DEST/saguaro.conf" /run/saguaro/openvpn-saguaro.conf.bak
     install -m 0644 "$STAGED/saguaro.conf"        "$DEST/saguaro.conf"
     install -m 0644 "$STAGED/saguaro-ca.crt"      "$DEST/saguaro-ca.crt"
     install -m 0644 "$STAGED/saguaro-server.crt"  "$DEST/saguaro-server.crt"
@@ -37,6 +85,28 @@ case "${1:-}" in
       for f in "$STAGED/ccd"/*; do [ -f "$f" ] && install -m 0644 "$f" "$DEST/saguaro-ccd/$(basename "$f")"; done
     fi
     rm -rf "$STAGED"
+    # Validate the DESTINATION files, not the staged ones, so a staged-file
+    # swap between check and install cannot slip an unvalidated config past us
+    # (SR2, same as saguaro-firewall). On refusal restore the snapshot and do
+    # not restart.
+    ok=1
+    validate_openvpn "$DEST/saguaro.conf" || ok=0
+    if [ "$ok" = 1 ]; then
+      for f in "$DEST/saguaro-ccd"/*; do
+        [ -f "$f" ] || continue
+        validate_ccd "$f" || { ok=0; break; }
+      done
+    fi
+    if [ "$ok" != 1 ]; then
+      if [ -f /run/saguaro/openvpn-saguaro.conf.bak ]; then
+        install -m 0644 /run/saguaro/openvpn-saguaro.conf.bak "$DEST/saguaro.conf"
+      else
+        rm -f "$DEST/saguaro.conf"
+      fi
+      rm -rf "$DEST/saguaro-ccd"; install -d -m 0755 "$DEST/saguaro-ccd"
+      logger -t saguaro-openvpn "OpenVPN apply refused: disallowed directive"
+      exit 1
+    fi
     systemctl enable "$UNIT" >/dev/null 2>&1 || true
     systemctl restart "$UNIT"
     logger -t saguaro-openvpn "OpenVPN applied"

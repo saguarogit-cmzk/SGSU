@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -175,7 +176,7 @@ type app struct {
 	keaPass      string
 }
 
-const appVersion = "0.99.18"
+const appVersion = "0.99.19"
 
 // ctxKeySession carries the authenticated session's token hash through a request.
 type ctxKeySession struct{}
@@ -1023,12 +1024,25 @@ func env(k, fallback string) string {
 	return fallback
 }
 func newID() string { b := make([]byte, 12); _, _ = rand.Read(b); return hex.EncodeToString(b) }
+// remoteIP returns the client address used for rate-limiting and the audit
+// trail. In production the service listens on loopback behind nginx, which sets
+// X-Real-IP — without honouring it every visitor shares one 127.0.0.1
+// rate-limit bucket (six failed logins from anyone lock everyone out) and every
+// audit row is 127.0.0.1. The header is trusted ONLY when the direct peer is
+// loopback (i.e. it came through the local proxy); a client reaching the port
+// directly can never spoof its way into another bucket or falsify the audit IP.
 func remoteIP(r *http.Request) string {
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i > 0 {
 		host = host[:i]
 	}
-	return strings.Trim(host, "[]")
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if real := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); real != nil {
+			return real.String()
+		}
+	}
+	return host
 }
 func first[T any](items []T, n int) []T {
 	if len(items) < n {
