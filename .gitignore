@@ -4,6 +4,13 @@
 dist/
 *.deb
 
+# Working screenshots at the repository root. Reference material for design
+# discussions, not part of the product — anything the documentation actually
+# needs belongs under docs/ and can be added explicitly.
+/*.png
+/*.jpg
+/*.jpeg
+
 # Local tooling state
 .claude/settings.local.json
 .gotmp/
