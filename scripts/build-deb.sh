@@ -62,27 +62,14 @@ install -D -m 0644 "$ROOT/packaging/systemd/saguaro.service"        "$STAGE/usr/
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-eventd.service" "$STAGE/usr/lib/systemd/system/saguaro-eventd.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.service" "$STAGE/usr/lib/systemd/system/saguaro-backup.service"
 install -D -m 0644 "$ROOT/packaging/systemd/saguaro-backup.timer"   "$STAGE/usr/lib/systemd/system/saguaro-backup.timer"
-install -D -m 0755 "$ROOT/scripts/saguaro-backup.sh"                "$STAGE/usr/sbin/saguaro-backup"
-install -D -m 0755 "$ROOT/scripts/saguaro-firewall"                 "$STAGE/usr/sbin/saguaro-firewall"
-install -D -m 0755 "$ROOT/scripts/saguaro-ids"                      "$STAGE/usr/sbin/saguaro-ids"
-install -D -m 0755 "$ROOT/scripts/saguaro-rpz"                      "$STAGE/usr/sbin/saguaro-rpz"
-install -D -m 0755 "$ROOT/scripts/saguaro-dns"                      "$STAGE/usr/sbin/saguaro-dns"
-install -D -m 0755 "$ROOT/scripts/saguaro-proxy"                    "$STAGE/usr/sbin/saguaro-proxy"
-install -D -m 0755 "$ROOT/scripts/saguaro-cert"                     "$STAGE/usr/sbin/saguaro-cert"
-install -D -m 0755 "$ROOT/scripts/saguaro-vpn"                      "$STAGE/usr/sbin/saguaro-vpn"
-install -D -m 0755 "$ROOT/scripts/saguaro-backup-config"            "$STAGE/usr/sbin/saguaro-backup-config"
-install -D -m 0755 "$ROOT/scripts/saguaro-wan"                      "$STAGE/usr/sbin/saguaro-wan"
-install -D -m 0755 "$ROOT/scripts/saguaro-net"                      "$STAGE/usr/sbin/saguaro-net"
-install -D -m 0755 "$ROOT/scripts/saguaro-route"                    "$STAGE/usr/sbin/saguaro-route"
-install -D -m 0755 "$ROOT/scripts/saguaro-s2s"                      "$STAGE/usr/sbin/saguaro-s2s"
-install -D -m 0755 "$ROOT/scripts/saguaro-ipsec"                    "$STAGE/usr/sbin/saguaro-ipsec"
-install -D -m 0755 "$ROOT/scripts/saguaro-svc"                      "$STAGE/usr/sbin/saguaro-svc"
-install -D -m 0755 "$ROOT/scripts/saguaro-power"                    "$STAGE/usr/sbin/saguaro-power"
-install -D -m 0755 "$ROOT/scripts/saguaro-pkg"                      "$STAGE/usr/sbin/saguaro-pkg"
-install -D -m 0755 "$ROOT/scripts/saguaro-selfupdate"               "$STAGE/usr/sbin/saguaro-selfupdate"
-install -D -m 0755 "$ROOT/scripts/saguaro-logs"                     "$STAGE/usr/sbin/saguaro-logs"
-install -D -m 0755 "$ROOT/scripts/saguaro-tools"                    "$STAGE/usr/sbin/saguaro-tools"
-install -D -m 0755 "$ROOT/scripts/saguaro-webproxy"                 "$STAGE/usr/sbin/saguaro-webproxy"
+# Package every root adapter instead of a hand-kept list: two adapters were
+# missing from this list, so the .deb shipped GUI modules whose privileged half
+# did not exist. saguaro-kea-linkwatch is not a sudo adapter and goes below.
+for adapter in "$ROOT"/scripts/saguaro-*; do
+  name=$(basename "$adapter"); name=${name%.sh}
+  [ "$name" = saguaro-kea-linkwatch ] && continue
+  install -D -m 0755 "$adapter" "$STAGE/usr/sbin/$name"
+done
 install -D -m 0755 "$ROOT/scripts/saguaro-kea-linkwatch"            "$STAGE/usr/lib/saguaro/kea-linkwatch"
 install -D -m 0644 "$ROOT/packaging/systemd/99-saguaro-ports.network" "$STAGE/usr/lib/systemd/network/99-saguaro-ports.network"
 install -D -m 0644 "$ROOT/packaging/systemd/kea-dhcp4-saguaro.conf" "$STAGE/usr/lib/systemd/system/kea-dhcp4-server.service.d/10-saguaro.conf"

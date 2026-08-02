@@ -872,26 +872,16 @@ fi
 
 if [[ -z $DEB_SOURCE ]]; then
   log "Installing backup job and firewall adapter"
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup.sh" /usr/sbin/saguaro-backup
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-firewall" /usr/sbin/saguaro-firewall
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ids" /usr/sbin/saguaro-ids
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-rpz" /usr/sbin/saguaro-rpz
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-dns" /usr/sbin/saguaro-dns
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-proxy" /usr/sbin/saguaro-proxy
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-cert" /usr/sbin/saguaro-cert
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-vpn" /usr/sbin/saguaro-vpn
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-backup-config" /usr/sbin/saguaro-backup-config
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-wan" /usr/sbin/saguaro-wan
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-net" /usr/sbin/saguaro-net
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-route" /usr/sbin/saguaro-route
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-s2s" /usr/sbin/saguaro-s2s
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-ipsec" /usr/sbin/saguaro-ipsec
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-svc" /usr/sbin/saguaro-svc
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-power" /usr/sbin/saguaro-power
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-pkg" /usr/sbin/saguaro-pkg
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-selfupdate" /usr/sbin/saguaro-selfupdate
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-logs" /usr/sbin/saguaro-logs
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-tools" /usr/sbin/saguaro-tools
+  # Install every root adapter, rather than a hand-kept list: a new adapter
+  # added to scripts/ was twice forgotten here, which ships a GUI module whose
+  # privileged half does not exist on a fresh install. saguaro-selfupdate uses
+  # this same loop, which is why the gap only ever showed on new installs.
+  for adapter in "$SOURCE_DIR"/scripts/saguaro-*; do
+    name=$(basename "$adapter"); name=${name%.sh}
+    # Not a sudo adapter: it runs from networkd-dispatcher, installed below.
+    [[ $name == saguaro-kea-linkwatch ]] && continue
+    run install -m 0755 "$adapter" "/usr/sbin/$name"
+  done
   # Link-up self-heal for Kea (see the script header). Runs as root from
   # networkd-dispatcher, so it lives outside /usr/sbin's adapter set.
   run install -m 0755 "$SOURCE_DIR/scripts/saguaro-kea-linkwatch" /usr/lib/saguaro/kea-linkwatch
@@ -899,7 +889,6 @@ if [[ -z $DEB_SOURCE ]]; then
     run install -d -m 0755 "/etc/networkd-dispatcher/${hook}.d"
     run ln -sfn /usr/lib/saguaro/kea-linkwatch "/etc/networkd-dispatcher/${hook}.d/50-saguaro-kea"
   done
-  run install -m 0755 "$SOURCE_DIR/scripts/saguaro-webproxy" /usr/sbin/saguaro-webproxy
   # Keep unconfigured Ethernet ports up so a freshly plugged cable is visible in
   # the interface list whichever socket it went into (see the file's comments).
   run install -D -m 0644 "$SOURCE_DIR/packaging/systemd/99-saguaro-ports.network" \
