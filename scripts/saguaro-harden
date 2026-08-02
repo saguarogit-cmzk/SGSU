@@ -8,6 +8,7 @@
 #   ssh-revert      remove the Saguaro SSH drop-in (back to distribution defaults)
 #   sysctl-harden   drop ICMP redirects, refuse source routing, log martians
 #   sysctl-revert   remove the Saguaro sysctl drop-in
+#   journal-retention DAYS  set how long system logs are kept (7-3650)
 #
 # ssh-harden REFUSES to run when no account that can become root has an SSH key
 # installed. Turning off password authentication without a working key is the
@@ -59,7 +60,7 @@ case "${1:-}" in
     printf 'sysctl_syncookies=%s\n' "$(sysctl_val net.ipv4.tcp_syncookies)"
     printf 'sysctl_dropin=%s\n' "$([ -f "$SYSCTL_DROPIN" ] && echo yes || echo no)"
     printf 'suricata_installed=%s\n' "$(command -v suricata >/dev/null 2>&1 && echo yes || echo no)"
-    printf 'journal_retention=%s\n' "$(journalctl --header 2>/dev/null >/dev/null && grep -hoE 'MaxRetentionSec=[0-9a-z]+' /etc/systemd/journald.conf.d/*.conf /etc/systemd/journald.conf 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)"
+    printf 'journal_retention=%s\n' "$(journalctl --header 2>/dev/null >/dev/null && grep -hE '^[[:space:]]*MaxRetentionSec=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)"
     ;;
   ssh-harden)
     keys=$(key_count)
@@ -133,13 +134,17 @@ EOF
     [ "$CAP" -gt 4096 ] && CAP=4096
     [ "$CAP" -lt 512 ] && CAP=512
     install -d -m 0755 /etc/systemd/journald.conf.d
-    cat >/etc/systemd/journald.conf.d/99-saguaro-retention.conf <<EOF
+    # journald applies drop-ins in lexical order, and the installer's own file is
+    # named saguaro.conf — which sorts AFTER any 99- prefix. A numerically
+    # prefixed file would silently lose to it, so this one is named to sort last.
+    rm -f /etc/systemd/journald.conf.d/99-saguaro-retention.conf
+    cat >/etc/systemd/journald.conf.d/zz-saguaro-retention.conf <<EOF
 # Managed by Saguaro (generated).
 [Journal]
 SystemMaxUse=${CAP}M
 MaxRetentionSec=${DAYS}day
 EOF
-    chmod 0644 /etc/systemd/journald.conf.d/99-saguaro-retention.conf
+    chmod 0644 /etc/systemd/journald.conf.d/zz-saguaro-retention.conf
     systemctl restart systemd-journald 2>/dev/null || true
     logger -t saguaro-harden "journal retention set to ${DAYS} days (cap ${CAP}M)"
     echo "journal retention ${DAYS} days, cap ${CAP}M"
@@ -151,7 +156,7 @@ EOF
     echo "sysctl hardening removed"
     ;;
   *)
-    echo "usage: saguaro-harden status | ssh-harden | ssh-revert | sysctl-harden | sysctl-revert" >&2
+    echo "usage: saguaro-harden status | ssh-harden | ssh-revert | sysctl-harden | sysctl-revert | journal-retention DAYS" >&2
     exit 2
     ;;
 esac
